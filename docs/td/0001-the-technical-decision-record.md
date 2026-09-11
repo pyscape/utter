@@ -71,11 +71,17 @@ citation is revisited in the same change.
 ### Citation is by marker
 
 Every reference to a record, from code, from another record, from a use
-case or from the README, is an rr marker: `[[rr:TD-N]]` for the record,
-`[[rr:TD-N#Heading]]` for one section of it. Markers are minted with
-`rr at` on the line they point to, never typed by hand, and read with
-`rr read` or `rrcat`. A path, a line number, or a paraphrase is not a
-citation.
+case or from the README, is an rr marker, on the record for the whole
+of it and on the record plus a section heading for one ruling:
+
+```
+[[rr:TD-N]]
+[[rr:TD-N#Decision outcome]]
+```
+
+Markers are minted with `rr at` on the line they point to, never typed
+by hand, and read with `rr read` or `rrcat`. A path, a line number, or
+a paraphrase is not a citation.
 
 ### The gate
 
