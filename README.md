@@ -10,8 +10,10 @@ toolchain, no Docker, no cloud.
 
 Specification stage. There is no code in this repository yet. The
 design is settled to the level of the Kaldi semantics each stage must
-reproduce and the gates that decide when it is done; the first use case
-it is built for is in [`usecases/`](usecases/).
+reproduce and the gates that decide when it is done. Decisions live in
+[`docs/td/`](docs/td/): TD-1 describes the record system, TD-2 is the
+runtime specification. The first use case it is built for is in
+[`usecases/`](usecases/).
 
 ## Why
 

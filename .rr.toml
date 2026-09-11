@@ -1,0 +1,18 @@
+# This repository's profile, merged over rr's built-in rr.toml defaults.
+
+[verify]
+# Markdown and Rust comments: the decision records under docs/td, the use
+# cases, and the markers code carries to cite them.
+in-scope = ["**/*.md", "**/*.rs"]
+# Model directories and replay audio, when they are ever checked in, are
+# fixtures, not prose.
+exclude = ["tests/data/**", "target/**"]
+rules = [
+  "malformed-marker",
+  "dangling-marker",
+  "ambiguous-marker",
+  "path-only-marker",
+]
+
+[scan.rust]
+eligible = ["comments"]
