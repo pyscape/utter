@@ -10,6 +10,14 @@ the letters a to z, the NATO alphabet, and red, yellow, blue, black and white. T
 
 - full grammar: every test clip must decode to its word, with a paired exact McNemar test on
   the clips the two engines disagree about, overall and per word;
+- agreement: the clips whose finals are identical, and the empty finals each engine returns
+  split by direction, because reproducing the oracle and scoring like it are different claims;
+- determinism: a sample decoded twice in this process and once in a fresh one, comparing the
+  whole partial trace, because a hash seed drawn per process is invisible to a repeat inside it;
+- endpoint latency: the clip followed by silence, to the block at which the engine closes a
+  segment itself, which is the pause a speaker waits through and nothing else here measures;
+- block size: 10 to 100 ms against accuracy, first-appearance latency and RTF, comparing the
+  instant a word appears clip by clip against the finest block rather than only in aggregate;
 - compute: recognizer construction split into the first and every later one, decode-only RTF,
   and per-block compute over the clips joined into one continuous stream;
 - noise: the dataset's own background recordings mixed under the clips at each --snr-db, the
@@ -42,6 +50,7 @@ import math
 import platform
 import subprocess
 import sys
+import tempfile
 import time
 import wave
 from collections import Counter, defaultdict
@@ -467,6 +476,83 @@ def run_clip(engine, pcm, block_ms, label):
     return final_words(finals), state["first"], state["first_word"], (t1 - t0, t2 - t1)
 
 
+def agreement_table(clips, results, lines, report):
+    """How often the two engines return the same final, which accuracy cannot say: both can be
+    right equally often and still read different clips differently, and the contract is to
+    reproduce the oracle rather than to match its score. The empty-final counts are split by
+    direction because a one-way excess of them is what a decoder losing tokens looks like, and
+    no accuracy or latency figure on this page would show it."""
+    names = list(results)
+    if len(names) != 2:
+        return
+    a, b = names
+    oa, ob = results[a]["outcome"], results[b]["outcome"]
+    same = 0
+    a_right = b_right = neither = 0
+    empty = {a: 0, b: 0}
+    only_empty = {a: 0, b: 0}
+    for label, path in clips:
+        wa = oa[str(path)]["words"]
+        wb = ob[str(path)]["words"]
+        for name, w in ((a, wa), (b, wb)):
+            empty[name] += not w
+        if not wa and wb:
+            only_empty[a] += 1
+        if not wb and wa:
+            only_empty[b] += 1
+        if wa == wb:
+            same += 1
+        elif wa == [label]:
+            a_right += 1
+        elif wb == [label]:
+            b_right += 1
+        else:
+            neither += 1
+    total = len(clips)
+    differ = total - same
+    lines.append("")
+    lines.append("## Agreement with the oracle")
+    lines.append("")
+    lines.append(
+        f"The contract is to reproduce {a}'s output, which the accuracy above cannot measure: two "
+        "engines are at parity when they are right equally often, and that is compatible with their "
+        "being right about different clips. This counts the clips whose finals are identical word "
+        f"for word. Every clip is in `{Path(report['out']).name}.clips.jsonl` with both readings, so "
+        "the ones that differ can be listed rather than only counted."
+    )
+    lines.append("")
+    lines.append("| pair | finals identical | differ |")
+    lines.append("|---|---|---|")
+    lines.append(f"| {a} vs {b} | {same} / {total} ({pct(same, total):.2f}%) | {differ} |")
+    lines.append("")
+    lines.append(
+        f"Of the {differ} that differ, {a} reads the label and {b} does not on {a_right}, "
+        f"{b} and not {a} on {b_right}, and neither on {neither}."
+    )
+    lines.append("")
+    lines.append("| engine | empty finals | empty here, a word from the other |")
+    lines.append("|---|---|---|")
+    for name in (a, b):
+        lines.append(f"| {name} | {empty[name]} ({pct(empty[name], total):.2f}%) | {only_empty[name]} |")
+    lines.append("")
+    lines.append(
+        "The last column is the directional one. Equal totals in the middle column can still hide "
+        "two engines falling silent on different clips, and an excess in one direction is the "
+        "signature of a decoder dropping a reading the other keeps."
+    )
+    report["agreement"] = dict(
+        pair=[a, b],
+        total=total,
+        identical=same,
+        differ=differ,
+        differ_a_right=a_right,
+        differ_b_right=b_right,
+        differ_neither=neither,
+        empty=empty,
+        empty_one_way=only_empty,
+    )
+
+
 def significance_table(clips, results, lines, report):
     """The engines decode the same clips, so the comparison is paired: only the clips they
     disagree on carry information. Aggregate counts alone cannot say whether a gap is real."""
@@ -629,9 +715,291 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
         lines.append(
             f"Most frequent confusions, {name}: " + "; ".join(f"{a} -> {b} ({n})" for (a, b), n in r["confusions"][:10])
         )
+    agreement_table(clips, results, lines, report)
     significance_table(clips, results, lines, report)
     lines.append("")
     report["full"] = results
+
+
+def trace_clip(engine, pcm, block_ms):
+    """Every partial the engine showed, in order, and the final. The trace is kept whole because
+    a final can be stable while the path to it is not, and the path is what a host renders."""
+    partials = []
+    finals = feed(engine.new(), pcm, block_ms, lambda fed, p: partials.append(p.get("partial", "")))
+    return [partials, final_words(finals)]
+
+
+def determinism_traces(modules, model, clips, block_ms, grammar):
+    """One pass over the clips per engine, a recognizer each, as a host would run them."""
+    out = {}
+    for name, mod in modules.items():
+        eng = Engine(name, mod, model, grammar)
+        out[name] = [trace_clip(eng, read_pcm(path), block_ms) for _, path in clips]
+    return out
+
+
+def trace_worker(job_path):
+    """The fresh process's half of the determinism pass: the same clips, a process of its own,
+    the traces back over stdout."""
+    job = json.loads(Path(job_path).read_text())
+    modules = {}
+    for name in job["engines"]:
+        modules[name] = __import__("vosk" if name == "vosk" else name)
+        if name == "vosk":
+            modules[name].SetLogLevel(-1)
+    clips = [(None, Path(p)) for p in job["clips"]]
+    json.dump(determinism_traces(modules, job["model"], clips, job["block_ms"], job["grammar"]), sys.stdout)
+
+
+def fresh_process_traces(model, clips, block_ms, grammar, engines):
+    """The same decode in a process started for it. A repeat inside one process cannot see a
+    per-process seed: it draws the same one. Rust's default hasher is seeded once per process, so
+    a hash map's iteration order — and with it which tokens a narrowing cutoff reaches first and
+    prunes — is fixed for a run and free to move between runs. Only a second process can show it."""
+    job = dict(
+        model=str(model),
+        block_ms=block_ms,
+        grammar=grammar,
+        engines=list(engines),
+        clips=[str(p) for _, p in clips],
+    )
+    path = Path(tempfile.mkdtemp()) / "trace-job.json"
+    path.write_text(json.dumps(job))
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--trace-job", str(path)],
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        path.unlink()
+        path.parent.rmdir()
+    if proc.returncode != 0:
+        note(f"  fresh process failed ({proc.returncode}): {proc.stderr.strip().splitlines()[-1:]}")
+        return {}
+    return json.loads(proc.stdout)
+
+
+def determinism_pass(modules, model, clips, block_ms, grammar, lines, report, count):
+    """Whether the same bytes give the same reading twice. Nothing else on this page would
+    notice if they did not: every other pass decodes each clip once, so a reading that moves
+    between runs is invisible to it and shows up only as noise in next week's comparison."""
+    step = max(1, len(clips) // count)
+    chosen = clips[::step][:count]
+    note(f"determinism: {len(chosen)} clips x {len(modules)} engines, twice here and once in a fresh process")
+    first = determinism_traces(modules, model, chosen, block_ms, grammar)
+    second = determinism_traces(modules, model, chosen, block_ms, grammar)
+    fresh = fresh_process_traces(model, chosen, block_ms, grammar, modules)
+    lines.append("## Determinism")
+    lines.append("")
+    lines.append(
+        f"{len(chosen)} clips decoded twice in this process and once in a process started for the "
+        "purpose, comparing the whole partial trace and the final. The fresh process is the half "
+        "that matters: a hash seed drawn once per process gives a map the same iteration order for "
+        "every repeat within a run, so a reading that depends on it is perfectly stable until the "
+        "next run. Any clip that moves is named in the JSON."
+    )
+    lines.append("")
+    lines.append(
+        "| engine | clips | same process: partials | same process: finals | fresh process: partials | fresh process: finals |"
+    )
+    lines.append("|---|---|---|---|---|---|")
+    out = {}
+    for name in modules:
+        row = {}
+        for tag, other in [("same_process", second[name]), ("fresh_process", fresh.get(name) or [])]:
+            moved = {"partials": [], "finals": []}
+            for (_, path), x, y in zip(chosen, first[name], other):
+                if x[0] != y[0]:
+                    moved["partials"].append(str(path))
+                if x[1] != y[1]:
+                    moved["finals"].append(str(path))
+            moved["compared"] = min(len(first[name]), len(other))
+            row[tag] = moved
+        out[name] = row
+        s, f = row["same_process"], row["fresh_process"]
+        cells = [len(s["partials"]), len(s["finals"])]
+        cells += ["n/a", "n/a"] if not f["compared"] else [len(f["partials"]), len(f["finals"])]
+        lines.append(f"| {name} | {len(chosen)} | " + " | ".join(str(c) for c in cells) + " |")
+    lines.append("")
+    unstable = [
+        f"{name}, {tag.replace('_', ' ')}: {len(m['partials'])} partial traces and {len(m['finals'])} finals"
+        for name, row in out.items()
+        for tag, m in row.items()
+        if m["partials"] or m["finals"]
+    ]
+    lines.append(
+        "Every clip read the same way every time."
+        if not unstable
+        else "**Not reproducible.** " + "; ".join(unstable) + "."
+    )
+    lines.append("")
+    report["determinism"] = out
+
+
+def endpoint_time(engine, pcm, block_ms):
+    """The fed-audio second at which the engine first closes a segment of its own accord, or None
+    if it never does within the audio given."""
+    rec = engine.new()
+    block = RATE * block_ms // 1000 * 2
+    fed = 0
+    for i in range(0, len(pcm), block):
+        chunk = pcm[i : i + block]
+        fed += len(chunk) // 2
+        if rec.AcceptWaveform(chunk):
+            return fed / RATE
+    return None
+
+
+def endpoint_pass(modules, model, clips, block_ms, grammar, lines, report, count, pad_ms):
+    """How long after the speech stops the final arrives. First appearance says when a word
+    becomes visible; this says when the engine commits, which is the pause a speaker sits through
+    before the turn comes back and the thing a host tunes endpointing for.
+
+    A Speech Commands clip ends when the word does, and neither engine endpoints inside one, so
+    the clip is followed by silence. Without it the only final is the one end-of-audio forces,
+    whose arrival time is the clip's length and says nothing about the decoder."""
+    step = max(1, len(clips) // count)
+    chosen = clips[::step][:count]
+    pad = b"\x00\x00" * (RATE * pad_ms // 1000)
+    note(f"endpoint: {len(chosen)} clips x {len(modules)} engines, {pad_ms} ms of silence appended")
+    lines.append("## Endpoint latency")
+    lines.append("")
+    lines.append(
+        f"{len(chosen)} clips, each followed by {pad_ms} ms of silence, measured to the first block "
+        "at which the engine closes a segment itself. Reported against the clip's own energy end, "
+        "the same reference the first-appearance figure uses. Neither engine endpoints within the "
+        "clip alone, so without the silence there is nothing here to measure."
+    )
+    lines.append("")
+    lines.append("| engine | endpointed | after the clip's energy end p50 / p90 / p99 | never within the silence |")
+    lines.append("|---|---|---|---|")
+    out = {}
+    at_by_engine = {}
+    for name, mod in modules.items():
+        eng = Engine(name, mod, model, grammar)
+        delays = []
+        never = 0
+        at_by_engine[name] = {}
+        for _, path in chosen:
+            pcm = read_pcm(path)
+            end = energy_end(pcm)
+            at = endpoint_time(eng, pcm + pad, block_ms)
+            at_by_engine[name][str(path)] = at
+            if at is None:
+                never += 1
+            elif end is not None:
+                delays.append((at - end) * 1000.0)
+        out[name] = dict(
+            endpointed=len(chosen) - never,
+            never=never,
+            ms_p50=quantile(delays, 0.5),
+            ms_p90=quantile(delays, 0.9),
+            ms_p99=quantile(delays, 0.99),
+            n=len(delays),
+        )
+        r = out[name]
+        lines.append(
+            f"| {name} | {r['endpointed']} / {len(chosen)} | "
+            f"{r['ms_p50']:.0f} / {r['ms_p90']:.0f} / {r['ms_p99']:.0f} ms over {r['n']} | {r['never']} |"
+        )
+    lines.append("")
+    names = list(modules)
+    agree = None
+    if len(names) == 2:
+        a, b = names
+        both = same = 0
+        for _, path in chosen:
+            x, y = at_by_engine[a][str(path)], at_by_engine[b][str(path)]
+            if x is not None and y is not None:
+                both += 1
+                same += x == y
+        agree = dict(both=both, same=same)
+        lines.append(
+            f"Both engines endpointed on {both} of the {len(chosen)}, at the same block on {same} "
+            f"({pct(same, both):.2f}%). Endpointing is a second surface the contract covers, and one "
+            "the accuracy figures do not touch: a host that agreed on every word would still feel a "
+            "difference here."
+        )
+        lines.append("")
+    report["endpoint"] = dict(clips=len(chosen), pad_ms=pad_ms, engines=out, agreement=agree)
+
+
+def block_size_pass(modules, model, clips, grammar, lines, report, sizes, count):
+    """Block size is the host's latency-against-compute dial, and the page measures one setting
+    of it. A smaller block shows a word sooner and pays the per-block cost more often per second
+    of audio; whether it also changes what is decoded is the question worth asking, because a
+    block boundary is not supposed to be audible in the result."""
+    step = max(1, len(clips) // count)
+    chosen = clips[::step][:count]
+    pcms = [(label, read_pcm(path)) for label, path in chosen]
+    ends = [energy_end(pcm) for _, pcm in pcms]
+    audio = sum(len(p) / 2 / RATE for _, p in pcms)
+    note(f"block size: {len(sizes)} sizes x {len(chosen)} clips x {len(modules)} engines")
+    lines.append("## Block size")
+    lines.append("")
+    lines.append(
+        f"{len(chosen)} clips at each block size, the same clips throughout. A word can only appear "
+        "at a block boundary, but the decoder only revises a partial when the network has consumed "
+        "a whole chunk, so the block is the coarser of the two grids only when it fails to land on "
+        "the chunk. A size that does not divide the chunk's spacing is included deliberately: "
+        "without one, the sweep cannot tell a decoder that ignores block size from a sweep that "
+        "happened to pick sizes it agrees with. The accuracy column is the one that should not move."
+    )
+    lines.append("")
+    lines.append(
+        "| block ms | engine | accuracy | first appearance p50 / p90 | same instant as the finest block | RTF, decode only |"
+    )
+    lines.append("|---|---|---|---|---|---|")
+    out = {}
+    finest = min(sizes)
+    at_finest = {}
+    for ms in sizes:
+        out[ms] = {}
+        for name, mod in modules.items():
+            eng = Engine(name, mod, model, grammar)
+            ok = 0
+            lat = []
+            decode = 0.0
+            firsts = []
+            for (label, pcm), end in zip(pcms, ends):
+                words, first, _, (_, t_dec) = run_clip(eng, pcm, ms, label)
+                ok += words == [label]
+                decode += t_dec
+                firsts.append(first)
+                if first is not None and end is not None:
+                    lat.append((first - end) * 1000.0)
+            if ms == finest:
+                at_finest[name] = firsts
+            both = [(x, y) for x, y in zip(firsts, at_finest.get(name, [])) if x is not None and y is not None]
+            shifted = [round((x - y) * 1000.0) for x, y in both]
+            out[ms][name] = dict(
+                correct=ok,
+                accuracy=pct(ok, len(pcms)),
+                latency_ms_p50=quantile(lat, 0.5),
+                latency_ms_p90=quantile(lat, 0.9),
+                latency_n=len(lat),
+                same_as_finest=sum(1 for d in shifted if d == 0),
+                compared_to_finest=len(shifted),
+                max_shift_ms=max(shifted) if shifted else 0,
+                decode_rtf=decode / audio if audio else None,
+            )
+            r = out[ms][name]
+            same = f"{r['same_as_finest']} / {r['compared_to_finest']}"
+            if r["max_shift_ms"]:
+                same += f", up to {r['max_shift_ms']} ms later"
+            lines.append(
+                f"| {ms} | {name} | {r['correct']} / {len(pcms)} ({r['accuracy']:.1f}%) | "
+                f"{r['latency_ms_p50']:.0f} / {r['latency_ms_p90']:.0f} ms | {same} | {r['decode_rtf']:.4f} |"
+            )
+    lines.append("")
+    lines.append(
+        "The column that carries the result is the per-clip one, not the quantiles: two block "
+        "sizes can produce the same p50 by luck, and only a clip-by-clip comparison against the "
+        f"finest block ({finest} ms) shows whether the word actually appeared at the same instant."
+    )
+    lines.append("")
+    report["block_size"] = dict(clips=len(chosen), finest_ms=finest, sizes=out)
 
 
 def twelve_class_pass(modules, model, clips, noise, block_ms, lines, report):
@@ -933,7 +1301,58 @@ def steady_state_pass(modules, model, clips, block_ms, grammar, lines, report, s
     report["steady_state"] = out
 
 
+def preflight(modules, model, grammar, block_ms, clips, lines, report):
+    """Open the model and decode one clip on every engine before the run commits twenty minutes
+    to it. A model an engine cannot decode is a result worth having, but it is worth having in
+    the first ten seconds and in one piece: without this the run ends part-way through a pass,
+    having written nothing. A Rust panic reaches Python as a BaseException, so the catch is wide.
+
+    The run stops rather than dropping the engine, because every comparison on this page is
+    paired. A page with one engine's columns silently missing is worse than no page."""
+    out = {}
+    failed = []
+    for name, mod in modules.items():
+        t = time.perf_counter()
+        try:
+            eng = Engine(name, mod, model, grammar)
+            load = time.perf_counter() - t
+            t = time.perf_counter()
+            rec = eng.new()
+            ctor = time.perf_counter() - t
+            feed(rec, read_pcm(clips[0][1]), block_ms)
+        except BaseException as e:  # noqa: BLE001 - a panic in the engine is the finding
+            failed.append(f"{name}: {type(e).__name__}: {str(e).splitlines()[0] if str(e) else '(no message)'}")
+            out[name] = dict(ok=False, error=f"{type(e).__name__}: {e}")
+            continue
+        out[name] = dict(ok=True, model_load_s=load, first_ctor_ms=1000.0 * ctor)
+        note(f"preflight {name}: model {load:.2f} s, first recognizer {1000.0 * ctor:.1f} ms")
+    report["preflight"] = out
+    if failed:
+        for line in failed:
+            note(f"preflight FAILED {line}")
+        raise SystemExit(
+            f"{len(failed)} of {len(modules)} engines cannot decode {Path(model).name}:\n  "
+            + "\n  ".join(failed)
+            + "\nEvery comparison on this page is paired, so the run stops here rather than "
+            "writing a page with an engine missing. Use --engines to measure one deliberately."
+        )
+    lines.append("## Engines")
+    lines.append("")
+    lines.append(
+        "Each engine opened the model and decoded a clip before the run began; a model an engine "
+        "cannot decode stops the run here rather than part-way through a pass."
+    )
+    lines.append("")
+    lines.append("| engine | model load, s | first recognizer, ms |")
+    lines.append("|---|---|---|")
+    for name, r in out.items():
+        lines.append(f"| {name} | {r['model_load_s']:.2f} | {r['first_ctor_ms']:.1f} |")
+    lines.append("")
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--trace-job":
+        return trace_worker(sys.argv[2])
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--model", required=True)
@@ -947,6 +1366,11 @@ def main():
     ap.add_argument("--snr-clips", type=int, default=800, help="clips per noise level")
     ap.add_argument("--grammar-sizes", default="35,60,92,150,200,246", help="grammar sweep, empty to skip")
     ap.add_argument("--grammar-clips", type=int, default=400, help="clips per grammar size")
+    ap.add_argument("--determinism-clips", type=int, default=200, help="clips decoded three times, 0 to skip")
+    ap.add_argument("--endpoint-clips", type=int, default=800, help="clips for endpoint latency, 0 to skip")
+    ap.add_argument("--endpoint-pad-ms", type=int, default=2000, help="silence appended so an endpoint can fire")
+    ap.add_argument("--block-sizes", default="10,20,40,80,100", help="block-size sweep, empty to skip")
+    ap.add_argument("--block-clips", type=int, default=400, help="clips per block size")
     args = ap.parse_args()
     data = Path(args.data)
     listed = [line.strip() for line in (data / f"{args.split}_list.txt").read_text().splitlines() if line.strip()]
@@ -974,9 +1398,13 @@ def main():
         "clips": len(clips),
         "block_ms": args.block_ms,
         "grammar_size": len(full_grammar),
+        "out": args.out,
         "provenance": prov,
     }
-    lines = [f"# Speech Commands v2, {args.split} split, {len(clips)} clips, {args.block_ms} ms blocks", ""]
+    lines = [
+        f"# Speech Commands v2, {prov['model']}, {args.split} split, {len(clips)} clips, {args.block_ms} ms blocks",
+        "",
+    ]
     lines.append(
         f"Grammar: the dataset's 35 words plus {len(LETTERS)} letters, {len(NATO)} NATO words and {len(COLOURS)} colours, {len(full_grammar)} entries."
     )
@@ -987,10 +1415,28 @@ def main():
         + f", model {prov['model']}, {prov['cpu']}, Python {prov['python']}."
     )
     lines.append("")
+    preflight(modules, args.model, full_grammar, args.block_ms, clips, lines, report)
     full_grammar_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report)
     write_clip_records(args.out + ".clips.jsonl", clips, report["full"])
     for r in report["full"].values():
         del r["outcome"]
+    if args.determinism_clips:
+        determinism_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report, args.determinism_clips)
+    if args.endpoint_clips:
+        endpoint_pass(
+            modules,
+            args.model,
+            clips,
+            args.block_ms,
+            full_grammar,
+            lines,
+            report,
+            args.endpoint_clips,
+            args.endpoint_pad_ms,
+        )
+    block_sizes = [int(v) for v in args.block_sizes.split(",") if v.strip()]
+    if block_sizes:
+        block_size_pass(modules, args.model, clips, full_grammar, lines, report, block_sizes, args.block_clips)
     steady_state_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report, args.steady_state_clips)
     levels = [int(v) for v in args.snr_db.split(",") if v.strip()]
     if levels:
