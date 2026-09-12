@@ -147,7 +147,7 @@ impl<'m> Recognizer<'m> {
                 distinct.len()
             )));
         }
-        let graph = model.compile_grammar(grammar, options.unknown_cost, max_states, |w| {
+        let graph = model.grammar_graph(grammar, options.unknown_cost, max_states, |w| {
             eprintln!("utter: {w}")
         })?;
         let sw = SilenceWeighting::new(
@@ -158,7 +158,7 @@ impl<'m> Recognizer<'m> {
         Ok(Recognizer {
             silence_weighting: sw,
             model,
-            graph: Arc::new(graph),
+            graph,
             sample_rate,
             state: State::Initialized,
             pipeline: None,

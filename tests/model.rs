@@ -181,3 +181,27 @@ fn c_abi_round_trip() {
         utter_model_free(model);
     }
 }
+
+#[test]
+fn one_grammar_is_composed_once_and_the_cache_has_a_bound() {
+    let Some(dir) = model_dir() else { return };
+    let model = Model::open(&dir).unwrap();
+    let g = grammar();
+    let first = Recognizer::new(&model, 16000.0, &g).unwrap();
+    let second = Recognizer::new(&model, 16000.0, &g).unwrap();
+    assert!(
+        std::ptr::eq(first.graph(), second.graph()),
+        "a second recognizer on the same grammar composed its own graph"
+    );
+    // A different grammar is a different graph, and enough of them evict the first.
+    for word in g.iter().take(utter::model::CACHED_GRAPHS) {
+        let r = Recognizer::new(&model, 16000.0, std::slice::from_ref(word)).unwrap();
+        assert!(!std::ptr::eq(first.graph(), r.graph()));
+    }
+    let again = Recognizer::new(&model, 16000.0, &g).unwrap();
+    assert!(
+        !std::ptr::eq(first.graph(), again.graph()),
+        "the cache kept more grammars than CACHED_GRAPHS"
+    );
+    assert_eq!(first.graph().num_states(), again.graph().num_states());
+}

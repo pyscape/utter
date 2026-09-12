@@ -15,6 +15,7 @@ use crate::transition_model::TransitionModel;
 use std::collections::HashMap;
 use std::io::Result;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
 pub struct EndpointRule {
@@ -139,6 +140,19 @@ pub enum WordBoundary {
     Nonword,
 }
 
+/// How many compiled grammars a model keeps. Composition here is eager, by
+/// `[[rr:TD-2#The graph: composition]]`, where libvosk's is lazy and its recognizers are
+/// therefore cheap to build; without a cache a host that builds one per utterance would
+/// compose the whole graph every time.
+pub const CACHED_GRAPHS: usize = 4;
+
+#[derive(PartialEq, Eq, Hash)]
+struct GraphKey {
+    grammar: Vec<String>,
+    unknown_cost: Option<u32>,
+    max_states: usize,
+}
+
 pub struct Model {
     pub dir: PathBuf,
     pub conf: ModelConf,
@@ -154,6 +168,7 @@ pub struct Model {
     pub word_ids: HashMap<String, i64>,
     pub word_boundary: HashMap<i32, WordBoundary>,
     pub ivector: Option<IvectorInfo>,
+    graphs: Mutex<Vec<(GraphKey, Arc<VectorFst>)>>,
 }
 
 impl Model {
@@ -225,7 +240,38 @@ impl Model {
             word_ids,
             word_boundary,
             ivector,
+            graphs: Mutex::new(Vec::new()),
         })
+    }
+
+    /// The decoding graph for a grammar, composed on first use and kept for reuse. The
+    /// `CACHED_GRAPHS` least recently used grammars are held.
+    pub fn grammar_graph(
+        &self,
+        grammar: &[String],
+        unknown_cost: Option<f32>,
+        max_states: usize,
+        warn: impl FnMut(String),
+    ) -> Result<Arc<VectorFst>> {
+        let key = GraphKey {
+            grammar: grammar.to_vec(),
+            unknown_cost: unknown_cost.map(f32::to_bits),
+            max_states,
+        };
+        // Held across the composition so that concurrent streams on one grammar compose once.
+        let mut cache = self.graphs.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = cache.iter().position(|(k, _)| *k == key) {
+            let hit = cache.remove(i);
+            let graph = hit.1.clone();
+            cache.push(hit);
+            return Ok(graph);
+        }
+        let graph = Arc::new(self.compile_grammar(grammar, unknown_cost, max_states, warn)?);
+        if cache.len() >= CACHED_GRAPHS {
+            cache.remove(0);
+        }
+        cache.push((key, graph.clone()));
+        Ok(graph)
     }
 
     /// Compile a grammar to the decoding graph: bigram, lookahead composition, erase the
