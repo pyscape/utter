@@ -223,5 +223,6 @@ per minute, on which both engines are expected equal.
 - `[[rr:entries]]`, `[[rr:endpoint_detected]]` and `[[rr:energy_dbfs]]`:
   the entries, the closures and the energy as they stand.
 - `[[rr:final_json]]`: the energy on each final word.
+- `[[rr:FloorTracker]]`: the floor, on every partial and every final.
 - `[[rr:scripts/unk_sweep.py#main]]` and `[[rr:noise_pass]]`: the
   measurements.

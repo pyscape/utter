@@ -126,8 +126,16 @@ that already parses Vosk output keeps parsing, and add what a
 partials-first host asks for: `partial_alternatives` ranked by
 confidence, `start_sample` and `end_sample` beside Kaldi's seconds,
 `energy_dbfs` under each word of a partial and of a final, `stable_ms`
-for how long a partial word has held, and `[sil]` where the reading
-carries no word.
+for how long a partial word has held, `floor_dbfs` for the noise floor
+of the audio fed, and `[sil]` where the reading carries no word.
+
+Silence is the host's to judge, and those last fields are what it judges
+with (`[[rr:TD-8#Decision outcome]]`): a word is silence when its
+`energy_dbfs` is within the host's own margin of `floor_dbfs`, never at
+an absolute level. End of speech is the endpoint; a host that wants it
+sooner than the model's rules allow reads the span of the trailing
+`[sil]` entry and applies its own bound. `stable_ms` is the hold before
+acting on a word, and is not an end-of-speech signal.
 
 ## Model compatibility
 

@@ -14,6 +14,7 @@ use crate::json::write_string;
 use crate::looped::LoopedNnet;
 use crate::model::{Model, WordBoundary};
 use crate::silence_weighting::SilenceWeighting;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +84,61 @@ pub struct Entry {
     pub end_frame: usize,
 }
 
+/// The noise floor of the audio fed, in dBFS.
+/// `[[rr:TD-8#The runtime reports the floor]]`
+///
+/// The rank convention, which the record leaves open: nearest rank over the window energies
+/// ascending, index `n * 5 / 100`.
+struct FloorTracker {
+    hop: usize,
+    hop_sum_sq: VecDeque<f64>,
+    open_sum_sq: f64,
+    open_len: usize,
+}
+
+impl FloorTracker {
+    const HOP_SECONDS: f64 = 0.05;
+    const HISTORY_HOPS: usize = 200;
+
+    fn new(sample_rate: f32) -> Self {
+        FloorTracker {
+            hop: ((sample_rate as f64 * Self::HOP_SECONDS).round() as usize).max(1),
+            hop_sum_sq: VecDeque::new(),
+            open_sum_sq: 0.0,
+            open_len: 0,
+        }
+    }
+
+    fn feed(&mut self, samples: &[i16]) {
+        for &s in samples {
+            self.open_sum_sq += (s as f64) * (s as f64);
+            self.open_len += 1;
+            if self.open_len == self.hop {
+                if self.hop_sum_sq.len() == Self::HISTORY_HOPS {
+                    self.hop_sum_sq.pop_front();
+                }
+                self.hop_sum_sq.push_back(self.open_sum_sq);
+                self.open_sum_sq = 0.0;
+                self.open_len = 0;
+            }
+        }
+    }
+
+    fn dbfs(&self) -> Option<f64> {
+        if self.hop_sum_sq.len() < 2 {
+            return None;
+        }
+        let mut windows: Vec<f64> = self
+            .hop_sum_sq
+            .iter()
+            .zip(self.hop_sum_sq.iter().skip(1))
+            .map(|(a, b)| dbfs_of_mean_square((a + b) / (2 * self.hop) as f64))
+            .collect();
+        windows.sort_by(f64::total_cmp);
+        Some(windows[windows.len() * 5 / 100])
+    }
+}
+
 pub struct Recognizer<'m> {
     model: &'m Model,
     graph: Arc<VectorFst>,
@@ -97,6 +153,7 @@ pub struct Recognizer<'m> {
     samples_round_start: u64,
     /// PCM fed since the pipeline began, for energy under words.
     pcm: Vec<i16>,
+    floor: FloorTracker,
     words: bool,
     partial_words: bool,
     partial_alternatives: usize,
@@ -127,6 +184,15 @@ fn escape_json_number(v: f64) -> String {
         "1e999".into()
     } else {
         "-1e999".into()
+    }
+}
+
+fn dbfs_of_mean_square(mean_square: f64) -> f64 {
+    let rms = mean_square.sqrt();
+    if rms <= 0.0 {
+        -999.0
+    } else {
+        20.0 * (rms / 32768.0).log10()
     }
 }
 
@@ -179,6 +245,7 @@ impl<'m> Recognizer<'m> {
             samples_processed: 0,
             samples_round_start: 0,
             pcm: Vec::new(),
+            floor: FloorTracker::new(sample_rate),
             words: false,
             partial_words: false,
             partial_alternatives: 0,
@@ -358,6 +425,7 @@ impl<'m> Recognizer<'m> {
             i = end;
         }
         self.pcm.extend_from_slice(samples);
+        self.floor.feed(samples);
         self.samples_processed += samples.len() as u64;
         self.update_stable();
         let endpoint = self.endpoint_detected();
@@ -530,12 +598,7 @@ impl<'m> Recognizer<'m> {
         for &s in &self.pcm[lo..hi] {
             acc += (s as f64) * (s as f64);
         }
-        let rms = (acc / (hi - lo) as f64).sqrt();
-        if rms <= 0.0 {
-            -999.0
-        } else {
-            20.0 * (rms / 32768.0).log10()
-        }
+        dbfs_of_mean_square(acc / (hi - lo) as f64)
     }
 
     fn write_word(
@@ -573,6 +636,12 @@ impl<'m> Recognizer<'m> {
             let _ = now;
         }
         out.push('}');
+    }
+
+    fn push_floor(&self, out: &mut String) {
+        if let Some(db) = self.floor.dbfs() {
+            out.push_str(&format!(", \"floor_dbfs\": {}", escape_json_number(db)));
+        }
     }
 
     fn text_of(&self, words: &[Label]) -> String {
@@ -639,7 +708,10 @@ impl<'m> Recognizer<'m> {
     /// libvosk's `PartialResult`, extended.
     pub fn partial(&mut self) -> &str {
         let empty = |this: &mut Self| {
-            this.last_result = format!("{{\"partial\": \"{SIL}\"}}");
+            let mut out = format!("{{\"partial\": \"{SIL}\"");
+            this.push_floor(&mut out);
+            out.push('}');
+            this.last_result = out;
         };
         if self.state != State::Running {
             empty(self);
@@ -706,6 +778,7 @@ impl<'m> Recognizer<'m> {
             }
             out.push(']');
         }
+        self.push_floor(&mut out);
         out.push('}');
         self.last_result = out;
         &self.last_result
@@ -745,7 +818,9 @@ impl<'m> Recognizer<'m> {
                 write_string(&mut out, &self.text_of(&alt.words));
                 out.push('}');
             }
-            out.push_str("]}");
+            out.push(']');
+            self.push_floor(&mut out);
+            out.push('}');
             return out;
         }
         let path = dec.best_path(true).unwrap_or_default();
@@ -762,6 +837,7 @@ impl<'m> Recognizer<'m> {
         }
         out.push_str("\"text\": ");
         write_string(&mut out, &self.text_of(&path.words));
+        self.push_floor(&mut out);
         out.push('}');
         out
     }
@@ -826,5 +902,68 @@ impl<'m> Recognizer<'m> {
 
     pub fn num_active_tokens(&self) -> usize {
         self.decoder.as_ref().map(|d| d.num_active()).unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RATE: f32 = 16000.0;
+
+    fn amplitude(dbfs: f64) -> i16 {
+        (32768.0 * 10f64.powf(dbfs / 20.0)).round() as i16
+    }
+
+    fn constant(dbfs: f64, seconds: f64) -> Vec<i16> {
+        vec![amplitude(dbfs); (RATE as f64 * seconds) as usize]
+    }
+
+    /// Uniform over `[-peak, peak]`, from a fixed seed so the sequence repeats.
+    fn noise(peak: i16, seconds: f64) -> Vec<i16> {
+        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+        (0..(RATE as f64 * seconds) as usize)
+            .map(|_| {
+                x = x
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let u = (x >> 33) as f64 / (1u64 << 31) as f64;
+                ((u * 2.0 - 1.0) * peak as f64).round() as i16
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_floor_is_absent_until_a_window_exists() {
+        let mut f = FloorTracker::new(RATE);
+        f.feed(&vec![1000i16; 1599]);
+        assert_eq!(f.dbfs(), None);
+        f.feed(&[1000]);
+        assert!(f.dbfs().is_some());
+    }
+
+    #[test]
+    fn a_constant_signal_reads_its_own_level() {
+        let mut f = FloorTracker::new(RATE);
+        f.feed(&constant(-30.0, 1.0));
+        let want = 20.0 * (amplitude(-30.0) as f64 / 32768.0).log10();
+        assert!((f.dbfs().unwrap() - want).abs() < 0.01, "{:?}", f.dbfs());
+    }
+
+    #[test]
+    fn a_quarter_second_of_digital_silence_does_not_take_the_floor() {
+        let mut f = FloorTracker::new(RATE);
+        // peak 180 is -50 dBFS RMS for a uniform sequence
+        f.feed(&noise(180, 10.0));
+        f.feed(&vec![0i16; (RATE * 0.25) as usize]);
+        assert!((f.dbfs().unwrap() + 50.0).abs() < 1.0, "{:?}", f.dbfs());
+    }
+
+    #[test]
+    fn the_history_forgets_a_louder_room() {
+        let mut f = FloorTracker::new(RATE);
+        f.feed(&constant(-20.0, 10.0));
+        f.feed(&constant(-60.0, 10.0));
+        assert!((f.dbfs().unwrap() + 60.0).abs() < 1.0, "{:?}", f.dbfs());
     }
 }

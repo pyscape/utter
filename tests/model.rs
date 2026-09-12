@@ -45,6 +45,14 @@ fn decode(rec: &mut Recognizer, samples: &[i16]) -> (Vec<String>, Vec<String>) {
     (partials, finals)
 }
 
+/// The result without the floor, which is appended last.
+fn without_floor(json: &str) -> String {
+    match json.rfind(", \"floor_dbfs\": ") {
+        Some(i) => format!("{}}}", &json[..i]),
+        None => json.to_string(),
+    }
+}
+
 fn text_of(json: &str) -> String {
     let key = "\"text\": ";
     let i = json.rfind(key).expect("text key") + key.len();
@@ -80,7 +88,7 @@ fn clips_decode_to_their_words() {
         // every partial has rank 0 equal to its text and carries the extended keys
         for p in &partials {
             assert!(p.starts_with("{\"partial\": "), "{p}");
-            if p == "{\"partial\": \"[sil]\"}" {
+            if without_floor(p) == "{\"partial\": \"[sil]\"}" {
                 // nothing decoded yet on this block
                 continue;
             }
@@ -184,6 +192,25 @@ fn silence_reads_as_sil_and_the_stream_is_deterministic() {
     let mut a = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
     let mut b = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
     assert_eq!(decode(&mut a, &samples), decode(&mut b, &samples));
+}
+
+#[test]
+fn the_floor_outlives_a_final_and_the_rebuild_after_it() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    let room: Vec<i16> = vec![1000; 32000];
+    for block in room.chunks(640) {
+        rec.accept(block);
+    }
+    let before = num_of_key(rec.final_result(), "\"floor_dbfs\": ");
+    assert!((before - rms_dbfs(&room)).abs() < 0.01, "{before}");
+    // a final drops the pipeline, so the next accept rebuilds it
+    for block in vec![0i16; 1600].chunks(640) {
+        rec.accept(block);
+    }
+    let after = num_of_key(rec.partial(), "\"floor_dbfs\": ");
+    assert!((after - before).abs() < 1.0, "{before} then {after}");
 }
 
 #[test]
