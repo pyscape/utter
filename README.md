@@ -15,11 +15,11 @@ decodes the reference model against the stock wheel.
 
 What the gates found is recorded in [`docs/gates/`](docs/gates/), one
 file per gate, and what a public dataset says is in
-[`docs/benchmarks/`](docs/benchmarks/). Two things are open: the
-i-vector half of the front-end gate has no oracle on the machine the
-work was done on and needs a leg run against a Kaldi build, and
+[`docs/benchmarks/`](docs/benchmarks/). One thing is open:
 segment-for-segment agreement with libvosk sits below the mark the gate
-asks for, on near ties in the acoustics.
+asks for, on near ties in the acoustics. The front end, i-vector
+included, matches the wheel's Kaldi within the gate, quiet speech
+included.
 
 Decisions live in [`docs/td/`](docs/td/): TD-1 describes the record
 system, TD-2 is the runtime specification. The first use case it is

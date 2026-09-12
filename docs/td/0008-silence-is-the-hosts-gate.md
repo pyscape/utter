@@ -190,6 +190,23 @@ the corpus's inter-word pauses for a finish. `stable_ms` is the hold a
 host applies before acting on a word, `[[rr:update_stable]]`, and is not
 an end-of-speech signal.
 
+### A host may add one endpoint bound of its own, off by default
+
+Beside the model's rules the recognizer takes one bound of the host's,
+`[[rr:set_endpoint_bound]]`: a final once the trailing silence reaches
+it. Unset, the runtime is byte-identical to the stock rules, so parity
+holds; set, it calls a final where the rule above says a host would
+read the trailing `[sil]` entry, and pays for it in G5 and in the
+pauses it mistakes for a finish. The span cannot see a word beginning:
+the word's label is not yet on the best path while the silence before
+it still counts, so the span is highest as the next word starts and a
+bare bound fires into it. The beam can see it, in the readings that
+extend the partial by a further word, and the bound takes a veto: no
+final while such a reading is within a margin the host names. The
+benchmarks run the bound, the vetoed bound and the stock rules side by
+side (`utterpy@300` and `utterpy@300/4` in the harness). Both numbers
+are the host's; the runtime ships neither.
+
 ### Measurements count a word whose own span carries no speech
 
 A silence word, in a partial or in a final, is a word whose span's mean

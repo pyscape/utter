@@ -49,3 +49,4 @@ reaches for the rejected option. Implemented by is optional, because
 | TD-6 | The graph cost is scaled before a final is chosen |
 | TD-7 | The best path is read once per decoding advance |
 | TD-8 | Silence is the host's gate, on a floor the runtime reports |
+| TD-9 | Each reading carries its relation to the partial and the motion of its lead |
