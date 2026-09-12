@@ -289,3 +289,16 @@ figure is kept in machine form beside the page.
   on the consumer's continuous recordings and configuration.
 - A reading's history is per utterance; `lead_delta` is null on the
   first advance after an endpoint.
+
+## Implemented by
+
+- `[[rr:update_readings]]`: the history over every surviving group and
+  the traced top n, one grouping per chunk decoded.
+- `[[rr:grouped]]`: the grouping the trace and the alternatives are both
+  taken from.
+- `[[rr:census_counts]]` and `[[rr:process_emitting]]`: the merge and
+  reading-loss counters the deferred lattice question is measured with.
+- `[[rr:trace_groups]]`, read by `stream --trace-groups`: the diagnostic
+  trace the runtime's fields are checked against.
+- The harness's trace of the series: marker pending, awaiting the symbol
+  `scripts/partial_trust.py` settles on.

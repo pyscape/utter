@@ -63,8 +63,10 @@ own noise floor:
 {
   "partial": "alpha seven",
   "partial_alternatives": [
-    {"text": "alpha seven",  "confidence": 1.94,  "result": [ ... ]},
-    {"text": "alpha eleven", "confidence": -3.32, "result": [ ... ]}
+    {"text": "alpha seven",  "confidence": 1.94,  "result": [ ... ],
+     "relation": "same",    "lead_delta": 0.41},
+    {"text": "alpha eleven", "confidence": -3.32, "result": [ ... ],
+     "relation": "differs", "lead_delta": -0.41}
   ],
   "partial_result": [
     {"word": "alpha", "start_sample": 196800, "end_sample": 202080, "energy_dbfs": -23.2, "stable_ms": 960},
@@ -82,6 +84,8 @@ out here for room.
 |---|---|---|
 | `partial_alternatives` | absent | the distinct readings still alive, ranked; the gap from the first `confidence` to the second is the strongest single sign the word is about to be revised |
 | `confidence` | absent | orders the readings; a raw path cost, never a probability |
+| `relation` | absent | how the reading stands against the partial as a word sequence: `same`, `prefix`, `extends`, `differs`; which readings to look at for a competing phrase, a missing tail or a possible next word |
+| `lead_delta` | absent | how much the reading gained on the field since the previous decoding advance, in nats; null when it was absent then, so a null is a broken history and not a zero |
 | `stable_ms` | absent | how long the word has held its place, the hold to wait out before acting on it |
 | `energy_dbfs` | absent | the loudness under the word, for telling a spoken word from one read into a quiet room |
 | `floor_dbfs` | absent | the room's own noise floor, so a silence gate travels between microphones rather than being a fixed dBFS |
@@ -91,10 +95,20 @@ out here for room.
 Stock `partial_result`, where it is turned on, carries `word`, `start`,
 `end` and `conf` in seconds; utter's carries the sample span, the energy
 and the hold, and adds the ranked readings the stock partial never had.
+Turning stock partial words on also costs the stock partial its text on
+most blocks: libvosk builds that path from a lattice, which trails the
+audio, and over the first stream of
+`[[rr:Silence direction and word transitions on a built stream]]` its
+partial carried text on 24 blocks of 1374 with partial words on against
+510 without, where utter's carried text on 510 either way.
+
 Finals gain the same `energy_dbfs` on each word and `floor_dbfs` beside
 the text. What each field means exactly is `[[rr:TD-2#Interface]]`; how a
 host reads them for silence and for end of speech is
-`[[rr:TD-8#Decision outcome]]`.
+`[[rr:TD-8#Decision outcome]]`. The trailing `[sil]` entry ends at the
+last frame decoded rather than at the last sample fed, so its span lags
+the audio by the chunk, a constant on the built stream; a host adding
+its own bound to that span is adding it to a clock that runs behind.
 
 **How much to trust a partial word.** A word in a partial may still be
 revised as more audio arrives; on the Speech Commands split the first
@@ -127,6 +141,81 @@ readings, not a lattice posterior, but it is well calibrated in practice:
 the derivation and a benchmark that holds the predicted survival against
 the measured survival over the testing split are in
 [`docs/benchmarks/partial-trust.md`](docs/benchmarks/partial-trust.md).
+
+The second read is the entropy of the readings' softmax, `-sum(p*log p)`
+over `softmax(confidences)`, and it costs nothing beyond the partial in
+hand: it ranks first sightings as well as the gap does and keeps ranking
+them inside every bucket of the gap, where the gap itself is held fixed,
+`[[rr:The same signals at equal gap]]`. It is always defined, where the
+motion below usually is not. The runtime does not report it, because it
+is a function of the confidences one partial already carries.
+
+The third is the motion, `lead_delta`. At a first sighting the word's
+own reading is usually newborn and its motion null, so what is there to
+read is the displaced reading's fall; held out, the motion adds little
+to the gap and costs nothing, `[[rr:What the motion figures say]]`. Read
+it instead one advance later, on the hold: at that moment the leader's
+own `lead_delta` separates the words that survive from the ones about to
+be revised, and the same page charges the 240 ms that wait costs
+`[[rr:Holding one advance]]`. A lead and its motion disagreeing in sign,
+a reading that leads but is losing, is the case to wait out
+`[[rr:Leading but losing]]`.
+
+## Five reads off one partial
+
+Each is a line, and the bar in it is the host's. The figures behind
+them are on the two benchmark pages, which is also where the reads that
+did not survive measurement are recorded.
+
+```python
+alts = json.loads(p)["partial_alternatives"]
+top  = alts[0]
+
+# 1. trust: will the leading word hold? (sigmoid(gap), above)
+trust = 1 / (1 + math.exp(-(top["confidence"] - alts[1]["confidence"])))
+
+# 2. a word is coming: a reading that extends the partial and is gaining
+coming = [a for a in alts if a["relation"] == "extends"
+          and (a["lead_delta"] or 0) > 0]
+# its extra word is the text past the partial's:
+next_word = coming[0]["text"][len(top["text"]):].split()[:1] if coming else []
+
+# 3. kept silence: the empty reading leads and its lead is not moving
+quiet = top["text"] == "[sil]" and abs(top["lead_delta"] or 0) < 0.5
+
+# 4. the last word may not be there: the best reading without it
+prefix = next((a for a in alts if a["relation"] == "prefix"), None)
+doubt  = prefix["confidence"] - top["confidence"] if prefix else None
+
+# 5. end of speech: the trailing [sil] entry's span, against your bound
+tail = json.loads(p)["partial_result"][-1]
+ended = tail["word"] == "[sil]" and \
+        (tail["end_sample"] - tail["start_sample"]) / 16000 > 0.5
+```
+
+Read 2 before a first word is every word-carrying reading, since they
+all extend the empty one; the empty reading's *own* velocity is not the
+read, because it costs two alarms a second in silence that is merely
+being kept, where the extending reading costs none
+`[[rr:The two crossings, as fitted signals]]`. Whether either foretells
+a word at all is exploratory and measured on spliced words, not on
+recorded speech `[[rr:Calling a word before it arrives: exploratory]]`;
+what *is* measured is the preview: the coming word's reading is often in
+the beam an advance before the partial grows, and its identity is right
+about one time in six `[[rr:Preview accuracy by the lead still to run]]`.
+
+Read 3 is silence held in the beam as a lead that hovers rather than
+grows `[[rr:What the readings do in silence that is being kept]]`.
+Read 4 is null evidence and nothing more: a `prefix` reading competes by
+omitting the partial's tail, it is not a posterior for a null at a word
+position, and a competitor that is absent from the list is unknown
+evidence rather than evidence of absence
+`[[rr:TD-9#Every reading names its relation to the partial]]`.
+Read 5 is TD-8's clock, and it stays the clock: the motion trades
+mistaken pauses against finishes missed rather than beating it
+`[[rr:The end-of-speech confusion]]`. A null `lead_delta` in any of
+these is a history the reading does not have; treat it as unknown, never
+as a zero.
 
 ## What it does
 
