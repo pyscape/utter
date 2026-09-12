@@ -120,8 +120,7 @@ endpoint rule thresholds are read from the file; the stock file carries
 min-active 200, max-active 3000, beam 10.0, acoustic scale 1.0,
 subsampling 3, silence phones 1 to 10, and rules 2, 3 and 4 at 0.5, 1.0
 and 2.0 s, and does not set frames per chunk, so the stock model runs
-Kaldi's default of 24 input frames per chunk; the consumer ships a
-sibling with frames per chunk 12 and the three rules at 0.4 s. Kaldi defaults fill the rest: rule 1 at 5.0 s with
+Kaldi's default of 24 input frames per chunk; a host may ship a sibling configuration with a smaller chunk and shorter trailing-silence rules, and the runtime takes whatever the file says. Kaldi defaults fill the rest: rule 1 at 5.0 s with
 no speech required, rule 5 at 20 s of utterance, rule 2 relative cost
 2.0, rule 3 relative cost 8.0, rule 4 unbounded.
 
@@ -134,7 +133,8 @@ every frame; libvosk sets max count 100.
 
 ### Inputs: the grammar
 
-A list of strings. libvosk tokenizes each on spaces, drops words absent
+A list of strings, bounded at fewer than 300 distinct words; a larger
+grammar is refused at construction. libvosk tokenizes each on spaces, drops words absent
 from the word table with a warning, and treats each string as one
 sentence for the bigram estimator. The runtime does the same, including the
 warning. A grammar may include the model's unknown-word symbol, and
@@ -502,7 +502,7 @@ stock wheel produced there:
 | decode compute per 40 ms block, p95 | 5 ms | 2 ms |
 | real-time factor over the corpus | 0.05 | 0.019 |
 | `Model::open` | 2 s | not measured |
-| `Recognizer::new` with a 62-word grammar | 250 ms | not measured |
+| `Recognizer::new` with a grammar under 300 words | 250 ms | not measured |
 | resident memory with one recognizer | 300 MB | not measured |
 | partial first appearance after word end, p50 and p90 | 40 ms and 190 ms | 40 ms and 190 ms |
 

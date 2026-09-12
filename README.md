@@ -18,7 +18,7 @@ runtime specification. The first use case it is built for is in
 ## Why
 
 Vosk is the best small offline recognizer for a closed vocabulary, and
-its partials are fast: on a 62-word grammar a spoken word shows up in
+its partials are fast: under a grammar of a few dozen words a spoken word shows up in
 the partial a median 40 ms after it ends, against about half a second
 for every ONNX streaming model tried under the same grammar. But Vosk
 is a C++ wrapper around Kaldi, and Kaldi does not build on Windows
