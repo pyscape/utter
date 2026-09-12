@@ -84,6 +84,25 @@ mod avx2 {
         out
     }
 
+    /// `hsum` over four accumulators at once, same tree, so the results do not move: the
+    /// pairwise lane fold, then `(a0+a1) + (a2+a3)`. Lanes 0, 4, 1, 5 hold the four sums.
+    #[target_feature(enable = "avx2,fma")]
+    unsafe fn hsum4(u: __m256, v: __m256, w: __m256, x: __m256) -> __m256 {
+        let uv = _mm256_add_ps(
+            _mm256_permute2f128_ps(u, v, 0x20),
+            _mm256_permute2f128_ps(u, v, 0x31),
+        );
+        let wx = _mm256_add_ps(
+            _mm256_permute2f128_ps(w, x, 0x20),
+            _mm256_permute2f128_ps(w, x, 0x31),
+        );
+        let t = _mm256_add_ps(
+            _mm256_shuffle_ps(uv, wx, 0x88),
+            _mm256_shuffle_ps(uv, wx, 0xdd),
+        );
+        _mm256_add_ps(_mm256_shuffle_ps(t, t, 0x88), _mm256_shuffle_ps(t, t, 0xdd))
+    }
+
     /// `[[rr:TD-3#A tile fits the register file]]`
     #[target_feature(enable = "avx2,fma")]
     pub unsafe fn dot4x3(a: [&[f32]; 4], b: [&[f32]; 3], out: &mut [[f32; 3]; 4]) {
@@ -102,9 +121,16 @@ mod avx2 {
             }
             i += 8;
         }
+        let mut st = [0.0f32; 24];
+        let p = st.as_mut_ptr();
+        _mm256_storeu_ps(p, hsum4(acc[0][0], acc[0][1], acc[0][2], acc[1][0]));
+        _mm256_storeu_ps(p.add(8), hsum4(acc[1][1], acc[1][2], acc[2][0], acc[2][1]));
+        _mm256_storeu_ps(p.add(16), hsum4(acc[2][2], acc[3][0], acc[3][1], acc[3][2]));
+        const LANE: [usize; 4] = [0, 4, 1, 5];
         for r in 0..4 {
             for c in 0..3 {
-                out[r][c] = hsum(acc[r][c]);
+                let f = r * 3 + c;
+                out[r][c] = st[(f / 4) * 8 + LANE[f % 4]];
             }
         }
         while i < k {
@@ -272,6 +298,59 @@ pub fn gemm_abt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The accumulation order `[[rr:TD-3#Accumulation order is part of the contract]]` fixes:
+    /// eight lanes over k, folded `(a0+a4 + a1+a5) + (a2+a6 + a3+a7)`, then a scalar tail.
+    fn lane_tree(a: &[f32], b: &[f32]) -> f32 {
+        let k = a.len();
+        let mut acc = [0.0f32; 8];
+        let mut i = 0;
+        while i + 8 <= k {
+            for (l, acc) in acc.iter_mut().enumerate() {
+                *acc = a[i + l].mul_add(b[i + l], *acc);
+            }
+            i += 8;
+        }
+        let mut s =
+            ((acc[0] + acc[4]) + (acc[1] + acc[5])) + ((acc[2] + acc[6]) + (acc[3] + acc[7]));
+        while i < k {
+            s += a[i] * b[i];
+            i += 1;
+        }
+        s
+    }
+
+    #[test]
+    fn accumulation_order_is_the_contract() {
+        // shapes that exercise the 4x3 tile, its column tail, and a k that is not a multiple
+        // of eight
+        for &(m, k, n) in &[
+            (24usize, 1280usize, 96usize),
+            (24, 150, 640),
+            (8, 96, 11),
+            (5, 37, 7),
+        ] {
+            let a: Vec<f32> = (0..m * k)
+                .map(|i| (((i * 2654435761) % 65521) as f32 / 32760.0) - 1.0)
+                .collect();
+            let b: Vec<f32> = (0..n * k)
+                .map(|i| (((i * 40503 + 7) % 65519) as f32 / 32759.0) - 1.0)
+                .collect();
+            let mut c = vec![0.0f32; m * n];
+            gemm_abt(&a, m, k, &b, n, None, &mut c);
+            for i in 0..m {
+                for j in 0..n {
+                    let want = lane_tree(&a[i * k..(i + 1) * k], &b[j * k..(j + 1) * k]);
+                    assert_eq!(
+                        c[i * n + j].to_bits(),
+                        want.to_bits(),
+                        "{m}x{k}x{n} at {i},{j}: {} vs {want}",
+                        c[i * n + j]
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn matches_naive() {

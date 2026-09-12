@@ -11,8 +11,11 @@ pub struct DiagGmm {
     pub dim: usize,
     pub num_gauss: usize,
     gconsts: Vec<f32>,
-    means_invvars: Vec<f32>,
-    inv_vars: Vec<f32>,
+    /// Kaldi's parameters transposed to `[dim][num_gauss]`. A frame then accumulates every
+    /// Gaussian at once, one dimension at a time, which is the order the per-Gaussian dot
+    /// product summed in and so gives the same float.
+    means_invvars_t: Vec<f32>,
+    inv_vars_t: Vec<f32>,
 }
 
 impl DiagGmm {
@@ -48,28 +51,42 @@ impl DiagGmm {
                 gc as f32
             })
             .collect();
+        let mut means_invvars_t = vec![0.0f32; d * g];
+        let mut inv_vars_t = vec![0.0f32; d * g];
+        for m in 0..g {
+            for k in 0..d {
+                means_invvars_t[k * g + m] = means_invvars[m * d + k];
+                inv_vars_t[k * g + m] = inv_vars[m * d + k];
+            }
+        }
         Ok(DiagGmm {
             dim: d,
             num_gauss: g,
             gconsts,
-            means_invvars,
-            inv_vars,
+            means_invvars_t,
+            inv_vars_t,
         })
     }
 
-    pub fn loglikes(&self, x: &[f32], out: &mut [f32]) {
-        let d = self.dim;
-        let sq: Vec<f32> = x.iter().map(|v| v * v).collect();
-        for m in 0..self.num_gauss {
-            let mi = &self.means_invvars[m * d..(m + 1) * d];
-            let iv = &self.inv_vars[m * d..(m + 1) * d];
-            let mut a = 0.0f32;
-            let mut b = 0.0f32;
-            for k in 0..d {
-                a += mi[k] * x[k];
-                b += iv[k] * sq[k];
+    pub fn loglikes(&self, x: &[f32], out: &mut [f32], scratch: &mut Vec<f32>) {
+        let (d, g) = (self.dim, self.num_gauss);
+        let a = &mut out[..g];
+        a.fill(0.0);
+        scratch.clear();
+        scratch.resize(g, 0.0);
+        let b = &mut scratch[..g];
+        for k in 0..d {
+            let xk = x[k];
+            let sq = xk * xk;
+            let mi = &self.means_invvars_t[k * g..(k + 1) * g];
+            let iv = &self.inv_vars_t[k * g..(k + 1) * g];
+            for m in 0..g {
+                a[m] += mi[m] * xk;
+                b[m] += iv[m] * sq;
             }
-            out[m] = self.gconsts[m] + a - 0.5 * b;
+        }
+        for m in 0..g {
+            out[m] = self.gconsts[m] + out[m] - 0.5 * b[m];
         }
     }
 }
@@ -464,10 +481,13 @@ pub struct IvectorInfo {
     pub opts: IvectorOptions,
     pub gmm: DiagGmm,
     pub extractor: IvectorExtractor,
-    /// LDA rows x (spliced dim + 1): linear part then the offset column.
-    lda: Vec<f32>,
+    /// LDA transposed to `[spliced dim][rows]`, so a frame accumulates every output
+    /// dimension at once, one input dimension at a time: the order the row-major product
+    /// summed in, and the same float.
+    lda_t: Vec<f32>,
+    /// The offset column, each output dimension's starting value.
+    lda_offset: Vec<f32>,
     lda_rows: usize,
-    lda_cols: usize,
     /// Global CMVN stats, row 0: sums then count.
     global_mean_stats: Vec<f64>,
 }
@@ -514,13 +534,26 @@ impl IvectorInfo {
         if lda_rows != gmm.dim || gmm.dim != extractor.feat_dim {
             return Err(err("i-vector feature dimensions disagree"));
         }
+        let lin = lda_cols.min(spliced);
+        let mut lda_t = vec![0.0f32; lin * lda_rows];
+        let mut lda_offset = vec![0.0f32; lda_rows];
+        for r in 0..lda_rows {
+            for (c, t) in lda_t.chunks_exact_mut(lda_rows).enumerate() {
+                t[r] = lda[r * lda_cols + c];
+            }
+            lda_offset[r] = if lda_cols > lin {
+                lda[r * lda_cols + lin]
+            } else {
+                0.0
+            };
+        }
         Ok(IvectorInfo {
             opts,
             gmm,
             extractor,
-            lda,
+            lda_t,
+            lda_offset,
             lda_rows,
-            lda_cols,
             global_mean_stats,
         })
     }
@@ -608,6 +641,7 @@ impl<'a> IvectorStream<'a> {
         let o = &self.info.opts;
         let fd = self.info.extractor.feat_dim;
         let mut ll = vec![0.0f32; self.info.gmm.num_gauss];
+        let mut scratch: Vec<f32> = Vec::new();
         let mut raw: Vec<Vec<f32>> = Vec::with_capacity(out.len());
         let mut posts = Vec::with_capacity(out.len());
         for &(t, weight) in &out {
@@ -615,7 +649,7 @@ impl<'a> IvectorStream<'a> {
             if weight != 0.0 {
                 let mut f = vec![0.0f32; fd];
                 self.lda_frame(t, true, &mut f);
-                self.info.gmm.loglikes(&f, &mut ll);
+                self.info.gmm.loglikes(&f, &mut ll, &mut scratch);
                 post = select_posteriors(&ll, o.num_gselect, self.min_post_for(weight));
                 for p in post.iter_mut() {
                     p.1 *= o.posterior_scale * weight;
@@ -728,15 +762,13 @@ impl<'a> IvectorStream<'a> {
                 spliced[n * dim..(n + 1) * dim].copy_from_slice(&self.frames[t2]);
             }
         }
-        let (rows, cols) = (self.info.lda_rows, self.info.lda_cols);
-        let lin = cols.min(spliced.len());
-        for r in 0..rows {
-            let row = &self.info.lda[r * cols..(r + 1) * cols];
-            let mut acc = if cols > lin { row[lin] } else { 0.0 };
-            for c in 0..lin {
-                acc += row[c] * spliced[c];
+        let rows = self.info.lda_rows;
+        out[..rows].copy_from_slice(&self.info.lda_offset);
+        for (c, col) in self.info.lda_t.chunks_exact(rows).enumerate() {
+            let s = spliced[c];
+            for r in 0..rows {
+                out[r] += col[r] * s;
             }
-            out[r] = acc;
         }
     }
 
@@ -751,11 +783,12 @@ impl<'a> IvectorStream<'a> {
             let mut normalized: Vec<Vec<f32>> = Vec::with_capacity(pending.len());
             let mut raw: Vec<Vec<f32>> = Vec::with_capacity(pending.len());
             let mut ll = vec![0.0f32; this.info.gmm.num_gauss];
+            let mut scratch: Vec<f32> = Vec::new();
             let mut posts = Vec::with_capacity(pending.len());
             for &t in pending.iter() {
                 let mut f = vec![0.0f32; fd];
                 this.lda_frame(t, true, &mut f);
-                this.info.gmm.loglikes(&f, &mut ll);
+                this.info.gmm.loglikes(&f, &mut ll, &mut scratch);
                 let mut post = select_posteriors(&ll, o.num_gselect, o.min_post);
                 for p in post.iter_mut() {
                     p.1 *= o.posterior_scale;

@@ -80,13 +80,20 @@ pub struct Mfcc {
     pub frame_shift: usize,
     num_ceps: usize,
     win: Vec<f32>,
-    filt: Vec<Vec<f32>>,
-    dct: Vec<Vec<f32>>,
+    /// Each mel filter as the bin it starts at and its weights over the bins it covers. A
+    /// triangle is non-zero over a twentieth of the spectrum and the rest contributed `+0.0`
+    /// to a sum of non-negative terms, which leaves it unchanged.
+    filt: Vec<(usize, Vec<f32>)>,
+    /// The DCT transposed to `[mel bin][cepstrum]`, so one pass over the log mel energies
+    /// advances every coefficient, each summing over the bins in the order it did before.
+    dct_t: Vec<f32>,
     lift: Vec<f32>,
     preemph: f32,
     dither: f32,
     fft: RealFft,
     rng: u64,
+    /// Reused between frames.
+    scratch: (Vec<f32>, Vec<f32>, Vec<f32>),
 }
 
 impl Mfcc {
@@ -112,8 +119,8 @@ impl Mfcc {
         let (mel_low, mel_high) = (mel(o.low_freq), mel(high));
         let num_mel = o.num_mel_bins;
         let delta = (mel_high - mel_low) / (num_mel as f32 + 1.0);
-        let mut filt = vec![vec![0.0f32; nbins]; num_mel];
-        for (m, f) in filt.iter_mut().enumerate() {
+        let mut dense = vec![vec![0.0f32; nbins]; num_mel];
+        for (m, f) in dense.iter_mut().enumerate() {
             let (l, c, r) = (
                 mel_low + m as f32 * delta,
                 mel_low + (m + 1) as f32 * delta,
@@ -130,6 +137,14 @@ impl Mfcc {
                 }
             }
         }
+        let filt: Vec<(usize, Vec<f32>)> = dense
+            .into_iter()
+            .map(|f| {
+                let lo = f.iter().position(|&w| w != 0.0).unwrap_or(0);
+                let hi = f.iter().rposition(|&w| w != 0.0).map_or(0, |i| i + 1);
+                (lo, f[lo..hi.max(lo)].to_vec())
+            })
+            .collect();
         let mut dct = vec![vec![0.0f32; num_mel]; o.num_ceps];
         for (k, row) in dct.iter_mut().enumerate() {
             for (n, v) in row.iter_mut().enumerate() {
@@ -151,18 +166,25 @@ impl Mfcc {
                 }
             })
             .collect();
+        let mut dct_t = vec![0.0f32; num_mel * o.num_ceps];
+        for (k, row) in dct.iter().enumerate() {
+            for (n, v) in row.iter().enumerate() {
+                dct_t[n * o.num_ceps + k] = *v;
+            }
+        }
         Mfcc {
             frame_len,
             frame_shift,
             num_ceps: o.num_ceps,
             win,
             filt,
-            dct,
+            dct_t,
             lift,
             preemph: o.preemph,
             dither: o.dither,
             fft: RealFft::new(fft_size),
             rng: 0x9E3779B97F4A7C15,
+            scratch: (Vec::new(), Vec::new(), Vec::new()),
         }
     }
 
@@ -195,7 +217,9 @@ impl Mfcc {
     /// One frame of `frame_len` samples to `num_ceps` coefficients.
     pub fn compute_frame(&mut self, frame: &[f32], out: &mut [f32]) {
         assert_eq!(frame.len(), self.frame_len);
-        let mut w: Vec<f32> = frame.to_vec();
+        let (mut w, mut power, mut logmel) = std::mem::take(&mut self.scratch);
+        w.clear();
+        w.extend_from_slice(frame);
         if self.dither != 0.0 {
             for x in w.iter_mut() {
                 *x += self.dither * self.gauss();
@@ -213,18 +237,25 @@ impl Mfcc {
             w[i] *= self.win[i];
         }
         let nbins = self.fft.size() / 2 + 1;
-        let mut power = vec![0.0f32; nbins];
+        power.clear();
+        power.resize(nbins, 0.0);
         self.fft.power_spectrum(&w, &mut power);
-        let num_mel = self.filt.len();
-        let mut logmel = vec![0.0f32; num_mel];
-        for (m, f) in self.filt.iter().enumerate() {
-            let e: f32 = f.iter().zip(&power).map(|(a, b)| a * b).sum();
-            logmel[m] = e.max(f32::EPSILON).ln();
+        logmel.clear();
+        for (lo, f) in self.filt.iter() {
+            let e: f32 = f.iter().zip(&power[*lo..]).map(|(a, b)| a * b).sum();
+            logmel.push(e.max(f32::EPSILON).ln());
         }
-        for k in 0..self.num_ceps {
-            let c: f32 = self.dct[k].iter().zip(&logmel).map(|(a, b)| a * b).sum();
-            out[k] = c * self.lift[k];
+        let nc = self.num_ceps;
+        out[..nc].fill(0.0);
+        for (row, &m) in self.dct_t.chunks_exact(nc).zip(&logmel) {
+            for k in 0..nc {
+                out[k] += row[k] * m;
+            }
         }
+        for k in 0..nc {
+            out[k] *= self.lift[k];
+        }
+        self.scratch = (w, power, logmel);
     }
 
     /// All complete frames of `samples` (int16 range) as [num_frames x num_ceps].

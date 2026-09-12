@@ -10,6 +10,34 @@
 
 use crate::fst::{Label, StateId, VectorFst, NO_STATE};
 use std::collections::HashMap;
+
+/// The token maps key on a graph state id. `HashMap`'s default hash costs more than the probe
+/// it protects and its quality buys nothing for a dense integer key, so the two per-frame maps
+/// use a multiply-rotate over the id instead. The map's iteration order changes with the hash,
+/// and the order decides which tokens a narrowing cutoff prunes; it did not move the output
+/// over the corpus, and could not have been fixed before, since the default hash is seeded
+/// afresh every run.
+#[derive(Default)]
+struct StateHasher(u64);
+
+impl std::hash::Hasher for StateHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(v as u64);
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type StateMap<V> = HashMap<StateId, V, std::hash::BuildHasherDefault<StateHasher>>;
 use std::sync::Arc as Rc;
 use std::sync::Arc;
 
@@ -73,7 +101,7 @@ pub struct Decoder<'g> {
     pub config: DecoderConfig,
     tid2pdf: &'g [i32],
     tid2phone: &'g [i32],
-    cur: HashMap<StateId, Token>,
+    cur: StateMap<Token>,
     num_frames_decoded: usize,
     /// Per state: whether it has input-epsilon arcs.
     has_eps: Vec<bool>,
@@ -99,7 +127,7 @@ impl<'g> Decoder<'g> {
             config,
             tid2pdf,
             tid2phone,
-            cur: HashMap::new(),
+            cur: StateMap::default(),
             num_frames_decoded: 0,
             has_eps,
             tmp_costs: Vec::new(),
@@ -199,7 +227,8 @@ impl<'g> Decoder<'g> {
         let frame = self.num_frames_decoded as u32;
         let (cur_cutoff, adaptive_beam, best_state) = self.get_cutoff();
         let prev = std::mem::take(&mut self.cur);
-        let mut next: HashMap<StateId, Token> = HashMap::with_capacity(prev.len() * 2);
+        let mut next: StateMap<Token> =
+            StateMap::with_capacity_and_hasher(prev.len() * 2, Default::default());
         let mut next_cutoff = f32::INFINITY;
         let mut cost_offset = 0.0f32;
         if let Some(bs) = best_state {
