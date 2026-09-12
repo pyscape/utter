@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-12 06:33:41Z, utter 5cee590, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4.
+Run 2026-09-12 15:13:03Z, utter aef2ce6, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4.
 
 ## Engines
 
@@ -11,7 +11,7 @@ Each engine opened the model and decoded a clip before the run began; a model an
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
 | vosk | 0.18 | 0.4 |
-| utterpy | 0.13 | 22.8 |
+| utterpy | 0.13 | 24.3 |
 
 ## Full grammar: accuracy
 
@@ -20,12 +20,19 @@ Each engine opened the model and decoded a clip before the run began; a model an
 | vosk | 10069 / 11005 | 91.49% | 2451 | 40 / 250 ms over 8554 | 1137 / 9218 (12.3%) |
 | utterpy | 10102 / 11005 | 91.79% | 2432 | 40 / 250 ms over 8573 | 1147 / 9230 (12.4%) |
 
+The last column counts the first word shown against the final, which a host feels as two different things. A partial overtaken by another partial is a flicker on the screen; a partial that stands through every later partial and is replaced only by the final is not a flicker at all, and no amount of waiting on partials would have caught it. The two columns below do not sum to that one: a partial can be overtaken and then come back, which the last column does not count and the first of these does. The lag is the gap between the two partials, and it decides whether a flicker is visible or too brief to see.
+
+| engine | first word shown | overtaken by a later partial | stood, then changed by the final | revision lag p50 / p90 | lag min / max |
+|---|---|---|---|---|---|
+| vosk | 9218 | 688 (7.5%) | 456 (4.9%) | 240 / 240 ms | 240 / 480 ms |
+| utterpy | 9230 | 691 (7.5%) | 462 (5.0%) | 240 / 240 ms | 240 / 480 ms |
+
 Compute, one recognizer per clip:
 
 | engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |
 |---|---|---|---|---|---|
-| vosk | 0.32 | 0.288 | 0.288 | 0.0167 | 0.0170 |
-| utterpy | 2.29 | 0.026 | 0.027 | 0.0140 | 0.0140 |
+| vosk | 0.32 | 0.287 | 0.287 | 0.0168 | 0.0171 |
+| utterpy | 2.45 | 0.025 | 0.026 | 0.0137 | 0.0137 |
 
 | word | vosk | utterpy |
 |---|---|---|
@@ -125,16 +132,16 @@ Both engines endpointed on 781 of the 800, at the same block on 764 (97.82%). En
 
 | block ms | engine | accuracy | first appearance p50 / p90 | same instant as the finest block | RTF, decode only |
 |---|---|---|---|---|---|
-| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0171 |
-| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0143 |
+| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0172 |
+| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0140 |
 | 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0170 |
-| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0143 |
-| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0168 |
-| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0142 |
-| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0168 |
-| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0141 |
-| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 317, up to 60 ms later | 0.0168 |
-| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0142 |
+| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0136 |
+| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0169 |
+| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0138 |
+| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0169 |
+| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0147 |
+| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 317, up to 60 ms later | 0.0167 |
+| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0149 |
 
 The column that carries the result is the per-clip one, not the quantiles: two block sizes can produce the same p50 by luck, and only a clip-by-clip comparison against the finest block (10 ms) shows whether the word actually appeared at the same instant.
 
@@ -144,8 +151,8 @@ One recognizer over 295 s of the clips joined end to end.
 
 | engine | RTF | per-block compute ms p50 / p95 / p99 |
 |---|---|---|
-| vosk | 0.0123 | 0.049 / 2.84 / 3.28 |
-| utterpy | 0.0115 | 0.090 / 2.43 / 2.69 |
+| vosk | 0.0123 | 0.049 / 2.85 / 3.33 |
+| utterpy | 0.0105 | 0.042 / 2.40 / 2.68 |
 
 ## Accuracy against noise
 
@@ -172,28 +179,28 @@ Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNem
 
 | entries | vosk accuracy | vosk first ms | vosk later ms | vosk RTF | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF |
 |---|---|---|---|---|---|---|---|---|
-| 35 | 94.0% | 0.23 | 0.190 | 0.0152 | 94.5% | 0.92 | 0.014 | 0.0139 |
-| 60 | 92.5% | 0.29 | 0.224 | 0.0163 | 92.8% | 1.49 | 0.019 | 0.0137 |
-| 92 | 92.0% | 0.40 | 0.286 | 0.0168 | 92.2% | 2.37 | 0.027 | 0.0139 |
-| 150 | 91.0% | 0.44 | 0.387 | 0.0174 | 92.0% | 3.69 | 0.041 | 0.0139 |
-| 200 | 90.5% | 0.56 | 0.458 | 0.0179 | 91.5% | 5.04 | 0.048 | 0.0140 |
-| 246 | 89.0% | 0.61 | 0.518 | 0.0184 | 89.8% | 6.07 | 0.058 | 0.0140 |
+| 35 | 94.0% | 0.23 | 0.189 | 0.0153 | 94.5% | 0.95 | 0.014 | 0.0133 |
+| 60 | 92.5% | 0.28 | 0.227 | 0.0164 | 92.8% | 1.51 | 0.019 | 0.0139 |
+| 92 | 92.0% | 0.35 | 0.289 | 0.0169 | 92.2% | 2.46 | 0.026 | 0.0137 |
+| 150 | 91.0% | 0.44 | 0.385 | 0.0174 | 92.0% | 3.71 | 0.038 | 0.0137 |
+| 200 | 90.5% | 0.56 | 0.459 | 0.0179 | 91.5% | 5.27 | 0.046 | 0.0140 |
+| 246 | 89.0% | 0.59 | 0.518 | 0.0184 | 89.8% | 6.29 | 0.057 | 0.0149 |
 
 ## Twelve-class: ten commands plus the unknown-word symbol
 
-| engine | commands correct | fillers and digits read as unknown | fillers and digits read as a command | noise seconds | noise seconds with a word |
+| engine | commands correct | fillers and digits read as unknown | fillers and digits read as a command | noise minutes | silence finals per minute |
 |---|---|---|---|---|---|
-| vosk | 3916 / 4074 (96.12%) | 5773 / 6931 (83.29%) | 671 (9.68%) | 398 | 0 |
-| utterpy | 3920 / 4074 (96.22%) | 5815 / 6931 (83.90%) | 633 (9.13%) | 398 | 0 |
+| vosk | 3916 / 4074 (96.12%) | 5773 / 6931 (83.29%) | 671 (9.68%) | 6.7 | 0.0 |
+| utterpy | 3920 / 4074 (96.22%) | 5815 / 6931 (83.90%) | 633 (9.13%) | 6.7 | 0.0 |
 
 ## Background noise under the full grammar
 
-| engine | grammar | noise minutes | partial blocks | blocks with a word at rank 0 | phantom final words per minute | word blocks with the silence reading among the rivals |
+| engine | grammar | noise minutes | partial blocks | blocks with a word at rank 0 | silence finals per minute | word blocks with the silence reading among the rivals |
 |---|---|---|---|---|---|---|
-| vosk | full | 6.6 | 9950 | 0 (0.00%) | 0.0 | no alternatives |
-| vosk | full + [unk] | 6.6 | 9950 | 0 (0.00%) | 0.0 | no alternatives |
-| utterpy | full | 6.6 | 9950 | 0 (0.00%) | 0.0 | 0 / 0 |
-| utterpy | full + [unk] | 6.6 | 9950 | 0 (0.00%) | 0.0 | 0 / 0 |
+| vosk | full | 6.7 | 9932 | 0 (0.00%) | 1.2 | no alternatives |
+| vosk | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 1.1 | no alternatives |
+| utterpy | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+| utterpy | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 ## Reading
 
 Accuracy and first-appearance latency are at parity with the stock
@@ -241,3 +248,4 @@ Noise costs both engines the same. Accuracy halves between clean and
 0 dB, and the paired test finds no difference between the engines at
 any level. An earlier run showed the runtime 2.3 points behind at
 0 dB; that was TD-6's bug, not the front end.
+
