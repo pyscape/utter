@@ -2,6 +2,7 @@
 //!
 //! `[[rr:TD-2]]`
 
+pub mod capi;
 pub mod compose;
 pub mod decode;
 pub mod decoder;
