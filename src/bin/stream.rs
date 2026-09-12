@@ -16,6 +16,7 @@ fn main() {
     let mut alternatives = 0usize;
     let mut partial_words = false;
     let mut dither: Option<f32> = None;
+    let mut unknown_cost: Option<f32> = None;
     let mut threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -26,6 +27,7 @@ fn main() {
             "--alternatives" => alternatives = it.next().unwrap().parse().unwrap(),
             "--partial-words" => partial_words = true,
             "--dither" => dither = Some(it.next().unwrap().parse().unwrap()),
+            "--unknown-cost" => unknown_cost = Some(it.next().unwrap().parse().unwrap()),
             "--threads" => threads = it.next().unwrap().parse().unwrap(),
             "--corpus" => {
                 let dir = PathBuf::from(it.next().unwrap());
@@ -57,7 +59,7 @@ fn main() {
                 if i >= wavs.len() {
                     break;
                 }
-                let line = run_take(&model, &grammar, &wavs[i], block_ms, alternatives, partial_words);
+                let line = run_take(&model, &grammar, &wavs[i], block_ms, alternatives, partial_words, unknown_cost);
                 out.lock().unwrap().push((i, line));
             });
         }
@@ -69,10 +71,11 @@ fn main() {
     }
 }
 
-fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, block_ms: usize, alternatives: usize, partial_words: bool) -> String {
+fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, block_ms: usize, alternatives: usize, partial_words: bool, unknown_cost: Option<f32>) -> String {
     let w = read_wav(wav).expect("wav");
     let t0 = Instant::now();
-    let mut rec = Recognizer::new(model, w.sample_rate as f32, grammar).expect("recognizer");
+    let opts = utter::recognizer::RecognizerOptions { unknown_cost, ..Default::default() };
+    let mut rec = Recognizer::with_options(model, w.sample_rate as f32, grammar, &opts).expect("recognizer");
     let t_new = t0.elapsed();
     rec.set_words(true);
     rec.set_partial_words(partial_words);
