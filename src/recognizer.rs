@@ -61,8 +61,11 @@ pub struct RecognizerOptions {
     pub unknown_cost: Option<f32>,
     pub max_graph_states: usize,
     /// Weight for frames the decoder's best path calls silence; 1.0 turns it off.
-    /// `[[rr:i-vector: no oracle on this machine]]`
+    /// `[[rr:i-vector: against the wheel's Kaldi, passed once its quiet-frame rule was matched]]`
     pub silence_weight: f32,
+    /// One endpoint rule of the host's beside the model's, off by default; the switch for
+    /// experiments that call a final earlier than Kaldi's rules, at a parity cost G5 measures.
+    pub endpoint_rule: Option<crate::model::EndpointRule>,
 }
 
 impl Default for RecognizerOptions {
@@ -71,6 +74,7 @@ impl Default for RecognizerOptions {
             unknown_cost: None,
             max_graph_states: DEFAULT_MAX_GRAPH_STATES,
             silence_weight: SILENCE_WEIGHT,
+            endpoint_rule: None,
         }
     }
 }
@@ -148,6 +152,8 @@ pub struct Recognizer<'m> {
     nnet: Option<LoopedNnet<'m>>,
     decoder: Option<Decoder<'m>>,
     silence_weighting: SilenceWeighting,
+    endpoint_rule: Option<crate::model::EndpointRule>,
+    endpoint_veto_nats: Option<f32>,
     frame_offset: usize,
     samples_processed: u64,
     samples_round_start: u64,
@@ -234,6 +240,8 @@ impl<'m> Recognizer<'m> {
         );
         Ok(Recognizer {
             silence_weighting: sw,
+            endpoint_rule: options.endpoint_rule.clone(),
+            endpoint_veto_nats: None,
             model,
             graph,
             sample_rate,
@@ -268,6 +276,24 @@ impl<'m> Recognizer<'m> {
     }
     pub fn set_partial_words(&mut self, on: bool) {
         self.partial_words = on;
+    }
+    /// The host's endpoint bound, `RecognizerOptions::endpoint_rule`: a final once the trailing
+    /// silence reaches `trailing_ms`, unless `extending_veto_nats` is set and a reading that
+    /// extends the partial by a further word is within that many nats of it. The span cannot see
+    /// a word beginning, since the word's label is not yet on the best path while the silence
+    /// before it still counts; the beam can, and the veto reads it. `None` removes the bound.
+    pub fn set_endpoint_bound(
+        &mut self,
+        trailing_ms: Option<f32>,
+        extending_veto_nats: Option<f32>,
+    ) {
+        self.endpoint_rule = trailing_ms.map(|ms| crate::model::EndpointRule {
+            must_contain_nonsilence: true,
+            min_trailing_silence: ms / 1000.0,
+            max_relative_cost: f32::INFINITY,
+            min_utterance_length: 0.0,
+        });
+        self.endpoint_veto_nats = extending_veto_nats;
     }
     /// Partial alternatives to report, 0 for none.
     pub fn set_alternatives(&mut self, n: usize) {
@@ -465,12 +491,30 @@ impl<'m> Recognizer<'m> {
         let utterance = n as f32 * shift;
         let relative = dec.final_relative_cost();
         let contains_nonsilence = utterance > trailing;
-        conf.rules.iter().any(|r| {
+        let fires = |r: &crate::model::EndpointRule| {
             (contains_nonsilence || !r.must_contain_nonsilence)
                 && trailing >= r.min_trailing_silence
                 && relative <= r.max_relative_cost
                 && utterance >= r.min_utterance_length
-        })
+        };
+        if conf.rules.iter().any(fires) {
+            return true;
+        }
+        if !self.endpoint_rule.as_ref().is_some_and(fires) {
+            return false;
+        }
+        match self.endpoint_veto_nats {
+            None => true,
+            Some(nats) => {
+                let alts = dec.alternatives(false, usize::MAX);
+                let Some(top) = alts.first() else { return true };
+                !alts.iter().skip(1).any(|a| {
+                    a.words.len() > top.words.len()
+                        && a.words[..top.words.len()] == top.words[..]
+                        && a.cost - top.cost <= nats
+                })
+            }
+        }
     }
 
     fn update_stable(&mut self) {
