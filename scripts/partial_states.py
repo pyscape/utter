@@ -379,8 +379,7 @@ def run_stream_text(eng, pcm, block_ms, words_on=False):
 def gaining_extender(st, ext_delta):
     """A reading that is rank 0 plus exactly one word and is gaining on the field."""
     return any(
-        len(e["extra"]) == 1 and e["lead_delta"] is not None and e["lead_delta"] >= ext_delta
-        for e in st["extends"]
+        len(e["extra"]) == 1 and e["lead_delta"] is not None and e["lead_delta"] >= ext_delta for e in st["extends"]
     )
 
 
@@ -676,7 +675,9 @@ def transition_records(streams, ext_delta, lookback_ms, forward_ms=1500):
                 leads_ms=None if leads is None else leads["fed"] / SAMPLES_PER_MS,
                 ext_ms=None if ext is None else ext["fed"] / SAMPLES_PER_MS,
                 ext_index=None if ext is None else ext["i"],
-                ext_top=None if ext is None else (ext["extends"][0]["extra"][0] if ext["extends"][0]["extra"] else None),
+                ext_top=None
+                if ext is None
+                else (ext["extends"][0]["extra"][0] if ext["extends"][0]["extra"] else None),
                 ext_top3=None if ext is None else [e["extra"][0] for e in ext["extends"][:3] if e["extra"]],
                 ext_rank0_empty=None if ext is None else not ext["words0"],
                 ext_gaining=None if ext is None else gaining_extender(ext, ext_delta),
@@ -695,7 +696,9 @@ def transition_records(streams, ext_delta, lookback_ms, forward_ms=1500):
                 preview_ms=None,
                 preview_correct_ms=None,
                 gaining_preview_ms=None,
-                final_between=None if prev is None else any(prev["offset"] <= f["fed"] < w["onset"] for f in s_["finals"]),
+                final_between=None
+                if prev is None
+                else any(prev["offset"] <= f["fed"] < w["onset"] for f in s_["finals"]),
             )
             if arrive is not None and ext is not None:
                 row["preview_advances"] = row["arrive_index"] - row["ext_index"]
@@ -763,9 +766,7 @@ def span_errors(streams):
                 if lo <= st["fed"] < hi and st["sil_span"] is not None:
                     out[g["kind"]].append(st["sil_span"] - (st["fed"] - lo) / SAMPLES_PER_MS)
                     if st["last_word_end"] is not None:
-                        decoded[g["kind"]].append(
-                            st["sil_span"] - (st["fed"] - st["last_word_end"]) / SAMPLES_PER_MS
-                        )
+                        decoded[g["kind"]].append(st["sil_span"] - (st["fed"] - st["last_word_end"]) / SAMPLES_PER_MS)
     return out, decoded
 
 
@@ -792,6 +793,7 @@ def dying_extenders(streams, spans, one_word_only=True):
             for k in (True, False):
                 out[k] += len([t for t in seen[k] if t not in reached])
     minutes = total / RATE / 60.0 if total else float("nan")
+
     def per(c):
         return c / minutes if minutes == minutes and minutes else float("nan")
 
@@ -997,9 +999,7 @@ def aligned_velocity(streams):
                     series[(kind, off)]["sil"].append(st["delta"].get("[sil]"))
                 else:
                     series[(kind, off)]["extends"].append(best_extends_delta(st))
-    return {
-        f"{kind}|{off}": {name: spread(v) for name, v in d.items()} for (kind, off), d in series.items()
-    }
+    return {f"{kind}|{off}": {name: spread(v) for name, v in d.items()} for (kind, off), d in series.items()}
 
 
 def crossings(stream, signal, theta):
@@ -1216,9 +1216,7 @@ def onset_study(val, test, noise):
     fitted = {r: {t: onset_scores(val, r, t) for t in ONSET_GRIDS[r]} for r in ONSET_GRIDS}
     best = {r: max(g, key=lambda t: g[t]["f1"]) for r, g in fitted.items()}
     budget = fitted["motion"][best["motion"]]["alarms_per_min"]
-    equal = {
-        r: min(g, key=lambda t: (abs(g[t]["alarms_per_min"] - budget), -g[t]["f1"])) for r, g in fitted.items()
-    }
+    equal = {r: min(g, key=lambda t: (abs(g[t]["alarms_per_min"] - budget), -g[t]["f1"])) for r, g in fitted.items()}
     out = dict(
         alarm_budget_per_min=budget,
         grid={r: {str(t): v for t, v in g.items()} for r, g in fitted.items()},
@@ -1508,9 +1506,7 @@ def write_streams(path, streams):
                         sil_span=st["sil_span"],
                         words0=st["words0"],
                         grew=st["grew"],
-                        readings=[
-                            [t, c, st["delta"].get(t), st["relation"][t]] for t, c in st["readings"]
-                        ],
+                        readings=[[t, c, st["delta"].get(t), st["relation"][t]] for t, c in st["readings"]],
                     )
                     for st in s["states"]
                 ],
@@ -1523,7 +1519,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--model", required=True)
-    ap.add_argument("--engine", default="utterpy", help="utterpy, or utterpy@MS for a host endpoint rule at MS of trailing silence")
+    ap.add_argument(
+        "--engine", default="utterpy", help="utterpy, or utterpy@MS for a host endpoint rule at MS of trailing silence"
+    )
     ap.add_argument("--out", default="docs/benchmarks/partial-states")
     ap.add_argument("--words", type=int, default=2000, help="words per split, at least")
     ap.add_argument("--utterances", type=int, default=UTTERANCES_PER_STREAM)
@@ -1656,9 +1654,7 @@ def main():
         a2[rule]["_lead"] = {k: [x for x in v] for k, v in lt.items()}
     report["A2"] = {rule: {k: v for k, v in d.items() if k != "_lead"} for rule, d in a2.items()}
     report["A2_lead_ms"] = {rule: d["_lead"] for rule, d in a2.items()}
-    report["A2_mcnemar"] = {
-        kind: mcnemar_pair(handled["R0"][kind], handled["R1"][kind]) for kind in ("away", "toward")
-    }
+    report["A2_mcnemar"] = {kind: mcnemar_pair(handled["R0"][kind], handled["R1"][kind]) for kind in ("away", "toward")}
 
     # A3: false alarms.
     report["A3"] = dict(
@@ -1798,7 +1794,9 @@ def main():
     # reading's extra word where there is one, and falls back to R0 where there is not.
     unit = [r for r in rec if r["arrive_ms"] is not None]
     ok0 = [r["arrive_word"] == r["label"] for r in unit]
-    ok1 = [(r["ext_top"] == r["label"]) if r["preview_ms"] is not None else (r["arrive_word"] == r["label"]) for r in unit]
+    ok1 = [
+        (r["ext_top"] == r["label"]) if r["preview_ms"] is not None else (r["arrive_word"] == r["label"]) for r in unit
+    ]
     okg = [
         (r["gext_top"] == r["label"]) if r["gaining_preview_ms"] is not None else (r["arrive_word"] == r["label"])
         for r in unit
@@ -1807,9 +1805,7 @@ def main():
     report["B_mcnemar_gaining"] = mcnemar_pair(ok0, okg)
     call0 = [r["arrive_ms"] - r["onset_ms"] for r in unit]
     call1 = [(r["ext_ms"] - r["onset_ms"]) if r["preview_ms"] is not None else c for r, c in zip(unit, call0)]
-    callg = [
-        (r["gext_ms"] - r["onset_ms"]) if r["gaining_preview_ms"] is not None else c for r, c in zip(unit, call0)
-    ]
+    callg = [(r["gext_ms"] - r["onset_ms"]) if r["gaining_preview_ms"] is not None else c for r, c in zip(unit, call0)]
     report["B_bootstrap_call_ms"] = bootstrap_diff(
         list(zip(call0, call1)), lambda g: mean_metric(1)(g) - mean_metric(0)(g)
     )
@@ -1942,9 +1938,7 @@ def partial_words_check(eng, pcm, block_ms):
     out = {}
     for words_on in (False, True):
         blocks, _ = run_stream_text(eng, pcm, block_ms, words_on)
-        out["on" if words_on else "off"] = dict(
-            blocks=len(blocks), with_text=sum(1 for b in blocks if b["words"])
-        )
+        out["on" if words_on else "off"] = dict(blocks=len(blocks), with_text=sum(1 for b in blocks if b["words"]))
     return out
 
 

@@ -486,9 +486,7 @@ def entropy_motion_cols(e):
 COEF_ORDER = {
     "gap": "intercept, gap",
     "gap + entropy": "intercept, gap, entropy",
-    "gap + motion": (
-        "intercept, gap, displaced `lead_delta`, its missing flag, rank-0 `lead_delta`, its missing flag"
-    ),
+    "gap + motion": ("intercept, gap, displaced `lead_delta`, its missing flag, rank-0 `lead_delta`, its missing flag"),
     "gap + entropy + motion": (
         "intercept, gap, entropy, displaced `lead_delta`, its missing flag, rank-0 `lead_delta`, its missing flag"
     ),
@@ -1033,9 +1031,15 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
     revised = sum(ys)
     good = n - revised
 
-    coefs = {name: fit_cols(fit_entries, fit_ys, cols) for name, cols in
-             (("gap", gap_cols), ("gap + entropy", gap_entropy_cols), ("gap + motion", rule_cols),
-              ("gap + entropy + motion", entropy_motion_cols))}
+    coefs = {
+        name: fit_cols(fit_entries, fit_ys, cols)
+        for name, cols in (
+            ("gap", gap_cols),
+            ("gap + entropy", gap_entropy_cols),
+            ("gap + motion", rule_cols),
+            ("gap + entropy + motion", entropy_motion_cols),
+        )
+    }
     coef = coefs["gap + motion"]
     trust = {
         "R0": gap_trust,
@@ -1610,7 +1614,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data")
     ap.add_argument("--model")
-    ap.add_argument("--engine", default="utterpy", help="utterpy, or utterpy@MS for a host endpoint rule at MS of trailing silence")
+    ap.add_argument(
+        "--engine", default="utterpy", help="utterpy, or utterpy@MS for a host endpoint rule at MS of trailing silence"
+    )
     ap.add_argument("--out", default="docs/benchmarks/partial-trust.md")
     ap.add_argument("--clips", default=None, help="write the per-clip records as JSON lines")
     ap.add_argument("--from-clips", default=None, help="read the records instead of decoding")
