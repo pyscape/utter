@@ -609,6 +609,12 @@ impl<'m> Recognizer<'m> {
         self.last_result = "{\"text\": \"\"}".into();
     }
 
+    /// Sample position, in audio fed since construction, of the last decoded frame's end.
+    pub fn decoded_sample(&self) -> u64 {
+        let decoded = self.decoder.as_ref().map(|d| d.num_frames_decoded()).unwrap_or(0);
+        self.samples_round_start + (self.frame_offset + decoded) as u64 * self.frame_samples()
+    }
+
     pub fn num_frames_decoded(&self) -> usize {
         self.decoder.as_ref().map(|d| d.num_frames_decoded()).unwrap_or(0)
     }
