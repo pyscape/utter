@@ -201,9 +201,11 @@ synthetic silence is ever fed by the runtime.
 Kaldi's `OnlineMfcc` over the configuration above. Reference: Vosk-Rust
 `src/mfcc.rs`, verified at a maximum delta of 1e-3 against
 `torchaudio.compliance.kaldi`. Frames are emitted as soon as their 25 ms
-window is complete; the last partial window is dropped. The 512-point
-real FFT is the runtime's own, written after Kaldi's
-`SplitRadixRealFft` so that summation order matches.
+window is complete; the last partial window is dropped. The FFT is the
+runtime's own: a radix-2 complex transform over the frame zero-padded
+to 512, which is about two and a half times the arithmetic of Kaldi's
+`SplitRadixRealFft` over the same frame. Matching that summation order
+is G1's open refinement, and a change to the features.
 
 ### Front end: the i-vector branch
 

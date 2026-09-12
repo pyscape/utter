@@ -103,6 +103,13 @@ pub struct Recognizer<'m> {
     max_alternatives: usize,
     /// Word at each partial position and the sample position since which it has held.
     stable: Vec<(Label, u64)>,
+    /// The decoder's best path without final costs, the decoded frame count it was read at,
+    /// and the counts the silence weighting's frame labels and the stable list were last
+    /// brought up to. `[[rr:TD-7#Decision outcome]]`
+    best_path: Option<Path>,
+    best_path_frames: Option<usize>,
+    sw_traceback_frames: Option<usize>,
+    stable_frames: Option<usize>,
     last_result: String,
     log: Option<Box<dyn Fn(&str) + Send + Sync + 'm>>,
 }
@@ -177,6 +184,10 @@ impl<'m> Recognizer<'m> {
             partial_alternatives: 0,
             max_alternatives: 0,
             stable: Vec::new(),
+            best_path: None,
+            best_path_frames: None,
+            sw_traceback_frames: None,
+            stable_frames: None,
             last_result: String::new(),
             log: None,
         })
@@ -227,6 +238,7 @@ impl<'m> Recognizer<'m> {
         self.samples_processed = 0;
         self.frame_offset = 0;
         self.pcm.clear();
+        self.forget_best_path();
         let mut opts = self.model.mfcc_opts.clone();
         opts.sample_rate = self.sample_rate;
         self.pipeline = Some(FeaturePipeline::new(&opts, self.model.ivector.as_ref()));
@@ -244,6 +256,7 @@ impl<'m> Recognizer<'m> {
     /// libvosk's `CleanUp`: a new utterance on the same pipeline, or a new pipeline after a
     /// final result or 20,000 frames.
     fn clean_up(&mut self) {
+        self.forget_best_path();
         self.silence_weighting = SilenceWeighting::new(
             &self.model.conf.silence_phones,
             SILENCE_WEIGHT,
@@ -264,25 +277,51 @@ impl<'m> Recognizer<'m> {
         }
     }
 
+    fn forget_best_path(&mut self) {
+        self.best_path = None;
+        self.best_path_frames = None;
+        self.sw_traceback_frames = None;
+        self.stable_frames = None;
+    }
+
+    fn refresh_best_path(&mut self) {
+        let Some(dec) = self.decoder.as_ref() else {
+            return;
+        };
+        let decoded = dec.num_frames_decoded();
+        if self.best_path_frames == Some(decoded) {
+            return;
+        }
+        self.best_path = dec.best_path(false);
+        self.best_path_frames = Some(decoded);
+    }
+
     /// libvosk's `UpdateSilenceWeights`, run before every decoding advance.
     fn update_silence_weights(&mut self) {
         let sf = self.model.conf.frame_subsampling_factor;
-        let (Some(pipe), Some(dec)) = (self.pipeline.as_mut(), self.decoder.as_ref()) else {
+        let (Some(pipe), Some(dec)) = (self.pipeline.as_ref(), self.decoder.as_ref()) else {
             return;
         };
-        let Some(iv) = pipe.ivector.as_mut() else {
-            return;
-        };
-        if !self.silence_weighting.active() || pipe.mfcc.num_frames_ready() == 0 {
+        if pipe.ivector.is_none() {
             return;
         }
-        if let Some(path) = dec.best_path(false) {
-            self.silence_weighting
-                .compute_current_traceback(&path, dec.num_frames_decoded());
+        let ready = pipe.mfcc.num_frames_ready();
+        if !self.silence_weighting.active() || ready == 0 {
+            return;
+        }
+        let decoded = dec.num_frames_decoded();
+        self.refresh_best_path();
+        if self.sw_traceback_frames != Some(decoded) {
+            if let Some(path) = self.best_path.as_ref() {
+                self.silence_weighting
+                    .compute_current_traceback(path, decoded);
+            }
+            self.sw_traceback_frames = Some(decoded);
         }
         let deltas = self
             .silence_weighting
-            .get_delta_weights(pipe.mfcc.num_frames_ready(), self.frame_offset * sf);
+            .get_delta_weights(ready, self.frame_offset * sf);
+        let iv = self.pipeline.as_mut().unwrap().ivector.as_mut().unwrap();
         iv.update_frame_weights(&deltas);
     }
 
@@ -344,7 +383,17 @@ impl<'m> Recognizer<'m> {
         let conf = &self.model.conf;
         let shift =
             conf.frame_subsampling_factor as f32 * self.model.mfcc_opts.frame_shift_ms * 0.001;
-        let trailing = dec.trailing_silence_frames(&conf.silence_phones) as f32 * shift;
+        let fresh;
+        let path = if self.best_path_frames == Some(n) {
+            self.best_path.as_ref()
+        } else {
+            fresh = dec.best_path(false);
+            fresh.as_ref()
+        };
+        let trailing = path
+            .map(|p| p.trailing_silence_frames(&conf.silence_phones))
+            .unwrap_or(0) as f32
+            * shift;
         let utterance = n as f32 * shift;
         let relative = dec.final_relative_cost();
         let contains_nonsilence = utterance > trailing;
@@ -360,15 +409,21 @@ impl<'m> Recognizer<'m> {
         let Some(dec) = self.decoder.as_ref() else {
             return;
         };
+        let decoded = dec.num_frames_decoded();
+        if self.stable_frames == Some(decoded) {
+            return;
+        }
+        self.stable_frames = Some(decoded);
+        self.refresh_best_path();
         let now = self.samples_round_start + self.samples_processed;
-        let Some(path) = dec.best_path(false) else {
+        let Some(tokens) = self.best_path.as_ref().map(|path| {
+            self.entries(path)
+                .iter()
+                .map(|e| e.word.unwrap_or(-1))
+                .collect::<Vec<Label>>()
+        }) else {
             return;
         };
-        let tokens: Vec<Label> = self
-            .entries(&path)
-            .iter()
-            .map(|e| e.word.unwrap_or(-1))
-            .collect();
         let mut keep = 0;
         while keep < tokens.len() && keep < self.stable.len() && self.stable[keep].0 == tokens[keep]
         {
@@ -598,7 +653,9 @@ impl<'m> Recognizer<'m> {
             empty(self);
             return &self.last_result;
         }
-        let Some(path) = dec.best_path(false) else {
+        self.refresh_best_path();
+        let dec = self.decoder.as_ref().unwrap();
+        let Some(path) = self.best_path.as_ref() else {
             empty(self);
             return &self.last_result;
         };
@@ -634,7 +691,7 @@ impl<'m> Recognizer<'m> {
         }
         if self.partial_words {
             out.push_str(", \"partial_result\": [");
-            for (j, span) in self.entries(&path).iter().enumerate() {
+            for (j, span) in self.entries(path).iter().enumerate() {
                 if j > 0 {
                     out.push_str(", ");
                 }

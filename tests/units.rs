@@ -150,7 +150,7 @@ fn decoder_traces_words_phones_and_trailing_silence() {
         .map(|s| (s.phone, s.start, s.end))
         .collect();
     assert_eq!(phones, vec![(1, 0, 2), (2, 2, 5), (3, 5, 7), (1, 7, 10)]);
-    assert_eq!(dec.trailing_silence_frames(&[1]), 3);
+    assert_eq!(path.trailing_silence_frames(&[1]), 3);
     assert!(dec.final_relative_cost().is_finite());
     // alternatives: the best group is the partial's word sequence
     let alts = dec.alternatives(false, 5);

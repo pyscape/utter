@@ -98,6 +98,21 @@ pub struct Path {
     pub cost: f32,
 }
 
+impl Path {
+    /// Kaldi's `TrailingSilenceLength`.
+    pub fn trailing_silence_frames(&self, silence_phones: &[i32]) -> usize {
+        let mut n = 0;
+        for seg in self.phones.iter().rev() {
+            if silence_phones.contains(&seg.phone) {
+                n += seg.end - seg.start;
+            } else {
+                break;
+            }
+        }
+        n
+    }
+}
+
 pub struct Decoder<'g> {
     fst: Arc<VectorFst>,
     pub config: DecoderConfig,
@@ -439,22 +454,6 @@ impl<'g> Decoder<'g> {
 
     pub fn best_path(&self, use_final: bool) -> Option<Path> {
         self.best_token(use_final).map(|(t, c)| self.trace(t, c))
-    }
-
-    /// Kaldi's `TrailingSilenceLength` on the best path without final costs.
-    pub fn trailing_silence_frames(&self, silence_phones: &[i32]) -> usize {
-        let Some(path) = self.best_path(false) else {
-            return 0;
-        };
-        let mut n = 0;
-        for seg in path.phones.iter().rev() {
-            if silence_phones.contains(&seg.phone) {
-                n += seg.end - seg.start;
-            } else {
-                break;
-            }
-        }
-        n
     }
 
     /// Surviving tokens grouped by word sequence, cheapest first; each group carries its

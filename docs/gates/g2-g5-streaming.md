@@ -24,8 +24,8 @@ compute half of G3.
 | segment word sequence equal | 193 / 205 (94.15%) | 99% |
 | word times within one output frame, equal segments | 438 / 444 (98.65%) | 95% |
 | endpoints within 0.2 s | 167 / 172 (97.09%) | 95% |
-| compute per 40 ms block, p50 / p95 / p99 | 0.04 / 3.83 / 4.21 ms | p95 5 ms |
-| real-time factor | 0.017 | 0.05 |
+| compute per 40 ms block, p50 / p95 / p99 | 0.01 / 2.67 / 2.96 ms | p95 5 ms |
+| real-time factor | 0.011 | 0.05 |
 
 Word disagreement over 471 reference words: 5 words only in libvosk's
 finals, 3 only in the runtime's, 6 substitutions.
@@ -39,9 +39,11 @@ the split is symmetric, so neither side is emitting noise words. The
 front-end differences that remain, 7.8e-4 on MFCC and an unmeasured
 i-vector difference, are the plausible source, and the i-vector oracle
 is the open leg of G1. Compute is inside the budget with the stock chunk
-of 24 frames: a block that computes a chunk costs about 4 ms, of which
-the network is the larger part and the i-vector update most of the rest,
-and every other block well under 0.1 ms. Two runs of the same audio
+of 24 frames: a block that computes a chunk costs about 2.7 ms, of which
+the network is the larger part and the i-vector update most of the rest.
+Every other block is a hundredth of a millisecond and is now almost all
+front end, the decoder being traced once per chunk rather than three
+times a block: `[[rr:TD-7]]`. Two runs of the same audio
 produce the same output; ties in token cost go to the newest token.
 That holds for any audio only since the decoder's token maps were given
 a fixed hash: the default one is seeded per run, and its iteration order

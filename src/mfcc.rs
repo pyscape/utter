@@ -233,8 +233,8 @@ impl Mfcc {
             w[i] -= self.preemph * w[i - 1];
         }
         w[0] -= self.preemph * w[0];
-        for i in 0..self.frame_len {
-            w[i] *= self.win[i];
+        for (x, &h) in w.iter_mut().zip(&self.win) {
+            *x *= h;
         }
         let nbins = self.fft.size() / 2 + 1;
         power.clear();
@@ -246,14 +246,15 @@ impl Mfcc {
             logmel.push(e.max(f32::EPSILON).ln());
         }
         let nc = self.num_ceps;
-        out[..nc].fill(0.0);
+        let out = &mut out[..nc];
+        out.fill(0.0);
         for (row, &m) in self.dct_t.chunks_exact(nc).zip(&logmel) {
-            for k in 0..nc {
-                out[k] += row[k] * m;
+            for (o, &r) in out.iter_mut().zip(row) {
+                *o += r * m;
             }
         }
-        for k in 0..nc {
-            out[k] *= self.lift[k];
+        for (o, &l) in out.iter_mut().zip(&self.lift) {
+            *o *= l;
         }
         self.scratch = (w, power, logmel);
     }

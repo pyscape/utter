@@ -47,3 +47,4 @@ reaches for the rejected option. Implemented by is optional, because
 | TD-4 | Compiled grammars are kept on the model |
 | TD-5 | The composition's lookahead is a function of the state pair |
 | TD-6 | The graph cost is scaled before a final is chosen |
+| TD-7 | The best path is read once per decoding advance |

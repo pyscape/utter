@@ -79,8 +79,8 @@ None today, at runtime or for the build or for the tests: `cargo
 build` fetches nothing and CI fails if the lock file grows a second
 crate. The standard library is the foundation and `std::arch` supplies
 the SIMD paths. Every piece the decoder needs is small enough to own:
-the Kaldi binary readers, a split-radix real FFT written after
-Kaldi's, a blocked single-precision GEMM, Cholesky and conjugate
+the Kaldi binary readers, a real FFT, a blocked
+single-precision GEMM, Cholesky and conjugate
 gradient for the i-vector, an OpenFst `ConstFst` reader with the
 `olabel_lookahead` add-on, composition and trimming, and JSON. The
 policy and the two exceptions it reserves are `[[rr:TD-2#Dependency
