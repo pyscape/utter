@@ -8,12 +8,22 @@ toolchain, no Docker, no cloud.
 
 ## Status
 
-Specification stage. There is no code in this repository yet. The
-design is settled to the level of the Kaldi semantics each stage must
-reproduce and the gates that decide when it is done. Decisions live in
-[`docs/td/`](docs/td/): TD-1 describes the record system, TD-2 is the
-runtime specification. The first use case it is built for is in
-[`usecases/`](usecases/).
+Pre-alpha, and not published anywhere yet. The streaming path is built
+and measured: front end, i-vector, chunked network, decoder, partials
+with alternatives and word times, endpointing, and the C ABI. It
+decodes the reference model against the stock wheel.
+
+What the gates found is recorded in [`docs/gates/`](docs/gates/), one
+file per gate, and what a public dataset says is in
+[`docs/benchmarks/`](docs/benchmarks/). Two things are open: the
+i-vector half of the front-end gate has no oracle on the machine the
+work was done on and needs a leg run against a Kaldi build, and
+segment-for-segment agreement with libvosk sits below the mark the gate
+asks for, on near ties in the acoustics.
+
+Decisions live in [`docs/td/`](docs/td/): TD-1 describes the record
+system, TD-2 is the runtime specification. The first use case it is
+built for is in [`usecases/`](usecases/).
 
 ## Why
 
@@ -65,15 +75,17 @@ stopped.
 
 ## Dependencies
 
-None at runtime. `cargo build` fetches nothing. The standard library is
-the foundation and `std::arch` supplies the SIMD paths. Every piece the
-decoder needs is small enough to own: the Kaldi binary readers, a
-split-radix real FFT written after Kaldi's, a blocked single-precision
-GEMM, Cholesky and conjugate gradient for the i-vector, an OpenFst
-`ConstFst` reader with the `olabel_lookahead` add-on, composition and
-trimming, and JSON. An optional `gemm` feature can swap in
-`matrixmultiply` if the own kernel misses its budget on a target; it is
-off by default. Dev-dependencies never reach a consumer's build.
+None today, at runtime or for the build or for the tests: `cargo
+build` fetches nothing and CI fails if the lock file grows a second
+crate. The standard library is the foundation and `std::arch` supplies
+the SIMD paths. Every piece the decoder needs is small enough to own:
+the Kaldi binary readers, a split-radix real FFT written after
+Kaldi's, a blocked single-precision GEMM, Cholesky and conjugate
+gradient for the i-vector, an OpenFst `ConstFst` reader with the
+`olabel_lookahead` add-on, composition and trimming, and JSON. The
+policy and the two exceptions it reserves are `[[rr:TD-2#Dependency
+policy]]`; neither exception is built, so the crate stands at none of
+any kind.
 
 ## Interface
 
@@ -81,23 +93,40 @@ A Rust library, plus a `cdylib` with a C ABI that mirrors it so hosts
 without Rust get the same surface. Sketch:
 
 ```rust
-let model = utter::Model::open("vosk-model-small-en-us-0.15")?;
-let mut rec = utter::Recognizer::new(&model, 16_000, &["alpha", "bravo", "seven"])?;
-rec.set_alternatives(4);
+use std::path::Path;
 
-loop {
-    let block: &[i16] = capture.next_block();          // 40 ms, mono
-    let step = rec.accept(block);                       // decodes, checks endpoint
-    let partial = rec.partial();                        // best path, word spans in samples
-    for reading in rec.alternatives() { /* ranked, distinct, may be empty */ }
-    if let Some(end) = step.end_of_speech { /* sample position */ }
+let model = utter::Model::open(Path::new("vosk-model-small-en-us-0.15"))?;
+let grammar: Vec<String> = ["alpha", "bravo", "seven"]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+let mut rec = utter::Recognizer::new(&model, 16_000.0, &grammar)?;
+rec.set_words(true);            // word spans on finals
+rec.set_partial_words(true);    // and on partials
+rec.set_alternatives(4);        // rivals to carry alongside the partial
+
+while let Some(block) = capture.next_block() {  // 40 ms of mono PCM
+    let step = rec.accept(block);               // decodes, applies the endpoint rules
+    if step.endpoint {
+        println!("{}", rec.result());           // the segment that just ended
+    } else {
+        println!("{}", rec.partial());          // best path, rivals, word spans
+    }
+    let _decoded_through = step.sample;         // samples fed, as of the last decoded frame
 }
+println!("{}", rec.final_result());
 ```
 
-The JSON produced by the C ABI keeps the key layout of libvosk's
-`PartialResult` and `Result`, extended with the alternatives and the
-sample-indexed spans, so a host that already parses Vosk output keeps
-parsing.
+That sketch is [`examples/readme_sketch.rs`](examples/readme_sketch.rs),
+built by CI, so it cannot drift from the interface.
+
+Results are JSON strings, the same from the library and the C ABI. They
+keep the key layout of libvosk's `PartialResult` and `Result`, so a host
+that already parses Vosk output keeps parsing, and add what a
+partials-first host asks for: `partial_alternatives` ranked by
+confidence, `start_sample` and `end_sample` beside Kaldi's seconds,
+`energy_dbfs` under each word, `stable_ms` for how long a partial word
+has held, and `[sil]` where the reading carries no word.
 
 ## Model compatibility
 
@@ -110,7 +139,9 @@ are checked before they are claimed.
 
 ## Verification
 
-The stock `vosk` wheel is the oracle. The gates, in order:
+The stock `vosk` wheel is the oracle, fed the same blocks from the same
+audio. Each gate has a file under [`docs/gates/`](docs/gates/) recording
+what ran, against which oracle, and the figures. The gates, in order:
 
 1. Batch decode of a replay corpus through the vendored acoustic and
    graph code, scored against libvosk's finals, with and without
@@ -124,6 +155,11 @@ The stock `vosk` wheel is the oracle. The gates, in order:
 5. Alternatives: rank 0 always equals the partial; the empty reading is
    offered as empty when it leads.
 6. Endpoints within one 0.2 s step of libvosk's on 95% of segments.
+
+The gate corpora are the first consumer's private recordings, so the
+files name them only by date. Anything reproducible by a reader is a
+benchmark instead, under [`docs/benchmarks/`](docs/benchmarks/), on a
+public dataset with a published licence.
 
 ## Third-party code
 
