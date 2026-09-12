@@ -112,6 +112,12 @@ that reports both, which is the evidence Kaldi's rules already read.
 - **The host tracks the floor.** Rejected: every host writes the same
   tracker over PCM it has already handed over, and the runtime holds that
   PCM on the one clock.
+- **The beam's motion as the endpoint.** Measured on the built stream
+  of `[[rr:The end-of-speech confusion]]`: refusing the call while a
+  reading extending the partial is gaining is a pause filter that pays
+  in finishes, mistaking fewer pauses for a finish and calling fewer
+  finishes at the same bound. A trade, not a gain, so the trailing
+  span below stands as the clock.
 - **A duration guard in the runtime, or a report of which endpoint rule
   fired.** Rejected: a spoken word can carry a span that absorbed the
   silence after it, sixteen of 424 on the corpus, so a bound alone

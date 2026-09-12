@@ -25,6 +25,11 @@ A. Silence direction. At every block the ground truth says whether the next W ms
 B. Word transitions. Per ground-truth transition, whether a reading extending rank 0 by one
    word appears before that word reaches rank 0, by how many advances and milliseconds, how
    often its extra word is the right one, and what the `[sil]` entries measure meanwhile.
+C. Whether any of that calls a word before it is spoken. Exploratory: the README's rule against
+   candidate presence, candidate level, elapsed silence and a clock the host keeps, each fitted
+   to its own best F1 and again to the same false alarm rate, with every call matched to at most
+   one word and the calls made before any sample of that word's clip reported apart, since those
+   carry no acoustic evidence of it.
 
 Held out as `[[rr:TD-9#The benchmark is paired, held out, and charged in milliseconds]]` asks:
 every threshold is fitted on streams built from the validation split and every reported figure
@@ -124,7 +129,7 @@ class GapSource:
         return out.tobytes(), self.names[i]
 
 
-def build_stream(rng, clips, gaps, utterances):
+def build_stream(rng, clips, gaps, utterances, pause_ms=PAUSE_MS):
     """One stream and its truth: the PCM, each word with its position and energy span, each gap
     with its kind and length. The stream ends with a finish gap so the last word has one."""
     parts = []
@@ -154,7 +159,7 @@ def build_stream(rng, clips, gaps, utterances):
             parts.append(pcm)
             pos += n_samples
             last = k == n - 1
-            ms = rng.uniform(*(FINISH_MS if last else PAUSE_MS))
+            ms = rng.uniform(*(FINISH_MS if last else pause_ms))
             g = int(ms * SAMPLES_PER_MS)
             audio, src = gaps.take(g)
             parts.append(audio)
@@ -279,6 +284,8 @@ def build_state(fed, seg, p, readings, prev, first_seen):
         words0=w0,
         lead=lead,
         delta=delta,
+        # How long the harness has seen the sequence among the reported readings, for the hover
+        # measurement alone: TD-9 rejected an age on a reading and no field carries this.
         age={t: (fed - first_seen[t]) / SAMPLES_PER_MS for t in texts},
         relation=rel,
         extends=extends,
@@ -1062,6 +1069,168 @@ def crossing_scores(streams, signal, theta, lookback_ms, block_ms):
     )
 
 
+# --- the onset question, exploratory ------------------------------------------------------------
+
+ONSET_BACK_MS = 1000  # how long after a call a word may arrive and still be the word it called
+ONSET_DETECT_MS = 240  # one advance: a call this soon after the onset is a detection, not a miss
+
+ONSET_GRIDS = {
+    "motion": (0.0, 0.25, 0.5, 1.0, 2.0, 4.0),
+    "presence": (0.0,),
+    "level": (-16.0, -12.0, -8.0, -6.0, -4.0, -2.0, -1.0, 0.0),
+    "silence": (200.0, 300.0, 400.0, 600.0, 800.0, 1200.0, 1600.0, 2000.0),
+    "timing": (200.0, 300.0, 400.0, 600.0, 800.0, 1200.0, 1600.0, 2000.0),
+}
+ONSET_LABELS = {
+    "motion": "a one-word extending reading gaining by at least (nats)",
+    "presence": "a one-word extending reading exists at all",
+    "level": "the best one-word extending reading's lead is at least (nats)",
+    "silence": "the trailing `[sil]` span has reached (ms)",
+    "timing": "this long since the host last saw rank 0 grow (ms)",
+}
+
+
+def one_word_extenders(st):
+    """The readings that are rank 0 plus exactly one word. Where rank 0 is the empty reading every
+    word-carrying reading is one of these, which is the README's rule before a first word."""
+    return [e for e in st["extends"] if len(e["extra"]) == 1]
+
+
+def onset_fires(stream, rule, theta):
+    """The advances at which a rule first calls a word coming. A run of consecutive advances where
+    the rule holds is one call, not one per advance, so the calls are events a host acts on."""
+    out = []
+    holding = False
+    clock = None
+    seg = None
+    for st in stream["states"]:
+        if st["seg"] != seg:
+            seg, clock, holding = st["seg"], st["fed"], False
+        if st["grew"]:
+            clock = st["fed"]
+        cand = one_word_extenders(st)
+        if rule == "motion":
+            hit = any(e["lead_delta"] is not None and e["lead_delta"] >= theta for e in cand)
+        elif rule == "presence":
+            hit = bool(cand)
+        elif rule == "level":
+            hit = any(e["lead"] is not None and e["lead"] >= theta for e in cand)
+        elif rule == "silence":
+            hit = st["sil_span"] is not None and st["sil_span"] >= theta
+        else:
+            hit = (st["fed"] - clock) / SAMPLES_PER_MS >= theta
+        if hit and not holding:
+            out.append(st["fed"])
+        holding = hit
+    return out
+
+
+def nonspeech_samples(stream):
+    speech = sum(w["offset"] - w["onset"] for w in stream["words"])
+    return max(0, stream["samples"] - speech)
+
+
+def match_calls(fires, words, back_ms=ONSET_BACK_MS, detect_ms=ONSET_DETECT_MS):
+    """One call to one word and no more. Each call in time order takes the earliest word still
+    unclaimed whose onset falls between one advance before it and `back_ms` after it; every other
+    call is a false alarm and every unclaimed word a miss."""
+    back = back_ms * SAMPLES_PER_MS
+    detect = detect_ms * SAMPLES_PER_MS
+    claimed = [False] * len(words)
+    matched = []
+    alarms = []
+    for f in fires:
+        take = None
+        for i, w in enumerate(words):
+            if claimed[i]:
+                continue
+            if f - detect <= w["onset"] <= f + back:
+                take = i
+                break
+            if w["onset"] > f + back:
+                break
+        if take is None:
+            alarms.append(f)
+        else:
+            claimed[take] = True
+            matched.append((f, take))
+    return matched, alarms, claimed
+
+
+def onset_scores(streams, rule, theta):
+    """One rule at one threshold over a set of streams, with the calls that could carry acoustic
+    evidence of the word kept apart from the calls that could not."""
+    calls = matched = onsets = 0
+    before_clip = in_clip = after_onset = 0
+    leads = []
+    alarm_calls = 0
+    quiet_samples = 0
+    for s_ in streams:
+        words = s_["words"]
+        fires = onset_fires(s_, rule, theta)
+        hits, false_calls, claimed = match_calls(fires, words)
+        calls += len(fires)
+        matched += len(hits)
+        onsets += len(words)
+        alarm_calls += len(false_calls)
+        quiet_samples += nonspeech_samples(s_)
+        for f, i in hits:
+            w = words[i]
+            leads.append((f - w["onset"]) / SAMPLES_PER_MS)
+            if f < w["pos"]:
+                before_clip += 1
+            elif f < w["onset"]:
+                in_clip += 1
+            else:
+                after_onset += 1
+    minutes = quiet_samples / RATE / 60.0
+    precision = matched / calls if calls else float("nan")
+    recall = matched / onsets if onsets else float("nan")
+    before = [x for x in leads if x < 0]
+    return dict(
+        rule=rule,
+        theta=theta,
+        calls=calls,
+        matched=matched,
+        onsets=onsets,
+        precision=precision,
+        recall=recall,
+        f1=2 * precision * recall / (precision + recall) if matched else 0.0,
+        before_clip=before_clip,
+        in_clip_before_onset=in_clip,
+        after_onset=after_onset,
+        lead_p10=sc.quantile(before, 0.1),
+        lead_p50=sc.quantile(before, 0.5),
+        lead_p90=sc.quantile(before, 0.9),
+        alarms=alarm_calls,
+        nonspeech_minutes=minutes,
+        alarms_per_min=alarm_calls / minutes if minutes else float("nan"),
+    )
+
+
+def onset_study(val, test, noise):
+    """Every rule fitted twice on the validation streams, once for its own best F1 and once to
+    spend the same false alarms as the motion rule, and both read on the testing streams. The
+    equal-alarm column is the attribution: a rule that calls more words by calling more often has
+    not shown that its signal is what did it."""
+    fitted = {r: {t: onset_scores(val, r, t) for t in ONSET_GRIDS[r]} for r in ONSET_GRIDS}
+    best = {r: max(g, key=lambda t: g[t]["f1"]) for r, g in fitted.items()}
+    budget = fitted["motion"][best["motion"]]["alarms_per_min"]
+    equal = {
+        r: min(g, key=lambda t: (abs(g[t]["alarms_per_min"] - budget), -g[t]["f1"])) for r, g in fitted.items()
+    }
+    out = dict(
+        alarm_budget_per_min=budget,
+        grid={r: {str(t): v for t, v in g.items()} for r, g in fitted.items()},
+        best_theta={r: best[r] for r in best},
+        equal_alarm_theta={r: equal[r] for r in equal},
+        testing={r: onset_scores(test, r, best[r]) for r in best},
+        testing_equal_alarm={r: onset_scores(test, r, equal[r]) for r in equal},
+        recordings={r: onset_scores(noise, r, best[r]) for r in best},
+    )
+    return out
+
+
 def reversal(streams):
     """The leading reading leading but losing: its lead is positive and its motion negative.
     Scored against rank 0 changing at the next advance and against rank 0's words differing from
@@ -1148,23 +1317,6 @@ def mean_metric(index):
     return m
 
 
-def exact_mcnemar(b, c):
-    """The same two-sided exact test as sc.mcnemar, summed in log space. Its 2**n divisor
-    overflows a float past 1023 discordant pairs, which a stream of a thousand transitions
-    reaches; below that this delegates to it so the figures stay the repo's."""
-    n = b + c
-    if n == 0:
-        return 1.0
-    if n <= 1000:
-        return sc.mcnemar(b, c)
-    k = min(b, c)
-    ln = math.lgamma(n + 1)
-    tail = math.fsum(
-        math.exp(ln - math.lgamma(i + 1) - math.lgamma(n - i + 1) - n * math.log(2.0)) for i in range(k + 1)
-    )
-    return min(1.0, 2.0 * tail)
-
-
 def mcnemar_pair(a, b):
     """Discordant counts and the exact two-sided p: only_b is where the second rule alone is
     right."""
@@ -1175,7 +1327,7 @@ def mcnemar_pair(a, b):
         only_a=only_a,
         only_b=only_b,
         neither=sum(1 for x, y in zip(a, b) if not x and not y),
-        p=exact_mcnemar(only_a, only_b),
+        p=sc.mcnemar(only_a, only_b),
     )
 
 
@@ -1208,7 +1360,7 @@ def split_clips(data, name, rng):
     return rows
 
 
-def decode_split(eng, data, split, args, gaps_paths, vosk_eng=None):
+def decode_split(eng, data, split, args, gaps_paths, vosk_eng=None, pause_ms=PAUSE_MS, word_target=None, tag=None):
     """Build and decode this split's streams, one at a time, keeping the truth and the series but
     not the audio."""
     rng = random.Random(args.seed + (0 if split == "validation" else 1))
@@ -1216,13 +1368,15 @@ def decode_split(eng, data, split, args, gaps_paths, vosk_eng=None):
     gaps = GapSource(gaps_paths)
     streams = []
     n_words = 0
+    want = args.words if word_target is None else word_target
+    name = tag or split
     vosk = dict(rows=[], partial_words=None)
-    while n_words < args.words and len(clips) > UTTERANCES_PER_STREAM * WORDS_PER_UTTERANCE[1]:
-        pcm, words, gap_rows = build_stream(rng, clips, gaps, args.utterances)
+    while n_words < want and len(clips) > UTTERANCES_PER_STREAM * WORDS_PER_UTTERANCE[1]:
+        pcm, words, gap_rows = build_stream(rng, clips, gaps, args.utterances, pause_ms)
         states, blocks, finals = run_stream(eng, pcm, args.block_ms, args.alternatives)
         s = dict(
-            key=f"{split}/{len(streams)}",
-            split=split,
+            key=f"{name}/{len(streams)}",
+            split=name,
             words=words,
             gaps=gap_rows,
             samples=len(pcm) // 2,
@@ -1243,7 +1397,7 @@ def decode_split(eng, data, split, args, gaps_paths, vosk_eng=None):
                     vosk=partial_words_check(vosk_eng, pcm, args.block_ms),
                     utter=partial_words_check(eng, pcm, args.block_ms),
                 )
-        sc.note(f"{split}: stream {len(streams)}, {n_words} words, {s['samples'] / RATE:.0f} s")
+        sc.note(f"{name}: stream {len(streams)}, {n_words} words, {s['samples'] / RATE:.0f} s")
     return streams, vosk
 
 
@@ -1355,7 +1509,7 @@ def write_streams(path, streams):
                         words0=st["words0"],
                         grew=st["grew"],
                         readings=[
-                            [t, c, st["delta"].get(t), st["age"][t], st["relation"][t]] for t, c in st["readings"]
+                            [t, c, st["delta"].get(t), st["relation"][t]] for t, c in st["readings"]
                         ],
                     )
                     for st in s["states"]
@@ -1383,6 +1537,12 @@ def main():
         help="how far before a transition a rule's call still counts as forecasting it",
     )
     ap.add_argument("--with-vosk", action="store_true", help="run the stock wheel over the same streams")
+    ap.add_argument(
+        "--pause-variants",
+        default="100-300,400-1600",
+        help="extra testing streams built with these pause ranges in ms, for the onset rule alone; empty to skip",
+    )
+    ap.add_argument("--variant-words", type=int, default=600, help="words per pause-variant stream set")
     ap.add_argument("--no-streams", action="store_true", help="skip the per-stream JSON lines")
     a = ap.parse_args()
 
@@ -1689,6 +1849,21 @@ def main():
             recordings=crossing_scores(noise_streams, signal, theta, a.lookback_ms, a.block_ms),
         )
     report["C3_crossing"] = cross
+    report["C5_onset"] = onset_study(val, test, noise_streams)
+    variants = {}
+    for spec in [x for x in a.pause_variants.split(",") if x.strip()]:
+        lo, hi = (float(x) for x in spec.split("-"))
+        sc.note(f"pause variant {spec} ms")
+        vstreams, _ = decode_split(
+            eng, data, "testing", a, gaps_paths, pause_ms=(lo, hi), word_target=a.variant_words, tag=f"pause{spec}"
+        )
+        theta = report["C5_onset"]["best_theta"]["motion"]
+        variants[spec] = dict(
+            sizes=stream_sizes(vstreams),
+            motion=onset_scores(vstreams, "motion", theta),
+            presence=onset_scores(vstreams, "presence", 0.0),
+        )
+    report["C5_onset"]["pause_variants"] = variants
     report["C4_reversal"] = reversal(test)
 
     if vosk["rows"]:
@@ -1778,6 +1953,7 @@ def partial_words_check(eng, pcm, block_ms):
 
 def momentum_section(r, chosen):
     """What a reading's motion does over many advances, which a one-second clip cannot show."""
+    o = r["C5_onset"]
     L = [
         "## C. The readings' motion over many advances",
         "",
@@ -1853,17 +2029,100 @@ def momentum_section(r, chosen):
             L.append(f"| {kind} | {off:+d} | " + " | ".join(cells) + " |")
     L += [
         "",
-        "### The motion as a detector of its own",
+        "### Calling a word before it arrives: exploratory",
         "",
-        "A crossing is one advance where the empty reading's lead falls past a threshold, or a "
-        "one-word extending reading's lead rises past one. A crossing is a hit when a word's "
-        "onset follows it inside the lookback; recall is over every onset, including the ones "
-        "where the signal cannot fire, since the `[sil]` signal needs rank 0 to carry no word and "
-        "the extending signal needs it to carry one. That is also why the extending signal's "
-        "alarm rate in kept silence is zero by construction and not by merit: rank 0 there is the "
-        "empty reading. The threshold is fitted on the validation streams by the F1 of the hit "
-        "rate against the onsets called; everything in the table is the testing streams and the "
-        "recordings.",
+        "**Everything in this section is exploratory.** The streams are isolated read words "
+        "spliced together with built gaps, and a rule that fires in a gap can be reading the "
+        "stream's construction rather than the word that follows. Nothing here is a recommended "
+        "read, and the record says so "
+        "(`[[rr:TD-9#Every reading carries its lead's motion]]`).",
+        "",
+        "The rule under test is the README's, and exactly it: a reading that is rank 0 plus one "
+        "word and is gaining on the field, which before a first word is any word-carrying reading, "
+        "since every one of them extends the empty reading. A run of consecutive advances where "
+        "the rule holds is one call. Each call takes at most one word and each word at most one "
+        "call: calls in time order claim the earliest unclaimed word whose onset falls between one "
+        f"advance before the call and {ONSET_BACK_MS} ms after it. Every other call is a false "
+        "alarm, counted against all the non-speech in the streams, the audio right after a word "
+        "included, and every unclaimed word is a miss.",
+        "",
+        "Four baselines are scored the same way, because a rule that calls more words by calling "
+        "more often has shown nothing about its signal: the same candidate merely *existing*, the "
+        "candidate's *lead* rather than its motion, the trailing `[sil]` span, and a clock the "
+        "host keeps itself since it last saw rank 0 grow. Each threshold is fitted on the "
+        "validation streams twice, once for its own best F1 and once to spend the motion rule's "
+        f"false alarms ({num(o['alarm_budget_per_min'], 2)} a non-speech minute there), and read "
+        "on the testing streams:",
+        "",
+        "| rule | threshold | calls | words called | precision | F1 | false alarms/min | at the motion rule's alarm rate: threshold | words called | F1 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for rule in ("motion", "presence", "level", "silence", "timing"):
+        t = o["testing"][rule]
+        e = o["testing_equal_alarm"][rule]
+        L.append(
+            f"| {ONSET_LABELS[rule]} | {num(float(o['best_theta'][rule]), 2)} | {t['calls']} | "
+            f"{share(t['matched'], t['onsets'])} | {num(100 * t['precision'])}% | {num(t['f1'], 3)} | "
+            f"{num(t['alarms_per_min'], 2)} | {num(float(o['equal_alarm_theta'][rule]), 2)} | "
+            f"{share(e['matched'], e['onsets'])} | {num(e['f1'], 3)} |"
+        )
+    m = o["testing"]["motion"]
+    pres = o["testing"]["presence"]
+    L += [
+        "",
+        "Then the half of the figure that matters most, and the reason the earlier reading of it "
+        "is withdrawn. A call before a word's onset is not evidence about that word unless some of "
+        "the word has been fed. Splitting the motion rule's calls by what the decoder had heard "
+        "when it fired:",
+        "",
+        "| the call landed | motion | the candidate merely existing |",
+        "|---|---|---|",
+        f"| before any sample of the coming word's clip | {share(m['before_clip'], m['matched'])} | "
+        f"{share(pres['before_clip'], pres['matched'])} |",
+        f"| inside the clip, before its energy onset | {share(m['in_clip_before_onset'], m['matched'])} | "
+        f"{share(pres['in_clip_before_onset'], pres['matched'])} |",
+        f"| at or after the energy onset, a detection | {share(m['after_onset'], m['matched'])} | "
+        f"{share(pres['after_onset'], pres['matched'])} |",
+        "",
+        f"The lead of the calls that do come first is {num(m['lead_p10'])} / {num(m['lead_p50'])} / "
+        f"{num(m['lead_p90'])} ms (p10 / p50 / p90), but a lead measured over calls that mostly "
+        "precede the word's clip entirely is not an acoustic warning of that word: it is a call "
+        "made on the silence before it, which on this stream is a built gap of known length. That "
+        "figure is reported here and **is not** to be read as the decoder hearing a word coming.",
+        "",
+        "Because the pauses are built, the alarm rate and the calls are partly a fact about the "
+        "distribution they were built from. The same rule at the same threshold on testing streams "
+        "built with other pause ranges:",
+        "",
+        "| pauses built (ms) | words | non-speech minutes | words called | precision | false alarms/min | called before the clip |",
+        "|---|---|---|---|---|---|---|",
+        f"| {PAUSE_MS[0]:g}-{PAUSE_MS[1]:g} (the page's streams) | {r['sizes']['testing']['words']} | "
+        f"{num(m['nonspeech_minutes'])} | {share(m['matched'], m['onsets'])} | "
+        f"{num(100 * m['precision'])}% | {num(m['alarms_per_min'], 2)} | "
+        f"{share(m['before_clip'], m['matched'])} |",
+    ]
+    for spec, d in (o.get("pause_variants") or {}).items():
+        v = d["motion"]
+        L.append(
+            f"| {spec} | {d['sizes']['words']} | {num(v['nonspeech_minutes'])} | "
+            f"{share(v['matched'], v['onsets'])} | {num(100 * v['precision'])}% | "
+            f"{num(v['alarms_per_min'], 2)} | {share(v['before_clip'], v['matched'])} |"
+        )
+    L += [
+        "",
+        "What this section establishes is a comparison, not a forecast: whether the motion beats "
+        "candidate presence, candidate level, elapsed silence and a clock, at the alarm rate it "
+        "costs, on spliced words. Whether any of it survives on continuous recorded commands is "
+        "not measured here and is the work the record leaves open.",
+        "",
+        "### The two crossings, as fitted signals",
+        "",
+        "The same two motions read as raw crossings rather than as the README's rule, kept for "
+        "the `[sil]` half: a crossing is one advance where the empty reading's lead falls past a "
+        "threshold, or a one-word extending reading's lead rises past one, scored by the older "
+        "many-to-one rule (a crossing is a hit when any onset follows within the lookback). The "
+        "`[sil]` row is why the README's read is *an extends reading gaining* and never *`[sil]` "
+        "falling*.",
         "",
         "| signal | threshold (nats) | crossings | precision | onsets called | lead p10 / p50 / p90 ms | alarms/min in kept silence | alarms/min on the recordings |",
         "|---|---|---|---|---|---|---|---|",
@@ -1876,6 +2135,7 @@ def momentum_section(r, chosen):
             f"{share(t['called'], t['onsets'])} | {num(t['lead_p10'])} / {num(t['lead_p50'])} / "
             f"{num(t['lead_p90'])} | {num(t['alarms_per_min'])} | {num(rec['alarms_per_min'])} |"
         )
+
     L += [
         "",
         "### Leading but losing",
@@ -1915,18 +2175,12 @@ def page(r, a, chosen):
     L = [
         "# Silence direction and word transitions on a built stream",
         "",
-        f"Run {p['date']}, utter {p['utter_revision']}, "
-        + ", ".join(f"{k} {v}" for k, v in p["engines"].items())
-        + f", model {p['model']}, {p['cpu']}, Python {p['python']}.",
+        sc.provenance_line(p),
         "",
         f"Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, "
         f"{r['grammar_size']} entries. {p['block_ms']} ms blocks, {r['alternatives']} partial "
         f"alternatives, partial words on, seed {r['seed']}. Measured by "
         "`scripts/partial_states.py`.",
-        "",
-        f"The revision above is this repository's; the binding that decoded is `{r['wheel']}`, "
-        "which is the version figure to check against it, since the wheel is built from a "
-        "revision of its own.",
         "",
         "A Speech Commands clip holds one word, so it holds no transition between words and no "
         "finish. The streams here are built from the clips: utterances of one to five words, "
@@ -2003,6 +2257,11 @@ def page(r, a, chosen):
         "now, silence inside the window), *away* from silence (silence now, speech inside the "
         "window), *maintaining silence*, *maintaining speech*. The predictor reads only the "
         "partial at that block.",
+        "",
+        "The *away* rows below are exploratory in the same way the onset section is: they are "
+        "measured on spliced words, and a rule that calls *away* inside a built gap may be reading "
+        "the gap. They are scored here against R0 and read as a comparison, never as evidence "
+        "that speech can be foreseen.",
         "",
         "Read the *away* row first. R0's *away* is a detection with no lead by construction: the "
         "word is already at rank 0 when it calls, and by then the truth has usually moved on to "
@@ -2182,6 +2441,12 @@ def page(r, a, chosen):
         "",
         "### Preview accuracy by the lead still to run",
         "",
+        "This is a measured result of its own, and separate from the question of whether a word "
+        "can be foreseen: given that a reading extending rank 0 is present, how often its extra "
+        "word is the word that arrives. The *all* group is candidate presence alone, the *gaining* "
+        "group is presence plus the motion, and the two columns beside each other are the "
+        "baseline and the field.",
+        "",
         f"Every advance in those windows that carried an extending reading, {r['B2_advances']} of "
         "them, scored by whether the top extending reading's extra word is the word that was "
         "coming (top-1) and whether any of the top three extending readings has it (top-3), "
@@ -2331,8 +2596,8 @@ def page(r, a, chosen):
         "",
         "Every figure above is in `partial-states.json`, and `partial-states.streams.jsonl` "
         "carries, per stream, the ground truth, the finals and the whole advance series with "
-        "each reading's lead delta, age and relation, so another rule can be scored on the same "
-        "streams without decoding them again.",
+        "each reading's confidence, lead delta and relation, so another rule can be scored on the "
+        "same streams without decoding them again.",
     ]
     return L
 
