@@ -205,3 +205,16 @@ fn one_grammar_is_composed_once_and_the_cache_has_a_bound() {
     );
     assert_eq!(first.graph().num_states(), again.graph().num_states());
 }
+
+#[test]
+fn silence_weighting_can_be_turned_off_for_the_kaldi_comparison() {
+    let Some(dir) = model_dir() else { return };
+    let model = Model::open(&dir).unwrap();
+    let opts = utter::recognizer::RecognizerOptions {
+        silence_weight: 1.0,
+        ..Default::default()
+    };
+    let mut rec = Recognizer::with_options(&model, 16000.0, &grammar(), &opts).unwrap();
+    let (_, finals) = decode(&mut rec, &clip("yes"));
+    assert_eq!(text_of(finals.last().unwrap()), "yes");
+}

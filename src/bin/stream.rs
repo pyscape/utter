@@ -8,6 +8,14 @@ use std::time::Instant;
 use utter::wav::read_wav;
 use utter::{Model, Recognizer};
 
+/// What every take in a run is streamed with.
+struct Run {
+    block_ms: usize,
+    alternatives: usize,
+    partial_words: bool,
+    opts: utter::recognizer::RecognizerOptions,
+}
+
 fn main() {
     let mut model_dir = PathBuf::new();
     let mut grammar_path = PathBuf::new();
@@ -17,6 +25,7 @@ fn main() {
     let mut partial_words = false;
     let mut dither: Option<f32> = None;
     let mut unknown_cost: Option<f32> = None;
+    let mut silence_weight = utter::recognizer::SILENCE_WEIGHT;
     let mut threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
@@ -30,6 +39,7 @@ fn main() {
             "--partial-words" => partial_words = true,
             "--dither" => dither = Some(it.next().unwrap().parse().unwrap()),
             "--unknown-cost" => unknown_cost = Some(it.next().unwrap().parse().unwrap()),
+            "--silence-weight" => silence_weight = it.next().unwrap().parse().unwrap(),
             "--threads" => threads = it.next().unwrap().parse().unwrap(),
             "--corpus" => {
                 let dir = PathBuf::from(it.next().unwrap());
@@ -54,6 +64,17 @@ fn main() {
         utter::json::parse_string_array(&std::fs::read_to_string(&grammar_path).expect("grammar"))
             .expect("grammar JSON");
 
+    let run = Run {
+        block_ms,
+        alternatives,
+        partial_words,
+        opts: utter::recognizer::RecognizerOptions {
+            unknown_cost,
+            silence_weight,
+            ..Default::default()
+        },
+    };
+
     let next = std::sync::atomic::AtomicUsize::new(0);
     let out = std::sync::Mutex::new(Vec::<(usize, String)>::new());
     std::thread::scope(|sc| {
@@ -63,15 +84,7 @@ fn main() {
                 if i >= wavs.len() {
                     break;
                 }
-                let line = run_take(
-                    &model,
-                    &grammar,
-                    &wavs[i],
-                    block_ms,
-                    alternatives,
-                    partial_words,
-                    unknown_cost,
-                );
+                let line = run_take(&model, &grammar, &wavs[i], &run);
                 out.lock().unwrap().push((i, line));
             });
         }
@@ -83,28 +96,16 @@ fn main() {
     }
 }
 
-fn run_take(
-    model: &Model,
-    grammar: &[String],
-    wav: &std::path::Path,
-    block_ms: usize,
-    alternatives: usize,
-    partial_words: bool,
-    unknown_cost: Option<f32>,
-) -> String {
+fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run) -> String {
     let w = read_wav(wav).expect("wav");
     let t0 = Instant::now();
-    let opts = utter::recognizer::RecognizerOptions {
-        unknown_cost,
-        ..Default::default()
-    };
-    let mut rec =
-        Recognizer::with_options(model, w.sample_rate as f32, grammar, &opts).expect("recognizer");
+    let mut rec = Recognizer::with_options(model, w.sample_rate as f32, grammar, &run.opts)
+        .expect("recognizer");
     let t_new = t0.elapsed();
     rec.set_words(true);
-    rec.set_partial_words(partial_words);
-    rec.set_alternatives(alternatives);
-    let block = w.sample_rate as usize * block_ms / 1000;
+    rec.set_partial_words(run.partial_words);
+    rec.set_alternatives(run.alternatives);
+    let block = w.sample_rate as usize * run.block_ms / 1000;
     let mut partials: Vec<String> = Vec::new();
     let mut segments: Vec<String> = Vec::new();
     let mut compute_us: Vec<u128> = Vec::new();
@@ -135,7 +136,7 @@ fn run_take(
     ));
     let mut s = String::from("{\"take\": ");
     utter::json::write_string(&mut s, wav.file_stem().unwrap().to_str().unwrap());
-    s.push_str(&format!(", \"block_ms\": {block_ms}, \"samples\": {}, \"new_ms\": {}, \"graph_states\": {}, \"compute_us\": [", w.samples.len(), t_new.as_millis(), rec.graph().num_states()));
+    s.push_str(&format!(", \"block_ms\": {}, \"samples\": {}, \"new_ms\": {}, \"graph_states\": {}, \"compute_us\": [", run.block_ms, w.samples.len(), t_new.as_millis(), rec.graph().num_states()));
     s.push_str(
         &compute_us
             .iter()

@@ -43,8 +43,21 @@ ivector-extract-online2 --config=$M/ivector/ivector_extractor.conf \
 
 where `ivector_extractor.conf` names the model's `splice.conf`,
 `online_cmvn.conf`, `final.mat`, `global_cmvn.stats`, `final.dubm` and
-`final.ie`, and `spk2utt` maps each take to itself. That tool does not
-apply decoder-traceback silence weighting, so the comparison is against
-the runtime's estimate with silence weighting off (weight 1.0); the
-runtime's `stream` binary gains a switch for that when the leg is run.
+`final.ie`, and `spk2utt` maps each take to itself, its utterance key the
+WAV's stem.
+
+That tool has no decoder to take a traceback from, so it applies no
+silence weighting. The `ivector_dump` binary runs the feature pipeline
+alone and so applies none either, and writes the estimate every
+`--period` frames in the shape `--ivector-period` produces; `stream
+--silence-weight 1.0` turns the weighting off on the decoding path for a
+cross-check. With the reference written as `ark,t:ivectors.txt`:
+
+```
+cargo build --release
+python scripts/g1.py --model $M --ivector-dump target/release/ivector_dump \
+  --kaldi ivectors.txt $W...
+```
+
+which prints the per-take table and the worst relative difference.
 Acceptance stays as TD-2 states it: within 1e-2 relative on ten takes.
