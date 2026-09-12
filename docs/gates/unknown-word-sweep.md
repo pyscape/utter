@@ -61,31 +61,92 @@ So a word on a quiet block is not a defect in this runtime, and emitting
 fewer of them would be a divergence from the oracle rather than a fix.
 Silence is a host's gate to apply, not the decoder's to pre-empt.
 
-## The 851 counts the wrong thing
+## What the 851 are
 
 Of the 851, **596 (70%) are carry-over**: no rank-0 word's own span
-reaches the quiet tail at all, and the partial is still holding words
-spoken earlier in the segment because the decoder has not endpointed
-yet. Of the remaining 255, the words straddle the boundary, with a
-median energy of -27 dBFS under a median span of 450 ms: the block is
-quiet, the word is not.
+reaches the quiet tail, and the partial still holds words spoken earlier
+in the utterance because no endpoint has fired. The other 255 straddle
+the block: the word has just ended, at a median -27 dBFS over a median
+450 ms span. Against the take's floor, the 5th percentile of RMS over
+100 ms windows at a 50 ms hop, the last word shown on a quiet block is at
+least 8.5 dB above it and on nine blocks in ten 18 dB or more. The stream
+shows no word that was not spoken.
 
-Counted as a word whose own span carries no speech, the corpus has
-**61 such finals, 2.13 a minute**, and 44 of those are one artefact:
-a single word whose alignment has absorbed a silent region, median span
-19.7 s against 360 ms for a real word. libvosk produces it too.
+Take floors on this corpus run from -51.7 to -37.2 dBFS, 14 dB apart on
+one microphone, and the public dataset's six background recordings sit
+between -62.5 and -9.8 dBFS by the same measure. The -40 dBFS above is
+the wrong instrument; the figures below are relative to the floor.
 
-A gate on the energy under the word works, but only relative to the
-take's own noise floor, not at an absolute level that will not carry
-between microphones: at the floor plus 4 dB it catches 69% of the 61
-and suppresses 1.5% of real words; at plus 12 dB, 95% for 4.4%. A
-duration guard is independent of level and nearly as good on its own,
-since real words reach 750 ms at the 95th percentile and the artefacts
-start around five seconds.
+## Where the silence finals come from
 
-The `[sil]` rival does not help here. It appears on **none** of 210
-no-speech blocks, and on 5.5% of speech blocks: over sustained silence
-the silence path is already pruned from the beam, so no rival is
-offered to rank. The ruling that put it there,
-`[[rr:TD-2#Silence and unknown speech announce themselves]]`, holds for
-a pause inside speech and not for a quiet room.
+Of 209 segments, 22 close with no word after five seconds of silence
+phones on the best path, rule 1, and 51 close at the 20 s cap, rule 5.
+On 45 of those 51 the final is one word spanning the whole utterance,
+and three grammar words account for all 45. libvosk emits the same word
+on every one, and no partial in any of these segments shows it.
+
+The mechanism: on a quiet room the best path sits in the opening phones
+of a word without reaching its label, so no silence phone is on the
+path. Of the 30,092 quiet blocks with no word at rank 0, 26,665 (89%)
+carry an empty word list and 3,427 (11%) a trailing `[sil]` entry, whose
+span reaches 4.8 s, the next block being rule 1. Trailing silence stays
+at zero, rules 1 to 4 cannot fire, rule 5 closes the stretch, and the
+final, which must end in a final state, completes the word.
+
+## Gates a host can apply to a final
+
+The 45 rule-5 finals sit a median 2.3 dB above the floor, at most 9.1;
+the other 424 final words a median 23.4 dB above it, 11.2 at the 5th
+percentile. Catch rate on the 45 against words suppressed among the
+424:
+
+| gate | catches | suppresses |
+|---|---|---|
+| mean energy below floor + 4 dB | 39 / 45 (87%) | 7 / 424 (1.7%) |
+| mean energy below floor + 8 dB | 44 / 45 (98%) | 11 / 424 (2.6%) |
+| mean energy below floor + 12 dB | 45 / 45 (100%) | 29 / 424 (6.8%) |
+| mean energy below floor + 16 dB | 45 / 45 (100%) | 56 / 424 (13.2%) |
+| span longer than 2 s | 45 / 45 (100%) | 16 / 424 (3.8%) |
+
+The sixteen other words longer than two seconds are spoken words whose
+last phone absorbed the silence after them, up to 18 s inside a
+multi-word segment, and 20 s closures on a louder room. A span
+corroborates; energy against the floor decides. A 100 ms peak is a worse
+gate than the mean: a third of the 45 hold a breath or a click that puts
+a peak 12 dB over the floor, and the last 200 ms is coarser than the
+mean.
+
+## Two `[sil]` mechanisms
+
+`[[rr:TD-2#Silence and unknown speech announce themselves]]` puts `[sil]`
+in two places. As a ranked rival: on a quiet room `[sil]` leads and there
+is nothing to rival it; when a word leads a quiet block it was spoken
+and the empty path is long gone, so a `[sil]` rival appears on 6 of the
+851. As an entry in the word list: after a word, on 742 of the 851
+(87%); on a quiet room with no word, on the 11% above. The entry is the
+clock after a word. Nothing announces a quiet room but the absence of
+words and the energy.
+
+## Reading the end of speech
+
+Over the 108 segments that end in a word, the trailing `[sil]` entry
+appears a median 240 ms after the last word appeared (95th percentile
+480), and the endpoint a median 760 ms after it (5th percentile 520,
+95th 1000). Over the 289 intervals between two words of one segment,
+the next word appears a median 480 ms after the previous (95th 720,
+maximum 1200), and the decoder's own pause between them, the longest
+trailing `[sil]` entry seen before the next word, is 270 ms at the 95th
+percentile, 480 at the 99th, 630 at most.
+
+| host rule | calls a finish inside a pause | calls it before the endpoint | lead, median |
+|---|---|---|---|
+| trailing `[sil]` span at least 200 ms | 25 / 289 (8.7%) | 105 / 108 (97%) | 280 ms |
+| trailing `[sil]` span at least 300 ms | 13 / 289 (4.5%) | 94 / 108 (87%) | 280 ms |
+| trailing `[sil]` span at least 400 ms | 6 / 289 (2.1%) | 45 / 108 (42%) | 280 ms |
+| last word held 400 ms, no new word | 156 / 289 (54%) | 106 / 108 (98%) | 360 ms |
+| last word held 500 ms, no new word | 43 / 289 (15%) | 106 / 108 (98%) | 260 ms |
+| last word held 800 ms, no new word | 11 / 289 (3.8%) | 48 / 108 (44%) | 200 ms |
+
+The hold on the last word is what a pause between words looks like too;
+the trailing entry is measured on the decoded path, where a word still
+being spoken shows as non-silence phones before its label appears.
