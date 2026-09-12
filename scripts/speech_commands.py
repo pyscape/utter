@@ -315,6 +315,20 @@ def mcnemar(b, c):
     return min(1.0, 2.0 * tail)
 
 
+def holm(pvalues):
+    """Holm-Bonferroni adjusted p-values, in the order given. Testing one word at a time and
+    reading every p below 0.05 as a finding would turn two of thirty-five words into findings
+    by chance alone; this is the correction for having asked the question that many times."""
+    order = sorted(range(len(pvalues)), key=lambda i: pvalues[i])
+    out = [1.0] * len(pvalues)
+    running = 0.0
+    for rank, i in enumerate(order):
+        adjusted = min(1.0, (len(pvalues) - rank) * pvalues[i])
+        running = max(running, adjusted)  # adjusted p must not decrease with rank
+        out[i] = running
+    return out
+
+
 def provenance(args, modules):
     """What a reader needs to judge the figures: the build, the engines, the machine."""
 
@@ -472,14 +486,15 @@ def significance_table(clips, results, lines, report):
         "counts; a large one means the split is what chance would produce."
     )
     lines.append("")
-    lines.append(f"| scope | {a} only | {b} only | p |")
-    lines.append("|---|---|---|---|")
+    lines.append(f"| scope | {a} only | {b} only | p | Holm |")
+    lines.append("|---|---|---|---|---|")
     rows = [("all words", [c for _, c in clips])]
     by_word = defaultdict(list)
     for label, clip in clips:
         by_word[label].append(clip)
     for w in DATASET_WORDS:
         rows.append((w, by_word[w]))
+    counted = []
     for scope, paths in rows:
         only_a = only_b = 0
         for path in paths:
@@ -489,14 +504,28 @@ def significance_table(clips, results, lines, report):
                 only_a += 1
             elif cb and not ca:
                 only_b += 1
-        p = mcnemar(only_a, only_b)
-        out[scope] = dict(only_a=only_a, only_b=only_b, p=p)
-        # Per word, only rows a reader would look twice at.
-        if scope == "all words" or p < 0.05:
-            lines.append(f"| {scope} | {only_a} | {only_b} | {p:.3f} |")
-    if all(v["p"] >= 0.05 for k, v in out.items() if k != "all words"):
+        counted.append((scope, only_a, only_b, mcnemar(only_a, only_b)))
+    words = [c for c in counted if c[0] != "all words"]
+    adjusted = holm([c[3] for c in words])
+    overall = next(c for c in counted if c[0] == "all words")
+    out["all words"] = dict(only_a=overall[1], only_b=overall[2], p=overall[3], holm=None)
+    lines.append(f"| all words | {overall[1]} | {overall[2]} | {overall[3]:.3f} | |")
+    shown = 0
+    for (scope, only_a, only_b, p), q in sorted(zip(words, adjusted), key=lambda z: z[0][3]):
+        out[scope] = dict(only_a=only_a, only_b=only_b, p=p, holm=q)
+        if p < 0.05:
+            lines.append(f"| {scope} | {only_a} | {only_b} | {p:.3f} | {q:.3f} |")
+            shown += 1
+    if not shown:
         lines.append("")
-        lines.append("No single word's difference reaches p < 0.05.")
+        lines.append("No single word's difference reaches p < 0.05 before correction.")
+    survivors = [w for w in out if w != "all words" and out[w]["holm"] is not None and out[w]["holm"] < 0.05]
+    lines.append("")
+    lines.append(
+        f"{len(words)} words were tested, so about two would fall below 0.05 by chance; the last "
+        "column is the Holm-Bonferroni adjustment for that. "
+        + ("Surviving it: " + ", ".join(sorted(survivors)) + "." if survivors else "No word survives it.")
+    )
     report["significance"] = out
 
 
@@ -740,6 +769,7 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
             for i, (label, path) in enumerate(chosen)
         ]
     out = {}
+    outcome = {}
     note(f"noise: {len(chosen)} clips x {len(levels)} levels + clean x {len(modules)} engines")
     lines.append("## Accuracy against noise")
     lines.append("")
@@ -753,22 +783,49 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
     for name, mod in modules.items():
         eng = Engine(name, mod, model, grammar)
         row = {}
+        outcome[name] = {}
         for level in levels:
             ok = 0
+            marks = []
             for label, pcm in mixed[level]:
                 words, _, _, _ = run_clip(eng, pcm, block_ms, label)
-                ok += words == [label]
+                got = words == [label]
+                marks.append(got)
+                ok += got
             row[level] = ok
+            outcome[name][level] = marks
         clean = 0
+        marks = []
         for label, path in chosen:
             words, _, _, _ = run_clip(eng, read_pcm(path), block_ms, label)
-            clean += words == [label]
+            got = words == [label]
+            marks.append(got)
+            clean += got
         row["clean"] = clean
+        outcome[name]["clean"] = marks
         out[name] = {str(k): v for k, v in row.items()}
         cells = " | ".join(f"{row[level]} ({pct(row[level], len(chosen)):.1f}%)" for level in levels)
         lines.append(f"| {name} | {cells} | {clean} ({pct(clean, len(chosen)):.1f}%) |")
     lines.append("")
-    report["snr"] = dict(clips=len(chosen), levels=levels, results=out)
+    # The same mixed samples went to both engines, so each level is a paired comparison too.
+    paired = {}
+    names = list(modules)
+    if len(names) == 2:
+        a, b = names
+        lines.append(f"Paired at each level, as above: `{a} only`, `{b} only`, and the exact McNemar p.")
+        lines.append("")
+        lines.append("| level | " + f"{a} only | {b} only | p |")
+        lines.append("|---|---|---|---|")
+        for level in [*levels, "clean"]:
+            ma, mb = outcome[a][level], outcome[b][level]
+            only_a = sum(1 for x, y in zip(ma, mb) if x and not y)
+            only_b = sum(1 for x, y in zip(ma, mb) if y and not x)
+            pv = mcnemar(only_a, only_b)
+            paired[str(level)] = dict(only_a=only_a, only_b=only_b, p=pv)
+            label = f"{level} dB" if level != "clean" else "clean"
+            lines.append(f"| {label} | {only_a} | {only_b} | {pv:.3f} |")
+        lines.append("")
+    report["snr"] = dict(clips=len(chosen), levels=levels, results=out, paired=paired)
 
 
 def grammar_size_pass(modules, model, clips, block_ms, lines, report, sizes, count):
