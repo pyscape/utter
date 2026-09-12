@@ -143,8 +143,7 @@ impl FloorTracker {
     }
 }
 
-/// A reading's lead now and at the previous advance. The lead is the reading's confidence less
-/// the best confidence among the others, undefined when one reading survives.
+/// `[[rr:TD-9#Every reading carries its lead's motion]]`
 #[derive(Clone, Copy, Debug, Default)]
 struct Reading {
     lead_prev: Option<f32>,
@@ -160,9 +159,8 @@ impl Reading {
     }
 }
 
-/// The history at the next advance: each surviving group carries its previous lead forward, a
-/// group that was not there is born, and one that is gone is dropped. Returns each group's
-/// `lead_delta` in the order given.
+/// The history at the next advance. Returns each group's `lead_delta` in the order given,
+/// with the count of groups that left the beam and the count of those that were close.
 fn roll_history(
     history: &mut HashMap<Vec<Label>, Reading>,
     groups: &[(Vec<Label>, f32, Option<f32>)],
@@ -170,7 +168,7 @@ fn roll_history(
     let mut next: HashMap<Vec<Label>, Reading> = HashMap::with_capacity(groups.len());
     let mut deltas = Vec::with_capacity(groups.len());
     for (words, _, lead) in groups {
-        // A sequence that left the groups and returned is new again.
+        // [[rr:TD-9#Every reading carries its lead's motion]]
         let lead_prev = history.remove(words).and_then(|h| h.lead_now);
         let r = Reading {
             lead_prev,
@@ -225,18 +223,15 @@ pub struct Recognizer<'m> {
     max_alternatives: usize,
     /// Word at each partial position and the sample position since which it has held.
     stable: Vec<(Label, u64)>,
-    /// Every surviving reading's lead at this advance and at the previous one, keyed by the
-    /// word sequence that is its identity. `[[rr:TD-9#Every reading carries its lead's motion]]`
+    /// `[[rr:TD-9#Every reading carries its lead's motion]]`
     history: HashMap<Vec<Label>, Reading>,
-    /// The top n traced at the last grouping, the decoded frame count it was traced at, and the
-    /// n it was traced for. `[[rr:TD-7#Decision outcome]]`
+    /// `[[rr:TD-7#Decision outcome]]`
     readings: Option<Vec<Path>>,
     readings_frames: Option<usize>,
     readings_n: usize,
     trace_groups: bool,
     group_trace: Vec<String>,
-    /// The merge and reading-loss census: separate quantities, neither of which settles what a
-    /// lattice would keep. `[[rr:TD-9#No lattice is added for this feature]]`
+    /// `[[rr:TD-9#No lattice is added for this feature]]`
     census: bool,
     /// Groups that were in the beam at the previous chunk and are not at this one, and those of
     /// them that were within `CENSUS_NATS` of the leader when last seen.
@@ -390,9 +385,8 @@ impl<'m> Recognizer<'m> {
         });
         self.endpoint_veto_nats = extending_veto_nats;
     }
-    /// Partial alternatives to report, 0 for none.
-    /// Count local collisions and lost readings while decoding. Off by default; it never
-    /// touches a decision.
+
+    /// Off by default; it never touches a decision.
     pub fn set_census(&mut self, on: bool) {
         self.census = on;
         if let Some(d) = self.decoder.as_mut() {
@@ -400,8 +394,8 @@ impl<'m> Recognizer<'m> {
         }
     }
 
-    /// Local close collisions, readings lost between chunks, and those of them that were within
-    /// two nats of the leader when last seen.
+    /// Local close collisions, readings lost between chunks, and those of them that were
+    /// within `CENSUS_NATS` of the leader when last seen.
     pub fn census_counts(&self) -> (u64, u64, u64) {
         let merges =
             self.merges_carried + self.decoder.as_ref().map(|d| d.merges_close).unwrap_or(0);
@@ -412,11 +406,12 @@ impl<'m> Recognizer<'m> {
         self.trace_groups = on;
     }
 
-    /// The group trace recorded since the last call, one JSON object per chunk decoded.
+    /// One JSON object per chunk decoded.
     pub fn take_group_trace(&mut self) -> Vec<String> {
         std::mem::take(&mut self.group_trace)
     }
 
+    /// Partial alternatives to report, 0 for none.
     pub fn set_alternatives(&mut self, n: usize) {
         self.partial_alternatives = n;
     }
@@ -545,13 +540,13 @@ impl<'m> Recognizer<'m> {
         iv.update_frame_weights(&deltas);
     }
 
-    /// Output frames one network chunk produces. `[[rr:TD-2#The network]]`
+    /// `[[rr:TD-2#The network]]`
     fn chunk_frames(&self) -> usize {
         (self.model.conf.frames_per_chunk / self.model.conf.frame_subsampling_factor).max(1)
     }
 
-    /// The drain stops at each chunk boundary so the readings are sampled there, whatever the
-    /// block size that fed it. `[[rr:TD-9#Readings are read once per decoding advance]]`
+    /// The drain stops at each chunk boundary, whatever the block size that fed it.
+    /// `[[rr:TD-9#Readings are read once per decoding advance]]`
     fn advance_decoding(&mut self) {
         let chunk = self.chunk_frames();
         loop {
@@ -579,8 +574,7 @@ impl<'m> Recognizer<'m> {
         }
     }
 
-    /// One grouping of the surviving tokens: the history over every group, and the top n traced
-    /// for `partial` to read. `[[rr:TD-9#Readings are read once per decoding advance]]`
+    /// `[[rr:TD-9#Readings are read once per decoding advance]]`
     fn update_readings(&mut self) {
         if self.partial_alternatives == 0 && !self.trace_groups && !self.census {
             return;
@@ -623,8 +617,7 @@ impl<'m> Recognizer<'m> {
         self.readings_n = n;
     }
 
-    /// The traced top n at the current frame count, re-traced when n moved without new audio.
-    /// A change of n invalidates the trace, not the history.
+    /// `[[rr:TD-9#Readings are read once per decoding advance]]`
     fn refresh_readings(&mut self) {
         let n = self.partial_alternatives;
         let Some(dec) = self.decoder.as_ref() else {
@@ -1279,11 +1272,9 @@ mod tests {
         let first = vec![group(&[1], 0.0, Some(2.0)), group(&[2], 2.0, Some(-2.0))];
         assert_eq!(roll_history(&mut h, &first).0, vec![None, None]);
 
-        // carried: the delta is this lead less the last
         let second = vec![group(&[1], 0.0, Some(3.0)), group(&[2], 3.0, Some(-3.0))];
         assert_eq!(roll_history(&mut h, &second).0, vec![Some(1.0), Some(-1.0)]);
 
-        // [2] is gone; [3] is new
         let third = vec![group(&[1], 0.0, Some(1.0)), group(&[3], 1.0, Some(-1.0))];
         let (deltas, (lost, close)) = roll_history(&mut h, &third);
         assert_eq!(deltas, vec![Some(-2.0), None]);
@@ -1292,7 +1283,6 @@ mod tests {
         assert_eq!(h.len(), 2);
         assert!(!h.contains_key(&vec![2]));
 
-        // [2] returns: new again, not carried from before it died
         let fourth = vec![group(&[1], 0.0, Some(1.0)), group(&[2], 1.0, Some(-1.0))];
         let (deltas, (lost, close)) = roll_history(&mut h, &fourth);
         assert_eq!(deltas, vec![Some(0.0), None]);

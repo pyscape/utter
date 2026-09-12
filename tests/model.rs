@@ -53,7 +53,6 @@ fn without_floor(json: &str) -> String {
     }
 }
 
-/// The entries of `partial_alternatives`, each as its own JSON object text.
 fn alternatives_of(json: &str) -> Vec<String> {
     let key = "\"partial_alternatives\": [";
     let Some(i) = json.find(key) else {
@@ -83,7 +82,6 @@ fn alternatives_of(json: &str) -> Vec<String> {
     out
 }
 
-/// The raw JSON value after `key`, up to the next comma or closing brace.
 fn value_of_key(json: &str, key: &str) -> String {
     let i = json.find(key).unwrap_or_else(|| panic!("{key} in {json}")) + key.len();
     let rest = &json[i..];
@@ -91,7 +89,6 @@ fn value_of_key(json: &str, key: &str) -> String {
     rest[..end].trim().to_string()
 }
 
-/// The two keys TD-9 appends to every reading, which the identity gate strips.
 /// `[[rr:TD-9#The keys are appended]]`
 fn without_series(json: &str) -> String {
     let mut out = String::with_capacity(json.len());
@@ -408,8 +405,7 @@ fn readings_carry_their_relation_and_their_leads_motion() {
                 if seen.contains(&text) {
                     carried += 1;
                 } else {
-                    // the history is kept over every group, so a reading entering the n
-                    // reported brings the motion it earned outside them
+                    // [[rr:TD-9#Readings are read once per decoding advance]]
                     entered_with_history += 1;
                 }
             }
@@ -426,7 +422,7 @@ fn readings_carry_their_relation_and_their_leads_motion() {
         assert!(relations.iter().any(|x| x == r), "no {r} reading");
     }
 
-    // The keys are appended, so the output with them removed is the output without them.
+    // [[rr:TD-9#The keys are appended]]
     let mut plain = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
     plain.set_partial_words(true);
     let (plain_partials, plain_finals) = decode(&mut plain, &samples);
@@ -442,7 +438,6 @@ fn readings_carry_their_relation_and_their_leads_motion() {
         let j = stripped
             .find("], \"partial_result\"")
             .expect("partial result");
-        // everything outside the readings is what a decode without them emits
         assert_eq!(format!("{}{}", &stripped[..i], &stripped[j + 1..]), *q);
     }
 }
@@ -453,8 +448,7 @@ fn the_readings_are_sampled_once_per_chunk_whatever_is_asked_of_them() {
     let m = Model::open(&dir).unwrap();
     let samples = clip("seven");
 
-    // One alternative requested still tracks every group that survives, so the one reading
-    // reported carries a lead earned against readings outside it.
+    // [[rr:TD-9#Readings are read once per decoding advance]]
     let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
     rec.set_alternatives(1);
     for block in samples.chunks(640) {
@@ -464,10 +458,11 @@ fn the_readings_are_sampled_once_per_chunk_whatever_is_asked_of_them() {
     let alts = alternatives_of(&one);
     assert_eq!(alts.len(), 1);
     assert_ne!(value_of_key(&alts[0], "\"lead_delta\": "), "null", "{one}");
-    // repeated calls read the memo, not a new grouping
+    // [[rr:TD-7#Decision outcome]]
     assert_eq!(rec.partial(), one);
 
-    // n moves with no new audio: the trace is re-traced, the history is untouched
+    // n moves with no new audio
+    // [[rr:TD-9#Readings are read once per decoding advance]]
     rec.set_alternatives(3);
     let three = rec.partial().to_string();
     let alts3 = alternatives_of(&three);
@@ -488,8 +483,8 @@ fn the_readings_are_sampled_once_per_chunk_whatever_is_asked_of_them() {
         .iter()
         .any(|a| value_of_key(a, "\"lead_delta\": ") != "null"));
 
-    // A final restarts the decoder, which clears the history: the first chunk after it reads
-    // null again.
+    // A final restarts the decoder
+    // [[rr:TD-9#Readings are read once per decoding advance]]
     late.final_result();
     let mut first = String::new();
     for block in samples.chunks(640) {
@@ -512,7 +507,8 @@ fn one_accept_over_several_chunks_samples_each_of_them() {
     let m = Model::open(&dir).unwrap();
     let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
     rec.set_trace_groups(true);
-    // a second of audio in one call, where a chunk is 240 ms
+    // a second of audio in one call
+    // [[rr:TD-9#Readings are read once per decoding advance]]
     rec.accept(&clip("seven"));
     let trace = rec.take_group_trace();
     assert!(trace.len() >= 3, "{trace:?}");
@@ -522,7 +518,7 @@ fn one_accept_over_several_chunks_samples_each_of_them() {
         .collect();
     assert!(frames.windows(2).all(|w| w[1] > w[0]), "{frames:?}");
     for (k, r) in trace.iter().enumerate() {
-        let first = alternatives_or_groups(r);
+        let first = first_group_of(r);
         let delta = value_of_key(&first, "\"lead_delta\": ");
         if k == 0 {
             assert_eq!(delta, "null", "{r}");
@@ -531,14 +527,13 @@ fn one_accept_over_several_chunks_samples_each_of_them() {
     assert!(
         trace[1..]
             .iter()
-            .any(|r| value_of_key(&alternatives_or_groups(r), "\"lead_delta\": ") != "null"),
+            .any(|r| value_of_key(&first_group_of(r), "\"lead_delta\": ") != "null"),
         "no chunk carried a lead forward"
     );
     assert!(rec.take_group_trace().is_empty());
 }
 
-/// The first group of a `--trace-groups` record.
-fn alternatives_or_groups(record: &str) -> String {
+fn first_group_of(record: &str) -> String {
     let key = "\"groups\": [";
     let i = record.find(key).expect("groups") + key.len();
     let rest = &record[i..];

@@ -113,9 +113,10 @@ impl Path {
     }
 }
 
-/// One reading: a word sequence surviving in the beam, with the cheapest token that carries it.
-/// `rank` is what the readings are ordered by, `cost` what a traced path reports; without final
-/// costs they are equal.
+/// One reading, with the cheapest token that carries it.
+/// `[[rr:TD-9#Every reading carries its lead's motion]]`
+/// `rank` is what the readings are ordered by, `cost` what a traced path reports; without
+/// final costs they are equal.
 pub struct Group<'t> {
     pub words: Vec<Label>,
     pub rank: f32,
@@ -135,8 +136,8 @@ pub struct Decoder<'g> {
     tmp_costs: Vec<f32>,
     queue: Vec<StateId>,
     seq: u32,
-    /// Count local collisions between readings. Off by default: it walks both chains where the
-    /// costs are close. `[[rr:TD-9#No lattice is added for this feature]]`
+    /// Off by default: it walks both chains where the costs are close.
+    /// `[[rr:TD-9#No lattice is added for this feature]]`
     pub census: bool,
     /// Collisions at a state where the two chains' word sequences differ and their costs are
     /// within `CENSUS_NATS`. The loser is dropped whichever way the comparison goes, so both
@@ -145,7 +146,6 @@ pub struct Decoder<'g> {
     pub merges_close: u64,
 }
 
-/// How close two colliding paths must be to be counted.
 pub const CENSUS_NATS: f32 = 2.0;
 
 impl<'g> Decoder<'g> {
@@ -457,7 +457,6 @@ impl<'g> Decoder<'g> {
         }
     }
 
-    /// The word sequence on a chain, in order.
     fn words_on(link: Option<&Link>) -> Vec<Label> {
         let mut words = Vec::new();
         let mut l = link;
@@ -572,7 +571,6 @@ impl<'g> Decoder<'g> {
         v
     }
 
-    /// The first `max` groups traced.
     pub fn trace_groups(&self, groups: &[Group<'_>], max: usize) -> Vec<Path> {
         groups
             .iter()
@@ -581,8 +579,6 @@ impl<'g> Decoder<'g> {
             .collect()
     }
 
-    /// Surviving tokens grouped by word sequence, cheapest first; each group carries its
-    /// cheapest token's path. With `use_final`, final costs are added as for `best_token`.
     pub fn alternatives(&self, use_final: bool, max: usize) -> Vec<Path> {
         let groups = self.grouped(use_final);
         self.trace_groups(&groups, max)

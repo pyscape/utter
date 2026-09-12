@@ -1,6 +1,7 @@
 //! The revision the crate was built from, so a binding can say which runtime it carries.
-//! `[[rr:TD-2#Scope]]` keeps dependencies out, so this shells out to git and degrades to
-//! "unknown" wherever git or the checkout is absent (a packaged crate, a vendored copy).
+//! Shelling out to git rather than taking a crate for it: `[[rr:TD-2#Dependency policy]]`.
+//! Degrades to "unknown" wherever git or the checkout is absent (a packaged crate, a
+//! vendored copy).
 
 use std::process::Command;
 
