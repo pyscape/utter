@@ -22,7 +22,12 @@ pub struct SilenceWeighting {
 
 impl SilenceWeighting {
     pub fn new(silence_phones: &[i32], silence_weight: f32, subsampling: usize) -> Self {
-        SilenceWeighting { silence_phones: silence_phones.to_vec(), silence_weight, subsampling, frame_info: Vec::new() }
+        SilenceWeighting {
+            silence_phones: silence_phones.to_vec(),
+            silence_weight,
+            subsampling,
+            frame_info: Vec::new(),
+        }
     }
 
     pub fn active(&self) -> bool {
@@ -32,7 +37,14 @@ impl SilenceWeighting {
     /// Record the silence status of every decoded frame from the best path's phone segments.
     pub fn compute_current_traceback(&mut self, path: &Path, num_frames_decoded: usize) {
         if self.frame_info.len() < num_frames_decoded {
-            self.frame_info.resize(num_frames_decoded, FrameInfo { known: false, is_silence: false, current_weight: 0.0 });
+            self.frame_info.resize(
+                num_frames_decoded,
+                FrameInfo {
+                    known: false,
+                    is_silence: false,
+                    current_weight: 0.0,
+                },
+            );
         }
         for seg in &path.phones {
             let sil = self.silence_phones.contains(&seg.phone);
@@ -44,16 +56,27 @@ impl SilenceWeighting {
     }
 
     /// Weight changes per input frame, Kaldi's `GetDeltaWeights`.
-    pub fn get_delta_weights(&mut self, num_frames_ready: usize, first_decoder_frame: usize) -> Vec<(usize, f32)> {
+    pub fn get_delta_weights(
+        &mut self,
+        num_frames_ready: usize,
+        first_decoder_frame: usize,
+    ) -> Vec<(usize, f32)> {
         let fs = self.subsampling;
         let mut deltas = Vec::new();
         if num_frames_ready <= first_decoder_frame {
             return deltas;
         }
-        let num_decoder_frames_ready = (num_frames_ready - first_decoder_frame + fs - 1) / fs;
+        let num_decoder_frames_ready = (num_frames_ready - first_decoder_frame).div_ceil(fs);
         let prev = self.frame_info.len();
         if prev < num_decoder_frames_ready {
-            self.frame_info.resize(num_decoder_frames_ready, FrameInfo { known: false, is_silence: false, current_weight: 0.0 });
+            self.frame_info.resize(
+                num_decoder_frames_ready,
+                FrameInfo {
+                    known: false,
+                    is_silence: false,
+                    current_weight: 0.0,
+                },
+            );
         }
         let begin = prev.saturating_sub(100);
         let frames_out = self.frame_info.len() - begin;
@@ -62,7 +85,11 @@ impl SilenceWeighting {
         }
         let mut weight = vec![1.0f32; frames_out];
         if !self.frame_info[begin].known {
-            let w = if begin == 0 { self.silence_weight } else { self.frame_info[begin - 1].current_weight };
+            let w = if begin == 0 {
+                self.silence_weight
+            } else {
+                self.frame_info[begin - 1].current_weight
+            };
             for v in weight.iter_mut() {
                 *v = w;
             }

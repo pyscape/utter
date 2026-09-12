@@ -1,0 +1,7 @@
+line-length = 120
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# report lines are single f-strings; wrapping them would not make them clearer
+ignore = ["E501"]

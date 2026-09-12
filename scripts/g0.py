@@ -7,6 +7,7 @@
 
 Paths to the model, the corpus and the grammar are arguments; nothing here names a consumer.
 """
+
 import argparse
 import json
 import os
@@ -34,6 +35,7 @@ def dither0_model(model_dir):
 
 def oracle(args):
     import vosk
+
     vosk.SetLogLevel(-1)
     model_dir = dither0_model(args.model) if args.dither0 else Path(args.model)
     model = vosk.Model(str(model_dir))
@@ -41,20 +43,19 @@ def oracle(args):
     block = 16000 * args.block_ms // 1000 * 2
     out = {}
     for wav_path in sorted(Path(args.corpus).glob("*.wav")):
-        w = wave.open(str(wav_path))
-        assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (16000, 1, 2), wav_path
-        pcm = w.readframes(w.getnframes())
+        with wave.open(str(wav_path)) as w:
+            assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (16000, 1, 2), wav_path
+            pcm = w.readframes(w.getnframes())
         rec = vosk.KaldiRecognizer(model, 16000, json.dumps(grammar))
         rec.SetWords(True)
         segments = []
         fed = 0
         for i in range(0, len(pcm), block):
-            chunk = pcm[i:i + block]
+            chunk = pcm[i : i + block]
             fed += len(chunk) // 2
             if rec.AcceptWaveform(chunk):
                 res = json.loads(rec.Result())
-                segments.append({"end_sample": fed, "text": res.get("text", ""),
-                                 "result": res.get("result", [])})
+                segments.append({"end_sample": fed, "text": res.get("text", ""), "result": res.get("result", [])})
         res = json.loads(rec.FinalResult())
         segments.append({"end_sample": fed, "text": res.get("text", ""), "result": res.get("result", [])})
         words = [w for s in segments for w in s["text"].split()]
@@ -76,7 +77,7 @@ def edit_distance(ref, hyp):
 
 def score(args):
     ref = json.loads(Path(args.oracle).read_text())
-    rows = [json.loads(l) for l in Path(args.hyp).read_text().splitlines() if l.strip()]
+    rows = [json.loads(line) for line in Path(args.hyp).read_text().splitlines() if line.strip()]
     modes = sorted({r["mode"] for r in rows})
     lines = ["# G0: batch decode against libvosk finals", ""]
     lines.append("| take | ref words | " + " | ".join(f"{m} err" for m in modes) + " |")

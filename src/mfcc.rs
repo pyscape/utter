@@ -50,8 +50,12 @@ impl MfccOptions {
         let mut o = MfccOptions::default();
         for line in txt.lines() {
             let line = line.trim();
-            let Some(rest) = line.strip_prefix("--") else { continue };
-            let Some((k, v)) = rest.split_once('=') else { continue };
+            let Some(rest) = line.strip_prefix("--") else {
+                continue;
+            };
+            let Some((k, v)) = rest.split_once('=') else {
+                continue;
+            };
             let f = |d: f32| v.trim().parse::<f32>().unwrap_or(d);
             match k.trim() {
                 "sample-frequency" => o.sample_rate = f(o.sample_rate),
@@ -96,20 +100,33 @@ impl Mfcc {
         }
         let nbins = fft_size / 2 + 1;
         let a = 2.0 * PI / (frame_len as f32 - 1.0);
-        let win = (0..frame_len).map(|i| (0.5 - 0.5 * (a * i as f32).cos()).powf(0.85)).collect();
+        let win = (0..frame_len)
+            .map(|i| (0.5 - 0.5 * (a * i as f32).cos()).powf(0.85))
+            .collect();
 
-        let high = if o.high_freq > 0.0 { o.high_freq } else { sr / 2.0 + o.high_freq };
+        let high = if o.high_freq > 0.0 {
+            o.high_freq
+        } else {
+            sr / 2.0 + o.high_freq
+        };
         let (mel_low, mel_high) = (mel(o.low_freq), mel(high));
         let num_mel = o.num_mel_bins;
         let delta = (mel_high - mel_low) / (num_mel as f32 + 1.0);
         let mut filt = vec![vec![0.0f32; nbins]; num_mel];
         for (m, f) in filt.iter_mut().enumerate() {
-            let (l, c, r) =
-                (mel_low + m as f32 * delta, mel_low + (m + 1) as f32 * delta, mel_low + (m + 2) as f32 * delta);
+            let (l, c, r) = (
+                mel_low + m as f32 * delta,
+                mel_low + (m + 1) as f32 * delta,
+                mel_low + (m + 2) as f32 * delta,
+            );
             for (i, wgt) in f.iter_mut().enumerate() {
                 let ml = mel(sr / fft_size as f32 * i as f32);
                 if ml > l && ml < r {
-                    *wgt = if ml <= c { (ml - l) / (c - l) } else { (r - ml) / (r - c) };
+                    *wgt = if ml <= c {
+                        (ml - l) / (c - l)
+                    } else {
+                        (r - ml) / (r - c)
+                    };
                 }
             }
         }
@@ -119,13 +136,20 @@ impl Mfcc {
                 *v = if k == 0 {
                     (1.0 / num_mel as f32).sqrt()
                 } else {
-                    (2.0 / num_mel as f32).sqrt() * (PI / num_mel as f32 * k as f32 * (n as f32 + 0.5)).cos()
+                    (2.0 / num_mel as f32).sqrt()
+                        * (PI / num_mel as f32 * k as f32 * (n as f32 + 0.5)).cos()
                 };
             }
         }
         let lifter = o.cepstral_lifter;
         let lift = (0..o.num_ceps)
-            .map(|k| if lifter == 0.0 { 1.0 } else { 1.0 + 0.5 * lifter * (PI * k as f32 / lifter).sin() })
+            .map(|k| {
+                if lifter == 0.0 {
+                    1.0
+                } else {
+                    1.0 + 0.5 * lifter * (PI * k as f32 / lifter).sin()
+                }
+            })
             .collect();
         Mfcc {
             frame_len,

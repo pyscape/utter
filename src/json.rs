@@ -60,12 +60,19 @@ pub fn parse_string_array(text: &str) -> Result<Vec<String>> {
                             if p + 4 > b.len() {
                                 return Err(err("bad unicode escape"));
                             }
-                            let hex = std::str::from_utf8(&b[p..p + 4]).map_err(|_| err("bad unicode escape"))?;
-                            let mut code = u32::from_str_radix(hex, 16).map_err(|_| err("bad unicode escape"))?;
+                            let hex = std::str::from_utf8(&b[p..p + 4])
+                                .map_err(|_| err("bad unicode escape"))?;
+                            let mut code = u32::from_str_radix(hex, 16)
+                                .map_err(|_| err("bad unicode escape"))?;
                             p += 4;
-                            if (0xD800..0xDC00).contains(&code) && p + 6 <= b.len() && &b[p..p + 2] == b"\\u" {
-                                let hex2 = std::str::from_utf8(&b[p + 2..p + 6]).map_err(|_| err("bad unicode escape"))?;
-                                let low = u32::from_str_radix(hex2, 16).map_err(|_| err("bad unicode escape"))?;
+                            if (0xD800..0xDC00).contains(&code)
+                                && p + 6 <= b.len()
+                                && &b[p..p + 2] == b"\\u"
+                            {
+                                let hex2 = std::str::from_utf8(&b[p + 2..p + 6])
+                                    .map_err(|_| err("bad unicode escape"))?;
+                                let low = u32::from_str_radix(hex2, 16)
+                                    .map_err(|_| err("bad unicode escape"))?;
                                 if (0xDC00..0xE000).contains(&low) {
                                     code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                                     p += 6;
@@ -86,7 +93,9 @@ pub fn parse_string_array(text: &str) -> Result<Vec<String>> {
                         _ => 4,
                     };
                     let end = (start + len).min(b.len());
-                    s.push_str(std::str::from_utf8(&b[start..end]).map_err(|_| err("invalid UTF-8"))?);
+                    s.push_str(
+                        std::str::from_utf8(&b[start..end]).map_err(|_| err("invalid UTF-8"))?,
+                    );
                     p = end;
                 }
             }

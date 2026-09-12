@@ -19,7 +19,14 @@ pub struct BatchDecoder {
     pub max_active: usize,
 }
 
-fn relax(arena: &mut Vec<Tok>, map: &mut HashMap<StateId, usize>, state: StateId, cost: f32, back: i32, word: Label) -> bool {
+fn relax(
+    arena: &mut Vec<Tok>,
+    map: &mut HashMap<StateId, usize>,
+    state: StateId,
+    cost: f32,
+    back: i32,
+    word: Label,
+) -> bool {
     match map.get(&state) {
         Some(&idx) if arena[idx].cost <= cost => false,
         _ => {
@@ -32,7 +39,12 @@ fn relax(arena: &mut Vec<Tok>, map: &mut HashMap<StateId, usize>, state: StateId
 }
 
 impl BatchDecoder {
-    fn epsilon_closure(&self, fst: &VectorFst, arena: &mut Vec<Tok>, active: &mut HashMap<StateId, usize>) {
+    fn epsilon_closure(
+        &self,
+        fst: &VectorFst,
+        arena: &mut Vec<Tok>,
+        active: &mut HashMap<StateId, usize>,
+    ) {
         let mut queue: Vec<StateId> = active.keys().copied().collect();
         while let Some(s) = queue.pop() {
             let Some(&ti) = active.get(&s) else { continue };
@@ -67,7 +79,11 @@ impl BatchDecoder {
         if fst.start == NO_STATE {
             return (vec![], f32::INFINITY);
         }
-        let mut arena: Vec<Tok> = vec![Tok { cost: 0.0, back: -1, word: 0 }];
+        let mut arena: Vec<Tok> = vec![Tok {
+            cost: 0.0,
+            back: -1,
+            word: 0,
+        }];
         let mut active: HashMap<StateId, usize> = HashMap::new();
         active.insert(fst.start, 0);
         self.epsilon_closure(fst, &mut arena, &mut active);
@@ -86,7 +102,14 @@ impl BatchDecoder {
                     if cost < best {
                         best = cost;
                     }
-                    relax(&mut arena, &mut next, a.nextstate, cost, ti as i32, a.olabel);
+                    relax(
+                        &mut arena,
+                        &mut next,
+                        a.nextstate,
+                        cost,
+                        ti as i32,
+                        a.olabel,
+                    );
                 }
             }
             let cutoff = best + self.beam;

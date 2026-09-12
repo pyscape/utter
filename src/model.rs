@@ -70,8 +70,12 @@ impl ModelConf {
         let mut c = ModelConf::default();
         for line in txt.lines() {
             let line = line.trim();
-            let Some(rest) = line.strip_prefix("--") else { continue };
-            let Some((k, v)) = rest.split_once('=') else { continue };
+            let Some(rest) = line.strip_prefix("--") else {
+                continue;
+            };
+            let Some((k, v)) = rest.split_once('=') else {
+                continue;
+            };
             let v = v.trim();
             let f = || v.parse::<f32>().ok();
             let u = || v.parse::<usize>().ok();
@@ -81,7 +85,9 @@ impl ModelConf {
                 "beam" => c.beam = f().unwrap_or(c.beam),
                 "lattice-beam" => c.lattice_beam = f().unwrap_or(c.lattice_beam),
                 "acoustic-scale" => c.acoustic_scale = f().unwrap_or(c.acoustic_scale),
-                "frame-subsampling-factor" => c.frame_subsampling_factor = u().unwrap_or(c.frame_subsampling_factor),
+                "frame-subsampling-factor" => {
+                    c.frame_subsampling_factor = u().unwrap_or(c.frame_subsampling_factor)
+                }
                 "frames-per-chunk" => c.frames_per_chunk = u().unwrap_or(c.frames_per_chunk),
                 "endpoint.silence-phones" => {
                     c.silence_phones = v.split(':').filter_map(|p| p.parse().ok()).collect();
@@ -93,10 +99,20 @@ impl ModelConf {
                             if (1..=5).contains(&n) {
                                 let r = &mut c.rules[n - 1];
                                 match field {
-                                    "must-contain-nonsilence" => r.must_contain_nonsilence = v == "true",
-                                    "min-trailing-silence" => r.min_trailing_silence = f().unwrap_or(r.min_trailing_silence),
-                                    "max-relative-cost" => r.max_relative_cost = f().unwrap_or(r.max_relative_cost),
-                                    "min-utterance-length" => r.min_utterance_length = f().unwrap_or(r.min_utterance_length),
+                                    "must-contain-nonsilence" => {
+                                        r.must_contain_nonsilence = v == "true"
+                                    }
+                                    "min-trailing-silence" => {
+                                        r.min_trailing_silence =
+                                            f().unwrap_or(r.min_trailing_silence)
+                                    }
+                                    "max-relative-cost" => {
+                                        r.max_relative_cost = f().unwrap_or(r.max_relative_cost)
+                                    }
+                                    "min-utterance-length" => {
+                                        r.min_utterance_length =
+                                            f().unwrap_or(r.min_utterance_length)
+                                    }
                                     _ => {}
                                 }
                             }
@@ -143,12 +159,15 @@ pub struct Model {
 impl Model {
     pub fn open(dir: &Path) -> Result<Model> {
         let conf = ModelConf::parse(&std::fs::read_to_string(dir.join("conf/model.conf"))?);
-        let mfcc_opts = MfccOptions::from_conf(&std::fs::read_to_string(dir.join("conf/mfcc.conf"))?);
+        let mfcc_opts =
+            MfccOptions::from_conf(&std::fs::read_to_string(dir.join("conf/mfcc.conf"))?);
         let mdl = std::fs::read(dir.join("am/final.mdl"))?;
         let tm = TransitionModel::parse(&mdl)?;
         let net = Nnet3::parse(&mdl);
         let hclr = read_fst_file(&dir.join("graph/HCLr.fst"))?;
-        let addon = hclr.addon.ok_or_else(|| err("HCLr.fst carries no lookahead relabeling"))?;
+        let addon = hclr
+            .addon
+            .ok_or_else(|| err("HCLr.fst carries no lookahead relabeling"))?;
         let disambig: Vec<Label> = std::fs::read_to_string(dir.join("graph/disambig_tid.int"))?
             .split_whitespace()
             .filter_map(|t| t.parse().ok())
@@ -187,7 +206,9 @@ impl Model {
             None
         };
         if net.ivector_dim > 0 && ivector.is_none() {
-            return Err(err("network wants an i-vector but the model has no extractor"));
+            return Err(err(
+                "network wants an i-vector but the model has no extractor",
+            ));
         }
         Ok(Model {
             dir: dir.to_path_buf(),
@@ -210,7 +231,13 @@ impl Model {
     /// Compile a grammar to the decoding graph: bigram, lookahead composition, erase the
     /// disambiguation labels. `unknown_cost` adds the model's unknown-word symbol to the grammar
     /// with that cost on its arcs. `warn` receives libvosk's warnings about unknown words.
-    pub fn compile_grammar(&self, grammar: &[String], unknown_cost: Option<f32>, max_states: usize, warn: impl FnMut(String)) -> Result<VectorFst> {
+    pub fn compile_grammar(
+        &self,
+        grammar: &[String],
+        unknown_cost: Option<f32>,
+        max_states: usize,
+        warn: impl FnMut(String),
+    ) -> Result<VectorFst> {
         let mut grammar: Vec<String> = grammar.to_vec();
         let unk = "[unk]";
         if unknown_cost.is_some() && !grammar.iter().any(|s| s.split(' ').any(|w| w == unk)) {
@@ -250,6 +277,9 @@ impl Model {
     }
 
     pub fn word(&self, id: Label) -> &str {
-        self.words.get(id as usize).map(String::as_str).unwrap_or("")
+        self.words
+            .get(id as usize)
+            .map(String::as_str)
+            .unwrap_or("")
     }
 }

@@ -81,7 +81,12 @@ pub fn compose(
     }
     let mut index: HashMap<Key, StateId> = HashMap::new();
     let mut queue: Vec<Key> = Vec::new();
-    fn intern(index: &mut HashMap<Key, StateId>, key: Key, out: &mut VectorFst, queue: &mut Vec<Key>) -> StateId {
+    fn intern(
+        index: &mut HashMap<Key, StateId>,
+        key: Key,
+        out: &mut VectorFst,
+        queue: &mut Vec<Key>,
+    ) -> StateId {
         if let Some(&s) = index.get(&key) {
             return s;
         }
@@ -90,15 +95,29 @@ pub fn compose(
         queue.push(key);
         s
     }
-    let start_key = Key { s1: hcl.start, s2: g.start, alt: 0, fw_bits: 0f32.to_bits(), fl: 0 };
+    let start_key = Key {
+        s1: hcl.start,
+        s2: g.start,
+        alt: 0,
+        fw_bits: 0f32.to_bits(),
+        fl: 0,
+    };
     out.start = intern(&mut index, start_key, &mut out, &mut queue);
 
     while let Some(key) = queue.pop() {
         if out.num_states() > max_states {
-            return Err(ComposeError(format!("composition exceeds {max_states} states")));
+            return Err(ComposeError(format!(
+                "composition exceeds {max_states} states"
+            )));
         }
         let cur = index[&key];
-        let Key { s1, s2, alt, fw_bits, fl } = key;
+        let Key {
+            s1,
+            s2,
+            alt,
+            fw_bits,
+            fl,
+        } = key;
         let fw = f32::from_bits(fw_bits);
         let st1 = &hcl.states[s1 as usize];
         let st2 = &g.states[s2 as usize];
@@ -116,13 +135,51 @@ pub fn compose(
             // A pushed label is outstanding: G stands still until HCLr delivers it.
             for a1 in &st1.arcs {
                 if a1.olabel == fl {
-                    let ns = intern(&mut index, Key { s1: a1.nextstate, s2, alt: 0, fw_bits: 0f32.to_bits(), fl: 0 }, &mut out, &mut queue);
-                    out.add_arc(cur, Arc { ilabel: a1.ilabel, olabel: 0, weight: a1.weight, nextstate: ns });
+                    let ns = intern(
+                        &mut index,
+                        Key {
+                            s1: a1.nextstate,
+                            s2,
+                            alt: 0,
+                            fw_bits: 0f32.to_bits(),
+                            fl: 0,
+                        },
+                        &mut out,
+                        &mut queue,
+                    );
+                    out.add_arc(
+                        cur,
+                        Arc {
+                            ilabel: a1.ilabel,
+                            olabel: 0,
+                            weight: a1.weight,
+                            nextstate: ns,
+                        },
+                    );
                 } else if a1.olabel == 0 {
                     let ok = st1.arcs.len() == 1 || member(&reach[a1.nextstate as usize], fl);
                     if ok {
-                        let ns = intern(&mut index, Key { s1: a1.nextstate, s2, alt, fw_bits, fl }, &mut out, &mut queue);
-                        out.add_arc(cur, Arc { ilabel: a1.ilabel, olabel: 0, weight: a1.weight, nextstate: ns });
+                        let ns = intern(
+                            &mut index,
+                            Key {
+                                s1: a1.nextstate,
+                                s2,
+                                alt,
+                                fw_bits,
+                                fl,
+                            },
+                            &mut out,
+                            &mut queue,
+                        );
+                        out.add_arc(
+                            cur,
+                            Arc {
+                                ilabel: a1.ilabel,
+                                olabel: 0,
+                                weight: a1.weight,
+                                nextstate: ns,
+                            },
+                        );
                     }
                 }
             }
@@ -166,38 +223,112 @@ pub fn compose(
                     let weight = a1.weight + (0.0 - fw) + larc.weight;
                     let ns = intern(
                         &mut index,
-                        Key { s1: a1.nextstate, s2: larc.nextstate, alt: new_alt, fw_bits: 0f32.to_bits(), fl: larc.ilabel },
+                        Key {
+                            s1: a1.nextstate,
+                            s2: larc.nextstate,
+                            alt: new_alt,
+                            fw_bits: 0f32.to_bits(),
+                            fl: larc.ilabel,
+                        },
                         &mut out,
                         &mut queue,
                     );
-                    out.add_arc(cur, Arc { ilabel: a1.ilabel, olabel: larc.olabel, weight, nextstate: ns });
+                    out.add_arc(
+                        cur,
+                        Arc {
+                            ilabel: a1.ilabel,
+                            olabel: larc.olabel,
+                            weight,
+                            nextstate: ns,
+                        },
+                    );
                 } else {
-                    let mut lweight = if reach_arc { lsum as f32 } else { f32::INFINITY };
+                    let mut lweight = if reach_arc {
+                        lsum as f32
+                    } else {
+                        f32::INFINITY
+                    };
                     if reach_final {
-                        lweight = if reach_arc { lweight.min(st2.final_weight) } else { st2.final_weight };
+                        lweight = if reach_arc {
+                            lweight.min(st2.final_weight)
+                        } else {
+                            st2.final_weight
+                        };
                     }
                     let weight = a1.weight + lweight - fw;
                     let ns = intern(
                         &mut index,
-                        Key { s1: a1.nextstate, s2, alt: new_alt, fw_bits: quantize(lweight).to_bits(), fl: 0 },
+                        Key {
+                            s1: a1.nextstate,
+                            s2,
+                            alt: new_alt,
+                            fw_bits: quantize(lweight).to_bits(),
+                            fl: 0,
+                        },
                         &mut out,
                         &mut queue,
                     );
-                    out.add_arc(cur, Arc { ilabel: a1.ilabel, olabel: 0, weight, nextstate: ns });
+                    out.add_arc(
+                        cur,
+                        Arc {
+                            ilabel: a1.ilabel,
+                            olabel: 0,
+                            weight,
+                            nextstate: ns,
+                        },
+                    );
                 }
             } else {
                 // A real match: no lookahead, the pushed weight is refunded against G's arc.
                 for a2 in st2.arcs.iter().filter(|a2| a2.ilabel == a1.olabel) {
-                    let ns = intern(&mut index, Key { s1: a1.nextstate, s2: a2.nextstate, alt: 0, fw_bits: 0f32.to_bits(), fl: 0 }, &mut out, &mut queue);
-                    out.add_arc(cur, Arc { ilabel: a1.ilabel, olabel: a2.olabel, weight: a1.weight + a2.weight - fw, nextstate: ns });
+                    let ns = intern(
+                        &mut index,
+                        Key {
+                            s1: a1.nextstate,
+                            s2: a2.nextstate,
+                            alt: 0,
+                            fw_bits: 0f32.to_bits(),
+                            fl: 0,
+                        },
+                        &mut out,
+                        &mut queue,
+                    );
+                    out.add_arc(
+                        cur,
+                        Arc {
+                            ilabel: a1.ilabel,
+                            olabel: a2.olabel,
+                            weight: a1.weight + a2.weight - fw,
+                            nextstate: ns,
+                        },
+                    );
                 }
             }
         }
         // G moves alone on an input epsilon, only in alternate-sequence state 0.
         if alt == 0 {
             for a2 in st2.arcs.iter().filter(|a2| a2.ilabel == 0) {
-                let ns = intern(&mut index, Key { s1, s2: a2.nextstate, alt: 0, fw_bits: 0f32.to_bits(), fl: 0 }, &mut out, &mut queue);
-                out.add_arc(cur, Arc { ilabel: 0, olabel: a2.olabel, weight: a2.weight - fw, nextstate: ns });
+                let ns = intern(
+                    &mut index,
+                    Key {
+                        s1,
+                        s2: a2.nextstate,
+                        alt: 0,
+                        fw_bits: 0f32.to_bits(),
+                        fl: 0,
+                    },
+                    &mut out,
+                    &mut queue,
+                );
+                out.add_arc(
+                    cur,
+                    Arc {
+                        ilabel: 0,
+                        olabel: a2.olabel,
+                        weight: a2.weight - fw,
+                        nextstate: ns,
+                    },
+                );
             }
         }
     }
@@ -221,7 +352,12 @@ mod tests {
     use super::*;
 
     fn arc(i: Label, o: Label, w: f32, n: StateId) -> Arc {
-        Arc { ilabel: i, olabel: o, weight: w, nextstate: n }
+        Arc {
+            ilabel: i,
+            olabel: o,
+            weight: w,
+            nextstate: n,
+        }
     }
 
     /// HCL: 0 -(1:eps)-> 1 -(2:A)-> 2(final); 1 -(3:B)-> 3(final). G accepts A (weight 1.0)
@@ -245,7 +381,12 @@ mod tests {
         g.add_arc(0, arc(10, 10, 1.0, 1));
         g.set_final(1, 0.2);
         let fl = 100;
-        let reach = vec![vec![(10, 12)], vec![(10, 12)], vec![(fl, fl + 1)], vec![(fl, fl + 1)]];
+        let reach = vec![
+            vec![(10, 12)],
+            vec![(10, 12)],
+            vec![(fl, fl + 1)],
+            vec![(fl, fl + 1)],
+        ];
         let c = compose(&hcl, &g, &reach, fl, 1000).ok().unwrap();
         let s = &c.states[c.start as usize];
         assert_eq!(s.arcs.len(), 1);

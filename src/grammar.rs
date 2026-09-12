@@ -26,7 +26,12 @@ pub struct BigramEstimator {
 impl BigramEstimator {
     pub fn new(order: usize, discount: f64) -> Self {
         assert!(order >= 2);
-        BigramEstimator { order, discount, states: Vec::new(), index: HashMap::new() }
+        BigramEstimator {
+            order,
+            discount,
+            states: Vec::new(),
+            index: HashMap::new(),
+        }
     }
 
     pub fn add_sentence(&mut self, sentence: &[i32]) {
@@ -54,7 +59,11 @@ impl BigramEstimator {
             return i;
         }
         let i = self.states.len();
-        self.states.push(LmState { history: history.to_vec(), fst_state: NO_STATE, ..Default::default() });
+        self.states.push(LmState {
+            history: history.to_vec(),
+            fst_state: NO_STATE,
+            ..Default::default()
+        });
         self.index.insert(history.to_vec(), i);
         if !history.is_empty() {
             let b = self.find_or_create(&history[1..]);
@@ -78,7 +87,11 @@ impl BigramEstimator {
     pub fn estimate(mut self) -> VectorFst {
         // Every state's counts are added to all of its backoff ancestors.
         for l in 0..self.states.len() {
-            let counts: Vec<(i32, i32)> = self.states[l].counts.iter().map(|(&k, &v)| (k, v)).collect();
+            let counts: Vec<(i32, i32)> = self.states[l]
+                .counts
+                .iter()
+                .map(|(&k, &v)| (k, v))
+                .collect();
             let mut b = self.states[l].backoff;
             while let Some(bi) = b {
                 for &(w, c) in &counts {
@@ -109,14 +122,27 @@ impl BigramEstimator {
                     let mut next = st.history.clone();
                     next.push(word);
                     let dest = self.states[self.find_nonzero(next)].fst_state;
-                    fst.add_arc(st.fst_state, Arc { ilabel: word, olabel: word, weight: (-logprob) as f32, nextstate: dest });
+                    fst.add_arc(
+                        st.fst_state,
+                        Arc {
+                            ilabel: word,
+                            olabel: word,
+                            weight: (-logprob) as f32,
+                            nextstate: dest,
+                        },
+                    );
                 }
             }
             if let Some(b) = st.backoff {
                 let dest = self.states[b].fst_state;
                 fst.add_arc(
                     st.fst_state,
-                    Arc { ilabel: 0, olabel: 0, weight: (-(1.0 - self.discount).ln()) as f32, nextstate: dest },
+                    Arc {
+                        ilabel: 0,
+                        olabel: 0,
+                        weight: (-(1.0 - self.discount).ln()) as f32,
+                        nextstate: dest,
+                    },
                 );
             }
         }
@@ -128,7 +154,11 @@ impl BigramEstimator {
 
 /// libvosk's grammar compile: each string is one sentence, split on single spaces; words absent
 /// from the symbol table are dropped with a warning through `warn`.
-pub fn grammar_fst(strings: &[String], word_ids: &HashMap<String, i64>, mut warn: impl FnMut(String)) -> VectorFst {
+pub fn grammar_fst(
+    strings: &[String],
+    word_ids: &HashMap<String, i64>,
+    mut warn: impl FnMut(String),
+) -> VectorFst {
     let mut est = BigramEstimator::new(2, 0.5);
     for line in strings {
         let mut sentence = Vec::new();
@@ -169,7 +199,7 @@ mod tests {
         let st5 = &fst.states[s5 as usize];
         assert_eq!(st5.arcs.len(), 1);
         assert_eq!(st5.arcs[0].ilabel, 0);
-        assert!((st5.arcs[0].weight - 0.6931472).abs() < 1e-6);
-        assert!((st5.final_weight - 0.6931472).abs() < 1e-6);
+        assert!((st5.arcs[0].weight - std::f32::consts::LN_2).abs() < 1e-6);
+        assert!((st5.final_weight - std::f32::consts::LN_2).abs() < 1e-6);
     }
 }

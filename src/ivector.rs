@@ -48,7 +48,13 @@ impl DiagGmm {
                 gc as f32
             })
             .collect();
-        Ok(DiagGmm { dim: d, num_gauss: g, gconsts, means_invvars, inv_vars })
+        Ok(DiagGmm {
+            dim: d,
+            num_gauss: g,
+            gconsts,
+            means_invvars,
+            inv_vars,
+        })
     }
 
     pub fn loglikes(&self, x: &[f32], out: &mut [f32]) {
@@ -82,7 +88,11 @@ pub fn select_posteriors(loglikes: &[f32], num_gselect: usize, min_post: f32) ->
         }
     }
     if temp.is_empty() {
-        temp = loglikes.iter().enumerate().map(|(g, &l)| (g, (l - max_like).exp())).collect();
+        temp = loglikes
+            .iter()
+            .enumerate()
+            .map(|(g, &l)| (g, (l - max_like).exp()))
+            .collect();
     }
     temp.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
     temp.truncate(num_gselect.min(temp.len()));
@@ -286,7 +296,14 @@ impl IvectorExtractor {
             sigma_inv_m.push(sim);
             u.push(ui);
         }
-        Ok(IvectorExtractor { feat_dim: d, ivector_dim: s, num_gauss: size, prior_offset, sigma_inv_m, u })
+        Ok(IvectorExtractor {
+            feat_dim: d,
+            ivector_dim: s,
+            num_gauss: size,
+            prior_offset,
+            sigma_inv_m,
+            u,
+        })
     }
 }
 
@@ -378,7 +395,13 @@ impl OnlineIvectorStats {
             if ivector[0] == 0.0 {
                 ivector[0] = self.prior_offset;
             }
-            linear_cgd(&self.quadratic, self.dim, &self.linear, ivector, num_cg_iters);
+            linear_cgd(
+                &self.quadratic,
+                self.dim,
+                &self.linear,
+                ivector,
+                num_cg_iters,
+            );
         } else {
             for v in ivector.iter_mut() {
                 *v = 0.0;
@@ -491,7 +514,15 @@ impl IvectorInfo {
         if lda_rows != gmm.dim || gmm.dim != extractor.feat_dim {
             return Err(err("i-vector feature dimensions disagree"));
         }
-        Ok(IvectorInfo { opts, gmm, extractor, lda, lda_rows, lda_cols, global_mean_stats })
+        Ok(IvectorInfo {
+            opts,
+            gmm,
+            extractor,
+            lda,
+            lda_rows,
+            lda_cols,
+            global_mean_stats,
+        })
     }
 
     pub fn ivector_dim(&self) -> usize {
@@ -600,7 +631,10 @@ impl<'a> IvectorStream<'a> {
     }
 
     fn update_stats_until_frame_weighted(&mut self, frame: usize) {
-        assert!(frame as i64 <= self.most_recent_frame_with_weight, "i-vector frame has no weight yet");
+        assert!(
+            frame as i64 <= self.most_recent_frame_with_weight,
+            "i-vector frame has no weight yet"
+        );
         let mut frame_weights: Vec<(usize, f32)> = Vec::new();
         while self.num_frames_stats <= frame {
             let t = self.num_frames_stats;
@@ -615,7 +649,8 @@ impl<'a> IvectorStream<'a> {
                 self.update_stats_for_frames(&frame_weights);
                 frame_weights.clear();
                 let mut cur = std::mem::take(&mut self.current);
-                self.stats.get_ivector(self.info.opts.num_cg_iters, &mut cur);
+                self.stats
+                    .get_ivector(self.info.opts.num_cg_iters, &mut cur);
                 self.current = cur;
             }
             self.num_frames_stats += 1;
@@ -639,7 +674,9 @@ impl<'a> IvectorStream<'a> {
         if self.input_finished {
             self.frames.len()
         } else {
-            self.frames.len().saturating_sub(self.info.opts.right_context)
+            self.frames
+                .len()
+                .saturating_sub(self.info.opts.right_context)
         }
     }
 
@@ -648,7 +685,9 @@ impl<'a> IvectorStream<'a> {
         let dim = out.len();
         let lo = (t + 1).saturating_sub(o.cmn_window);
         let count = (t + 1 - lo) as f64;
-        let mut sums: Vec<f64> = (0..dim).map(|d| self.prefix[t + 1][d] - self.prefix[lo][d]).collect();
+        let mut sums: Vec<f64> = (0..dim)
+            .map(|d| self.prefix[t + 1][d] - self.prefix[lo][d])
+            .collect();
         let mut cur_count = count;
         if cur_count < o.cmn_window as f64 {
             let global_count = self.info.global_mean_stats[dim];
@@ -678,7 +717,9 @@ impl<'a> IvectorStream<'a> {
         let width = o.left_context + 1 + o.right_context;
         let mut spliced = vec![0.0f32; dim * width];
         let mut tmp = vec![0.0f32; dim];
-        for (n, t2) in (t as i64 - o.left_context as i64..=t as i64 + o.right_context as i64).enumerate() {
+        for (n, t2) in
+            (t as i64 - o.left_context as i64..=t as i64 + o.right_context as i64).enumerate()
+        {
             let t2 = t2.clamp(0, total as i64 - 1) as usize;
             if normalized {
                 self.cmvn_frame(t2, &mut tmp);

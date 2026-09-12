@@ -125,7 +125,11 @@ mod avx2 {
         let mut c = _mm256_setzero_ps();
         let mut i = 0;
         while i + 8 <= k {
-            c = _mm256_fmadd_ps(_mm256_loadu_ps(a.as_ptr().add(i)), _mm256_loadu_ps(b.as_ptr().add(i)), c);
+            c = _mm256_fmadd_ps(
+                _mm256_loadu_ps(a.as_ptr().add(i)),
+                _mm256_loadu_ps(b.as_ptr().add(i)),
+                c,
+            );
             i += 8;
         }
         let mut s = hsum(c);
@@ -161,7 +165,15 @@ fn have_avx2() -> bool {
 }
 
 /// `c[m x n] = a[m x k] * b[n x k]^T`, then `+ bias` per column when given.
-pub fn gemm_abt(a: &[f32], m: usize, k: usize, b: &[f32], n: usize, bias: Option<&[f32]>, c: &mut [f32]) {
+pub fn gemm_abt(
+    a: &[f32],
+    m: usize,
+    k: usize,
+    b: &[f32],
+    n: usize,
+    bias: Option<&[f32]>,
+    c: &mut [f32],
+) {
     assert_eq!(a.len(), m * k);
     assert_eq!(b.len(), n * k);
     assert_eq!(c.len(), m * n);
@@ -176,10 +188,19 @@ pub fn gemm_abt(a: &[f32], m: usize, k: usize, b: &[f32], n: usize, bias: Option
         if avx {
             // row triples of A against row quads of B
             while i + 3 <= m {
-                let ra = [&a[i * k..(i + 1) * k], &a[(i + 1) * k..(i + 2) * k], &a[(i + 2) * k..(i + 3) * k]];
+                let ra = [
+                    &a[i * k..(i + 1) * k],
+                    &a[(i + 1) * k..(i + 2) * k],
+                    &a[(i + 2) * k..(i + 3) * k],
+                ];
                 let mut j = j0;
                 while j + 4 <= j1 {
-                    let rb = [&b[j * k..(j + 1) * k], &b[(j + 1) * k..(j + 2) * k], &b[(j + 2) * k..(j + 3) * k], &b[(j + 3) * k..(j + 4) * k]];
+                    let rb = [
+                        &b[j * k..(j + 1) * k],
+                        &b[(j + 1) * k..(j + 2) * k],
+                        &b[(j + 2) * k..(j + 3) * k],
+                        &b[(j + 3) * k..(j + 4) * k],
+                    ];
                     let mut out = [[0.0f32; 4]; 3];
                     unsafe { avx2::dot3x4(ra, rb, &mut out) };
                     for r in 0..3 {
@@ -202,8 +223,12 @@ pub fn gemm_abt(a: &[f32], m: usize, k: usize, b: &[f32], n: usize, bias: Option
             let cr = &mut c[i * n..(i + 1) * n];
             let mut j = j0;
             while j + 4 <= j1 {
-                let (b0, b1, b2, b3) =
-                    (&b[j * k..(j + 1) * k], &b[(j + 1) * k..(j + 2) * k], &b[(j + 2) * k..(j + 3) * k], &b[(j + 3) * k..(j + 4) * k]);
+                let (b0, b1, b2, b3) = (
+                    &b[j * k..(j + 1) * k],
+                    &b[(j + 1) * k..(j + 2) * k],
+                    &b[(j + 2) * k..(j + 3) * k],
+                    &b[(j + 3) * k..(j + 4) * k],
+                );
                 let d = if avx {
                     #[cfg(target_arch = "x86_64")]
                     unsafe {
@@ -253,15 +278,23 @@ mod tests {
     #[test]
     fn matches_naive() {
         let (m, k, n) = (5, 37, 11);
-        let a: Vec<f32> = (0..m * k).map(|i| ((i * 31) % 17) as f32 * 0.1 - 0.7).collect();
-        let b: Vec<f32> = (0..n * k).map(|i| ((i * 13) % 19) as f32 * 0.05 - 0.4).collect();
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| ((i * 31) % 17) as f32 * 0.1 - 0.7)
+            .collect();
+        let b: Vec<f32> = (0..n * k)
+            .map(|i| ((i * 13) % 19) as f32 * 0.05 - 0.4)
+            .collect();
         let bias: Vec<f32> = (0..n).map(|j| j as f32).collect();
         let mut c = vec![0.0; m * n];
         gemm_abt(&a, m, k, &b, n, Some(&bias), &mut c);
         for i in 0..m {
             for j in 0..n {
                 let want: f32 = (0..k).map(|l| a[i * k + l] * b[j * k + l]).sum::<f32>() + bias[j];
-                assert!((c[i * n + j] - want).abs() < 1e-3, "{i},{j}: {} vs {want}", c[i * n + j]);
+                assert!(
+                    (c[i * n + j] - want).abs() < 1e-3,
+                    "{i},{j}: {} vs {want}",
+                    c[i * n + j]
+                );
             }
         }
     }

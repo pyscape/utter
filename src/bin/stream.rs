@@ -17,7 +17,9 @@ fn main() {
     let mut partial_words = false;
     let mut dither: Option<f32> = None;
     let mut unknown_cost: Option<f32> = None;
-    let mut threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let mut threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -48,7 +50,9 @@ fn main() {
         model.mfcc_opts.dither = d;
     }
     eprintln!("model loaded in {:?}", t0.elapsed());
-    let grammar = utter::json::parse_string_array(&std::fs::read_to_string(&grammar_path).expect("grammar")).expect("grammar JSON");
+    let grammar =
+        utter::json::parse_string_array(&std::fs::read_to_string(&grammar_path).expect("grammar"))
+            .expect("grammar JSON");
 
     let next = std::sync::atomic::AtomicUsize::new(0);
     let out = std::sync::Mutex::new(Vec::<(usize, String)>::new());
@@ -59,7 +63,15 @@ fn main() {
                 if i >= wavs.len() {
                     break;
                 }
-                let line = run_take(&model, &grammar, &wavs[i], block_ms, alternatives, partial_words, unknown_cost);
+                let line = run_take(
+                    &model,
+                    &grammar,
+                    &wavs[i],
+                    block_ms,
+                    alternatives,
+                    partial_words,
+                    unknown_cost,
+                );
                 out.lock().unwrap().push((i, line));
             });
         }
@@ -71,11 +83,23 @@ fn main() {
     }
 }
 
-fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, block_ms: usize, alternatives: usize, partial_words: bool, unknown_cost: Option<f32>) -> String {
+fn run_take(
+    model: &Model,
+    grammar: &[String],
+    wav: &std::path::Path,
+    block_ms: usize,
+    alternatives: usize,
+    partial_words: bool,
+    unknown_cost: Option<f32>,
+) -> String {
     let w = read_wav(wav).expect("wav");
     let t0 = Instant::now();
-    let opts = utter::recognizer::RecognizerOptions { unknown_cost, ..Default::default() };
-    let mut rec = Recognizer::with_options(model, w.sample_rate as f32, grammar, &opts).expect("recognizer");
+    let opts = utter::recognizer::RecognizerOptions {
+        unknown_cost,
+        ..Default::default()
+    };
+    let mut rec =
+        Recognizer::with_options(model, w.sample_rate as f32, grammar, &opts).expect("recognizer");
     let t_new = t0.elapsed();
     rec.set_words(true);
     rec.set_partial_words(partial_words);
@@ -93,7 +117,10 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, block_ms: 
         fed = end;
         if step.endpoint {
             let res = rec.result().to_string();
-            segments.push(format!("{{\"end_sample\": {}, \"endpoint_sample\": {}, \"result\": {}}}", fed, step.sample, res));
+            segments.push(format!(
+                "{{\"end_sample\": {}, \"endpoint_sample\": {}, \"result\": {}}}",
+                fed, step.sample, res
+            ));
             partials.push(String::new());
         } else {
             partials.push(rec.partial().to_string());
@@ -102,11 +129,20 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, block_ms: 
         i = end;
     }
     let res = rec.final_result().to_string();
-    segments.push(format!("{{\"end_sample\": {}, \"endpoint_sample\": {}, \"result\": {}}}", fed, fed, res));
+    segments.push(format!(
+        "{{\"end_sample\": {}, \"endpoint_sample\": {}, \"result\": {}}}",
+        fed, fed, res
+    ));
     let mut s = String::from("{\"take\": ");
     utter::json::write_string(&mut s, wav.file_stem().unwrap().to_str().unwrap());
     s.push_str(&format!(", \"block_ms\": {block_ms}, \"samples\": {}, \"new_ms\": {}, \"graph_states\": {}, \"compute_us\": [", w.samples.len(), t_new.as_millis(), rec.graph().num_states()));
-    s.push_str(&compute_us.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(","));
+    s.push_str(
+        &compute_us
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    );
     s.push_str("], \"partials\": [");
     for (k, p) in partials.iter().enumerate() {
         if k > 0 {

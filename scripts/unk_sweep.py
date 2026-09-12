@@ -7,6 +7,7 @@ For each `stream` run (one per unknown-word cost, `--partial-words` on): blocks 
 of audio sit below -40 dBFS and whose rank-0 partial carries a vocabulary word; final words whose
 interval sits below -40 dBFS; total final words; total [unk] finals.
 """
+
 import argparse
 import json
 import math
@@ -34,9 +35,10 @@ def dbfs(samples):
 
 def load_pcm(path):
     import array
-    w = wave.open(str(path))
-    a = array.array("h")
-    a.frombytes(w.readframes(w.getnframes()))
+
+    with wave.open(str(path)) as w:
+        a = array.array("h")
+        a.frombytes(w.readframes(w.getnframes()))
     return a
 
 
@@ -66,7 +68,7 @@ def main():
                 if p is None:
                     continue
                 end = (i + 1) * block
-                if dbfs(pcm[max(0, end - tail):end]) < QUIET_DBFS:
+                if dbfs(pcm[max(0, end - tail) : end]) < QUIET_DBFS:
                     quiet_blocks += 1
                     if words_of(p.get("partial", "")):
                         quiet_word += 1
@@ -79,7 +81,7 @@ def main():
                     if e["word"].startswith("["):
                         continue
                     final_words += 1
-                    if dbfs(pcm[e["start_sample"]:e["end_sample"]]) < QUIET_DBFS:
+                    if dbfs(pcm[e["start_sample"] : e["end_sample"]]) < QUIET_DBFS:
                         quiet_finals += 1
         print(f"| {label} | {quiet_blocks} | {quiet_word} | {final_words} | {quiet_finals} | {unk_finals} |")
 

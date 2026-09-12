@@ -39,7 +39,12 @@ impl TransitionModel {
             tid2phone[2 * i + 1] = phone;
             tid2phone[2 * i + 2] = phone;
         }
-        Ok(TransitionModel { tid2pdf, tid2phone, num_pdfs: num_pdfs as usize, num_transition_states: n })
+        Ok(TransitionModel {
+            tid2pdf,
+            tid2phone,
+            num_pdfs: num_pdfs as usize,
+            num_transition_states: n,
+        })
     }
 
     pub fn num_tids(&self) -> usize {

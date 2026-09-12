@@ -76,8 +76,17 @@ pub struct Decoder<'g> {
 }
 
 impl<'g> Decoder<'g> {
-    pub fn new(fst: Arc<VectorFst>, tid2pdf: &'g [i32], tid2phone: &'g [i32], config: DecoderConfig) -> Self {
-        let has_eps = fst.states.iter().map(|s| s.arcs.iter().any(|a| a.ilabel == 0)).collect();
+    pub fn new(
+        fst: Arc<VectorFst>,
+        tid2pdf: &'g [i32],
+        tid2phone: &'g [i32],
+        config: DecoderConfig,
+    ) -> Self {
+        let has_eps = fst
+            .states
+            .iter()
+            .map(|s| s.arcs.iter().any(|a| a.ilabel == 0))
+            .collect();
         let mut d = Decoder {
             fst,
             config,
@@ -101,7 +110,15 @@ impl<'g> Decoder<'g> {
             return;
         }
         self.seq = 0;
-        self.cur.insert(self.fst.start, Token { cost: 0.0, link: None, phone: 0, seq: 0 });
+        self.cur.insert(
+            self.fst.start,
+            Token {
+                cost: 0.0,
+                link: None,
+                phone: 0,
+                seq: 0,
+            },
+        );
         let beam = self.config.beam;
         self.process_nonemitting(beam);
     }
@@ -130,11 +147,16 @@ impl<'g> Decoder<'g> {
         let mut max_active_cutoff = f32::INFINITY;
         let n = self.tmp_costs.len();
         if n > c.max_active {
-            self.tmp_costs.select_nth_unstable_by(c.max_active, |a, b| a.partial_cmp(b).unwrap());
+            self.tmp_costs
+                .select_nth_unstable_by(c.max_active, |a, b| a.partial_cmp(b).unwrap());
             max_active_cutoff = self.tmp_costs[c.max_active];
         }
         if max_active_cutoff < beam_cutoff {
-            return (max_active_cutoff, max_active_cutoff - best + c.beam_delta, best_state);
+            return (
+                max_active_cutoff,
+                max_active_cutoff - best + c.beam_delta,
+                best_state,
+            );
         }
         let mut min_active_cutoff = f32::INFINITY;
         if n > c.min_active {
@@ -142,12 +164,17 @@ impl<'g> Decoder<'g> {
                 min_active_cutoff = best;
             } else {
                 let end = if n > c.max_active { c.max_active } else { n };
-                self.tmp_costs[..end].select_nth_unstable_by(c.min_active, |a, b| a.partial_cmp(b).unwrap());
+                self.tmp_costs[..end]
+                    .select_nth_unstable_by(c.min_active, |a, b| a.partial_cmp(b).unwrap());
                 min_active_cutoff = self.tmp_costs[c.min_active];
             }
         }
         if min_active_cutoff > beam_cutoff {
-            (min_active_cutoff, min_active_cutoff - best + c.beam_delta, best_state)
+            (
+                min_active_cutoff,
+                min_active_cutoff - best + c.beam_delta,
+                best_state,
+            )
         } else {
             (beam_cutoff, c.beam, best_state)
         }
@@ -172,7 +199,9 @@ impl<'g> Decoder<'g> {
             cost_offset = -tok.cost;
             for a in &self.fst.states[bs as usize].arcs {
                 if a.ilabel != 0 {
-                    let w = a.weight + cost_offset - loglikes[self.tid2pdf[a.ilabel as usize] as usize] + tok.cost;
+                    let w = a.weight + cost_offset
+                        - loglikes[self.tid2pdf[a.ilabel as usize] as usize]
+                        + tok.cost;
                     if w + adaptive_beam < next_cutoff {
                         next_cutoff = w + adaptive_beam;
                     }
@@ -214,7 +243,15 @@ impl<'g> Decoder<'g> {
                     } else {
                         tok.link.clone()
                     };
-                    next.insert(a.nextstate, Token { cost: tot, link, phone, seq });
+                    next.insert(
+                        a.nextstate,
+                        Token {
+                            cost: tot,
+                            link,
+                            phone,
+                            seq,
+                        },
+                    );
                 }
             }
         }
@@ -252,11 +289,24 @@ impl<'g> Decoder<'g> {
                 };
                 if better {
                     let link = if a.olabel != 0 {
-                        Some(Rc::new(Link { prev: tok.link.clone(), frame, word: a.olabel, phone: 0 }))
+                        Some(Rc::new(Link {
+                            prev: tok.link.clone(),
+                            frame,
+                            word: a.olabel,
+                            phone: 0,
+                        }))
                     } else {
                         tok.link.clone()
                     };
-                    self.cur.insert(a.nextstate, Token { cost: tot, link, phone: tok.phone, seq });
+                    self.cur.insert(
+                        a.nextstate,
+                        Token {
+                            cost: tot,
+                            link,
+                            phone: tok.phone,
+                            seq,
+                        },
+                    );
                     self.queue.push(a.nextstate);
                 }
             }
@@ -269,9 +319,17 @@ impl<'g> Decoder<'g> {
         let any_final = use_final && self.cur.keys().any(|&s| self.fst.is_final(s));
         let mut best: Option<(&Token, f32)> = None;
         for (&s, t) in &self.cur {
-            let fw = if any_final { self.fst.states[s as usize].final_weight } else { 0.0 };
+            let fw = if any_final {
+                self.fst.states[s as usize].final_weight
+            } else {
+                0.0
+            };
             let c = t.cost + fw;
-            if c.is_finite() && best.map(|(bt, b)| c < b || (c == b && t.seq > bt.seq)).unwrap_or(true) {
+            if c.is_finite()
+                && best
+                    .map(|(bt, b)| c < b || (c == b && t.seq > bt.seq))
+                    .unwrap_or(true)
+            {
                 best = Some((t, c));
             }
         }
@@ -302,12 +360,19 @@ impl<'g> Decoder<'g> {
             l = r.prev.as_deref();
         }
         records.reverse();
-        let mut path = Path { cost, ..Default::default() };
+        let mut path = Path {
+            cost,
+            ..Default::default()
+        };
         let mut open: Option<(i32, usize)> = None;
         for r in &records {
             if r.phone != 0 {
                 if let Some((p, start)) = open.take() {
-                    path.phones.push(PhoneSegment { phone: p, start, end: r.frame as usize });
+                    path.phones.push(PhoneSegment {
+                        phone: p,
+                        start,
+                        end: r.frame as usize,
+                    });
                 }
                 open = Some((r.phone, r.frame as usize));
             }
@@ -317,7 +382,11 @@ impl<'g> Decoder<'g> {
             }
         }
         if let Some((p, start)) = open {
-            path.phones.push(PhoneSegment { phone: p, start, end: self.num_frames_decoded });
+            path.phones.push(PhoneSegment {
+                phone: p,
+                start,
+                end: self.num_frames_decoded,
+            });
         }
         path
     }
@@ -328,7 +397,9 @@ impl<'g> Decoder<'g> {
 
     /// Kaldi's `TrailingSilenceLength` on the best path without final costs.
     pub fn trailing_silence_frames(&self, silence_phones: &[i32]) -> usize {
-        let Some(path) = self.best_path(false) else { return 0 };
+        let Some(path) = self.best_path(false) else {
+            return 0;
+        };
         let mut n = 0;
         for seg in path.phones.iter().rev() {
             if silence_phones.contains(&seg.phone) {
@@ -346,7 +417,11 @@ impl<'g> Decoder<'g> {
         let any_final = use_final && self.cur.keys().any(|&s| self.fst.is_final(s));
         let mut groups: HashMap<Vec<Label>, (f32, &Token)> = HashMap::new();
         for (&s, t) in &self.cur {
-            let fw = if any_final { self.fst.states[s as usize].final_weight } else { 0.0 };
+            let fw = if any_final {
+                self.fst.states[s as usize].final_weight
+            } else {
+                0.0
+            };
             let c = t.cost + fw;
             if !c.is_finite() {
                 continue;

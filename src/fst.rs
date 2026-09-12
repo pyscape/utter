@@ -34,13 +34,19 @@ pub struct VectorFst {
 
 impl Default for VectorFst {
     fn default() -> Self {
-        VectorFst { start: NO_STATE, states: Vec::new() }
+        VectorFst {
+            start: NO_STATE,
+            states: Vec::new(),
+        }
     }
 }
 
 impl VectorFst {
     pub fn add_state(&mut self) -> StateId {
-        self.states.push(State { final_weight: f32::INFINITY, arcs: Vec::new() });
+        self.states.push(State {
+            final_weight: f32::INFINITY,
+            arcs: Vec::new(),
+        });
         (self.states.len() - 1) as StateId
     }
     pub fn add_arc(&mut self, s: StateId, arc: Arc) {
@@ -85,8 +91,10 @@ impl VectorFst {
             }
         }
         let mut coaccessible = vec![false; n];
-        let mut stack: Vec<StateId> =
-            (0..n).filter(|&s| self.states[s].final_weight.is_finite()).map(|s| s as StateId).collect();
+        let mut stack: Vec<StateId> = (0..n)
+            .filter(|&s| self.states[s].final_weight.is_finite())
+            .map(|s| s as StateId)
+            .collect();
         for &s in &stack {
             coaccessible[s as usize] = true;
         }
@@ -118,7 +126,11 @@ impl VectorFst {
             }
             self.states.push(st);
         }
-        self.start = if newid[self.start as usize] == NO_STATE { NO_STATE } else { newid[self.start as usize] };
+        self.start = if newid[self.start as usize] == NO_STATE {
+            NO_STATE
+        } else {
+            newid[self.start as usize]
+        };
         if self.start == NO_STATE {
             self.states.clear();
         }
@@ -182,7 +194,10 @@ impl SymbolTable {
                 }
             }
         }
-        SymbolTable { name: String::new(), symbols }
+        SymbolTable {
+            name: String::new(),
+            symbols,
+        }
     }
 }
 
@@ -293,7 +308,14 @@ fn read_const_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
     }
     let ns = h.num_states.max(0) as usize;
     let na = h.num_arcs.max(0) as usize;
-    let mut fst = VectorFst { start: if h.start < 0 { NO_STATE } else { h.start as StateId }, states: Vec::with_capacity(ns) };
+    let mut fst = VectorFst {
+        start: if h.start < 0 {
+            NO_STATE
+        } else {
+            h.start as StateId
+        },
+        states: Vec::with_capacity(ns),
+    };
     let mut spans = Vec::with_capacity(ns);
     for _ in 0..ns {
         let w = c.f32()?;
@@ -302,7 +324,10 @@ fn read_const_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
         let _niepsilons = c.u32()?;
         let _noepsilons = c.u32()?;
         spans.push((pos, narcs));
-        fst.states.push(State { final_weight: w, arcs: Vec::with_capacity(narcs) });
+        fst.states.push(State {
+            final_weight: w,
+            arcs: Vec::with_capacity(narcs),
+        });
     }
     if aligned {
         c.align();
@@ -353,7 +378,12 @@ fn read_label_reachable(c: &mut Cur) -> Result<LabelReachable> {
         let _count = c.i32()?;
         intervals.push(set);
     }
-    Ok(LabelReachable { reach_input, final_label, label2index, intervals })
+    Ok(LabelReachable {
+        reach_input,
+        final_label,
+        label2index,
+        intervals,
+    })
 }
 
 /// Read an OpenFst binary file: `const` and `vector` bodies, and `olabel_lookahead` wrapping a
@@ -361,8 +391,16 @@ fn read_label_reachable(c: &mut Cur) -> Result<LabelReachable> {
 pub fn read_fst_bytes(bytes: &[u8]) -> Result<FstFile> {
     let mut c = Cur { b: bytes, p: 0 };
     let header = read_header(&mut c)?;
-    let isymbols = if header.flags & FLAG_HAS_ISYMBOLS != 0 { Some(read_symbol_table(&mut c)?) } else { None };
-    let osymbols = if header.flags & FLAG_HAS_OSYMBOLS != 0 { Some(read_symbol_table(&mut c)?) } else { None };
+    let isymbols = if header.flags & FLAG_HAS_ISYMBOLS != 0 {
+        Some(read_symbol_table(&mut c)?)
+    } else {
+        None
+    };
+    let osymbols = if header.flags & FLAG_HAS_OSYMBOLS != 0 {
+        Some(read_symbol_table(&mut c)?)
+    } else {
+        None
+    };
     if header.arc_type != "standard" {
         return Err(err(&format!("unsupported arc type {}", header.arc_type)));
     }
@@ -403,20 +441,41 @@ pub fn read_fst_bytes(bytes: &[u8]) -> Result<FstFile> {
         }
         _ => VectorFst::default(),
     };
-    Ok(FstFile { header, fst, isymbols, osymbols, addon })
+    Ok(FstFile {
+        header,
+        fst,
+        isymbols,
+        osymbols,
+        addon,
+    })
 }
 
 fn read_vector_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
     let ns = h.num_states.max(0) as usize;
-    let mut fst = VectorFst { start: if h.start < 0 { NO_STATE } else { h.start as StateId }, states: Vec::with_capacity(ns) };
+    let mut fst = VectorFst {
+        start: if h.start < 0 {
+            NO_STATE
+        } else {
+            h.start as StateId
+        },
+        states: Vec::with_capacity(ns),
+    };
     for _ in 0..ns {
         let w = c.f32()?;
         let narcs = c.i64()?.max(0) as usize;
         let mut arcs = Vec::with_capacity(narcs);
         for _ in 0..narcs {
-            arcs.push(Arc { ilabel: c.i32()?, olabel: c.i32()?, weight: c.f32()?, nextstate: c.u32()? });
+            arcs.push(Arc {
+                ilabel: c.i32()?,
+                olabel: c.i32()?,
+                weight: c.f32()?,
+                nextstate: c.u32()?,
+            });
         }
-        fst.states.push(State { final_weight: w, arcs });
+        fst.states.push(State {
+            final_weight: w,
+            arcs,
+        });
     }
     Ok(fst)
 }
@@ -426,12 +485,22 @@ pub fn read_fst_file(path: &std::path::Path) -> Result<FstFile> {
 }
 
 /// Header and symbol tables only; the body is skipped.
-pub fn read_fst_symbols(path: &std::path::Path) -> Result<(FstHeader, Option<SymbolTable>, Option<SymbolTable>)> {
+pub fn read_fst_symbols(
+    path: &std::path::Path,
+) -> Result<(FstHeader, Option<SymbolTable>, Option<SymbolTable>)> {
     let bytes = std::fs::read(path)?;
     let mut c = Cur { b: &bytes, p: 0 };
     let header = read_header(&mut c)?;
-    let isymbols = if header.flags & FLAG_HAS_ISYMBOLS != 0 { Some(read_symbol_table(&mut c)?) } else { None };
-    let osymbols = if header.flags & FLAG_HAS_OSYMBOLS != 0 { Some(read_symbol_table(&mut c)?) } else { None };
+    let isymbols = if header.flags & FLAG_HAS_ISYMBOLS != 0 {
+        Some(read_symbol_table(&mut c)?)
+    } else {
+        None
+    };
+    let osymbols = if header.flags & FLAG_HAS_OSYMBOLS != 0 {
+        Some(read_symbol_table(&mut c)?)
+    } else {
+        None
+    };
     Ok((header, isymbols, osymbols))
 }
 
@@ -447,9 +516,33 @@ mod tests {
         let s2 = f.add_state();
         let _dead = f.add_state();
         f.start = s0;
-        f.add_arc(s0, Arc { ilabel: 1, olabel: 1, weight: 0.0, nextstate: s1 });
-        f.add_arc(s0, Arc { ilabel: 2, olabel: 2, weight: 0.0, nextstate: 3 });
-        f.add_arc(s1, Arc { ilabel: 3, olabel: 3, weight: 0.0, nextstate: s2 });
+        f.add_arc(
+            s0,
+            Arc {
+                ilabel: 1,
+                olabel: 1,
+                weight: 0.0,
+                nextstate: s1,
+            },
+        );
+        f.add_arc(
+            s0,
+            Arc {
+                ilabel: 2,
+                olabel: 2,
+                weight: 0.0,
+                nextstate: 3,
+            },
+        );
+        f.add_arc(
+            s1,
+            Arc {
+                ilabel: 3,
+                olabel: 3,
+                weight: 0.0,
+                nextstate: s2,
+            },
+        );
         f.set_final(s2, 0.0);
         f.connect();
         assert_eq!(f.num_states(), 3);

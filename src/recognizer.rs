@@ -63,7 +63,10 @@ pub struct RecognizerOptions {
 
 impl Default for RecognizerOptions {
     fn default() -> Self {
-        RecognizerOptions { unknown_cost: None, max_graph_states: DEFAULT_MAX_GRAPH_STATES }
+        RecognizerOptions {
+            unknown_cost: None,
+            max_graph_states: DEFAULT_MAX_GRAPH_STATES,
+        }
     }
 }
 
@@ -104,7 +107,11 @@ fn escape_json_number(v: f64) -> String {
     if v.is_finite() {
         let s = format!("{v:.6}");
         let s = s.trim_end_matches('0').trim_end_matches('.').to_string();
-        if s.is_empty() || s == "-" || s == "-0" { "0".into() } else { s }
+        if s.is_empty() || s == "-" || s == "-0" {
+            "0".into()
+        } else {
+            s
+        }
     } else if v > 0.0 {
         "1e999".into()
     } else {
@@ -119,17 +126,35 @@ impl<'m> Recognizer<'m> {
         Self::with_options(model, sample_rate, grammar, &RecognizerOptions::default())
     }
 
-    pub fn with_options(model: &'m Model, sample_rate: f32, grammar: &[String], options: &RecognizerOptions) -> std::io::Result<Self> {
+    pub fn with_options(
+        model: &'m Model,
+        sample_rate: f32,
+        grammar: &[String],
+        options: &RecognizerOptions,
+    ) -> std::io::Result<Self> {
         let max_states = options.max_graph_states;
         if grammar.is_empty() {
             return Err(crate::kaldi_io::err("a grammar is required"));
         }
-        let distinct: std::collections::HashSet<&str> = grammar.iter().flat_map(|s| s.split(' ')).filter(|w| !w.is_empty()).collect();
+        let distinct: std::collections::HashSet<&str> = grammar
+            .iter()
+            .flat_map(|s| s.split(' '))
+            .filter(|w| !w.is_empty())
+            .collect();
         if distinct.len() >= MAX_GRAMMAR_WORDS {
-            return Err(crate::kaldi_io::err(&format!("grammar has {} distinct words; fewer than {MAX_GRAMMAR_WORDS} are supported", distinct.len())));
+            return Err(crate::kaldi_io::err(&format!(
+                "grammar has {} distinct words; fewer than {MAX_GRAMMAR_WORDS} are supported",
+                distinct.len()
+            )));
         }
-        let graph = model.compile_grammar(grammar, options.unknown_cost, max_states, |w| eprintln!("utter: {w}"))?;
-        let sw = SilenceWeighting::new(&model.conf.silence_phones, SILENCE_WEIGHT, model.conf.frame_subsampling_factor);
+        let graph = model.compile_grammar(grammar, options.unknown_cost, max_states, |w| {
+            eprintln!("utter: {w}")
+        })?;
+        let sw = SilenceWeighting::new(
+            &model.conf.silence_phones,
+            SILENCE_WEIGHT,
+            model.conf.frame_subsampling_factor,
+        );
         Ok(Recognizer {
             silence_weighting: sw,
             model,
@@ -176,12 +201,21 @@ impl<'m> Recognizer<'m> {
 
     fn decoder_config(&self) -> DecoderConfig {
         let c = &self.model.conf;
-        DecoderConfig { beam: c.beam, max_active: c.max_active, min_active: c.min_active, beam_delta: 0.5 }
+        DecoderConfig {
+            beam: c.beam,
+            max_active: c.max_active,
+            min_active: c.min_active,
+            beam_delta: 0.5,
+        }
     }
 
     fn frame_samples(&self) -> u64 {
         // one output frame is subsampling x 10 ms
-        (self.model.conf.frame_subsampling_factor as f64 * self.model.mfcc_opts.frame_shift_ms as f64 * 0.001 * self.sample_rate as f64).round() as u64
+        (self.model.conf.frame_subsampling_factor as f64
+            * self.model.mfcc_opts.frame_shift_ms as f64
+            * 0.001
+            * self.sample_rate as f64)
+            .round() as u64
     }
 
     fn rebuild(&mut self) {
@@ -194,43 +228,68 @@ impl<'m> Recognizer<'m> {
         self.pipeline = Some(FeaturePipeline::new(&opts, self.model.ivector.as_ref()));
         self.nnet = Some(LoopedNnet::new(self.model));
         let cfg = self.decoder_config();
-        self.decoder = Some(Decoder::new(self.graph.clone(), &self.model.tm.tid2pdf, &self.model.tm.tid2phone, cfg));
+        self.decoder = Some(Decoder::new(
+            self.graph.clone(),
+            &self.model.tm.tid2pdf,
+            &self.model.tm.tid2phone,
+            cfg,
+        ));
         self.stable.clear();
     }
 
     /// libvosk's `CleanUp`: a new utterance on the same pipeline, or a new pipeline after a
     /// final result or 20,000 frames.
     fn clean_up(&mut self) {
-        self.silence_weighting = SilenceWeighting::new(&self.model.conf.silence_phones, SILENCE_WEIGHT, self.model.conf.frame_subsampling_factor);
+        self.silence_weighting = SilenceWeighting::new(
+            &self.model.conf.silence_phones,
+            SILENCE_WEIGHT,
+            self.model.conf.frame_subsampling_factor,
+        );
         if let Some(d) = &self.decoder {
             self.frame_offset += d.num_frames_decoded();
         }
-        if self.decoder.is_none() || self.state == State::Finalized || self.frame_offset > 20000 {
-            self.rebuild();
-        } else {
-            self.nnet.as_mut().unwrap().set_frame_offset(self.frame_offset);
-            self.decoder.as_mut().unwrap().init_decoding();
-            self.stable.clear();
+        match (self.decoder.as_mut(), self.nnet.as_mut()) {
+            (Some(dec), Some(nnet))
+                if self.state != State::Finalized && self.frame_offset <= 20000 =>
+            {
+                nnet.set_frame_offset(self.frame_offset);
+                dec.init_decoding();
+                self.stable.clear();
+            }
+            _ => self.rebuild(),
         }
     }
 
     /// libvosk's `UpdateSilenceWeights`, run before every decoding advance.
     fn update_silence_weights(&mut self) {
         let sf = self.model.conf.frame_subsampling_factor;
-        let (Some(pipe), Some(dec)) = (self.pipeline.as_mut(), self.decoder.as_ref()) else { return };
-        let Some(iv) = pipe.ivector.as_mut() else { return };
+        let (Some(pipe), Some(dec)) = (self.pipeline.as_mut(), self.decoder.as_ref()) else {
+            return;
+        };
+        let Some(iv) = pipe.ivector.as_mut() else {
+            return;
+        };
         if !self.silence_weighting.active() || pipe.mfcc.num_frames_ready() == 0 {
             return;
         }
         if let Some(path) = dec.best_path(false) {
-            self.silence_weighting.compute_current_traceback(&path, dec.num_frames_decoded());
+            self.silence_weighting
+                .compute_current_traceback(&path, dec.num_frames_decoded());
         }
-        let deltas = self.silence_weighting.get_delta_weights(pipe.mfcc.num_frames_ready(), self.frame_offset * sf);
+        let deltas = self
+            .silence_weighting
+            .get_delta_weights(pipe.mfcc.num_frames_ready(), self.frame_offset * sf);
         iv.update_frame_weights(&deltas);
     }
 
     fn advance_decoding(&mut self) {
-        let (Some(pipe), Some(nnet), Some(dec)) = (self.pipeline.as_mut(), self.nnet.as_mut(), self.decoder.as_mut()) else { return };
+        let (Some(pipe), Some(nnet), Some(dec)) = (
+            self.pipeline.as_mut(),
+            self.nnet.as_mut(),
+            self.decoder.as_mut(),
+        ) else {
+            return;
+        };
         while dec.num_frames_decoded() < nnet.num_frames_ready(pipe) {
             let row = nnet.frame(pipe, dec.num_frames_decoded());
             dec.advance_frame(row);
@@ -259,20 +318,28 @@ impl<'m> Recognizer<'m> {
         self.samples_processed += samples.len() as u64;
         self.update_stable();
         let endpoint = self.endpoint_detected();
-        let decoded = self.decoder.as_ref().map(|d| d.num_frames_decoded()).unwrap_or(0);
-        let sample = self.samples_round_start + (self.frame_offset + decoded) as u64 * self.frame_samples();
+        let decoded = self
+            .decoder
+            .as_ref()
+            .map(|d| d.num_frames_decoded())
+            .unwrap_or(0);
+        let sample =
+            self.samples_round_start + (self.frame_offset + decoded) as u64 * self.frame_samples();
         Step { endpoint, sample }
     }
 
     /// libvosk's `EndpointDetected` over the current decoding.
     pub fn endpoint_detected(&self) -> bool {
-        let Some(dec) = self.decoder.as_ref() else { return false };
+        let Some(dec) = self.decoder.as_ref() else {
+            return false;
+        };
         let n = dec.num_frames_decoded();
         if n == 0 {
             return false;
         }
         let conf = &self.model.conf;
-        let shift = conf.frame_subsampling_factor as f32 * self.model.mfcc_opts.frame_shift_ms * 0.001;
+        let shift =
+            conf.frame_subsampling_factor as f32 * self.model.mfcc_opts.frame_shift_ms * 0.001;
         let trailing = dec.trailing_silence_frames(&conf.silence_phones) as f32 * shift;
         let utterance = n as f32 * shift;
         let relative = dec.final_relative_cost();
@@ -286,12 +353,21 @@ impl<'m> Recognizer<'m> {
     }
 
     fn update_stable(&mut self) {
-        let Some(dec) = self.decoder.as_ref() else { return };
+        let Some(dec) = self.decoder.as_ref() else {
+            return;
+        };
         let now = self.samples_round_start + self.samples_processed;
-        let Some(path) = dec.best_path(false) else { return };
-        let tokens: Vec<Label> = self.entries(&path).iter().map(|e| e.word.unwrap_or(-1)).collect();
+        let Some(path) = dec.best_path(false) else {
+            return;
+        };
+        let tokens: Vec<Label> = self
+            .entries(&path)
+            .iter()
+            .map(|e| e.word.unwrap_or(-1))
+            .collect();
         let mut keep = 0;
-        while keep < tokens.len() && keep < self.stable.len() && self.stable[keep].0 == tokens[keep] {
+        while keep < tokens.len() && keep < self.stable.len() && self.stable[keep].0 == tokens[keep]
+        {
             keep += 1;
         }
         self.stable.truncate(keep);
@@ -308,7 +384,11 @@ impl<'m> Recognizer<'m> {
         let mut next_word = 0;
         let push = |start: usize, end: usize, next_word: &mut usize, spans: &mut Vec<WordSpan>| {
             if *next_word < path.words.len() {
-                spans.push(WordSpan { word: path.words[*next_word], start_frame: start, end_frame: end });
+                spans.push(WordSpan {
+                    word: path.words[*next_word],
+                    start_frame: start,
+                    end_frame: end,
+                });
                 *next_word += 1;
             }
         };
@@ -350,7 +430,11 @@ impl<'m> Recognizer<'m> {
         // the frame they were emitted on.
         while next_word < path.words.len() {
             let f = path.word_frames[next_word];
-            spans.push(WordSpan { word: path.words[next_word], start_frame: f, end_frame: f + 1 });
+            spans.push(WordSpan {
+                word: path.words[next_word],
+                start_frame: f,
+                end_frame: f + 1,
+            });
             next_word += 1;
         }
         spans
@@ -358,11 +442,19 @@ impl<'m> Recognizer<'m> {
 
     /// Words only, libvosk's final word list.
     fn word_entries(&self, path: &Path) -> Vec<Entry> {
-        self.align(path).into_iter().map(|s| Entry { word: Some(s.word), start_frame: s.start_frame, end_frame: s.end_frame }).collect()
+        self.align(path)
+            .into_iter()
+            .map(|s| Entry {
+                word: Some(s.word),
+                start_frame: s.start_frame,
+                end_frame: s.end_frame,
+            })
+            .collect()
     }
 
     fn seconds(&self, frame: usize) -> f64 {
-        self.samples_round_start as f64 / self.sample_rate as f64 + (self.frame_offset + frame) as f64 * 0.03
+        self.samples_round_start as f64 / self.sample_rate as f64
+            + (self.frame_offset + frame) as f64 * 0.03
     }
 
     fn sample_of(&self, frame: usize) -> u64 {
@@ -387,19 +479,38 @@ impl<'m> Recognizer<'m> {
         }
     }
 
-    fn write_word(&self, out: &mut String, span: &Entry, with_conf: bool, with_evidence: bool, now: u64) {
-        let (ss, es) = (self.sample_of(span.start_frame), self.sample_of(span.end_frame));
+    fn write_word(
+        &self,
+        out: &mut String,
+        span: &Entry,
+        with_conf: bool,
+        with_evidence: bool,
+        now: u64,
+    ) {
+        let (ss, es) = (
+            self.sample_of(span.start_frame),
+            self.sample_of(span.end_frame),
+        );
         out.push('{');
         if with_conf {
             out.push_str("\"conf\": 1.0, ");
         }
-        out.push_str(&format!("\"end\": {}, ", escape_json_number(self.seconds(span.end_frame))));
-        out.push_str(&format!("\"start\": {}, ", escape_json_number(self.seconds(span.start_frame))));
+        out.push_str(&format!(
+            "\"end\": {}, ",
+            escape_json_number(self.seconds(span.end_frame))
+        ));
+        out.push_str(&format!(
+            "\"start\": {}, ",
+            escape_json_number(self.seconds(span.start_frame))
+        ));
         out.push_str("\"word\": ");
         write_string(out, span.word.map(|w| self.model.word(w)).unwrap_or(SIL));
         out.push_str(&format!(", \"start_sample\": {ss}, \"end_sample\": {es}"));
         if with_evidence {
-            out.push_str(&format!(", \"energy_dbfs\": {}", escape_json_number(self.energy_dbfs(ss, es))));
+            out.push_str(&format!(
+                ", \"energy_dbfs\": {}",
+                escape_json_number(self.energy_dbfs(ss, es))
+            ));
             let _ = now;
         }
         out.push('}');
@@ -409,7 +520,11 @@ impl<'m> Recognizer<'m> {
         if words.is_empty() {
             return SIL.to_string();
         }
-        words.iter().map(|&w| self.model.word(w)).collect::<Vec<_>>().join(" ")
+        words
+            .iter()
+            .map(|&w| self.model.word(w))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// The word list of a path: aligned words, and between or after them every run of silence
@@ -433,7 +548,11 @@ impl<'m> Recognizer<'m> {
         for span in &spans {
             while ri < runs.len() && runs[ri].1 <= span.start_frame {
                 if first_word_start.map(|f| runs[ri].0 >= f).unwrap_or(true) || !out.is_empty() {
-                    out.push(Entry { word: None, start_frame: runs[ri].0, end_frame: runs[ri].1 });
+                    out.push(Entry {
+                        word: None,
+                        start_frame: runs[ri].0,
+                        end_frame: runs[ri].1,
+                    });
                 }
                 ri += 1;
             }
@@ -441,10 +560,18 @@ impl<'m> Recognizer<'m> {
             while ri < runs.len() && runs[ri].0 < span.end_frame {
                 ri += 1;
             }
-            out.push(Entry { word: Some(span.word), start_frame: span.start_frame, end_frame: span.end_frame });
+            out.push(Entry {
+                word: Some(span.word),
+                start_frame: span.start_frame,
+                end_frame: span.end_frame,
+            });
         }
         while ri < runs.len() {
-            out.push(Entry { word: None, start_frame: runs[ri].0, end_frame: runs[ri].1 });
+            out.push(Entry {
+                word: None,
+                start_frame: runs[ri].0,
+                end_frame: runs[ri].1,
+            });
             ri += 1;
         }
         out
@@ -483,7 +610,10 @@ impl<'m> Recognizer<'m> {
                 }
                 out.push_str("{\"text\": ");
                 write_string(&mut out, &self.text_of(&alt.words));
-                out.push_str(&format!(", \"confidence\": {}", escape_json_number(-(alt.cost as f64))));
+                out.push_str(&format!(
+                    ", \"confidence\": {}",
+                    escape_json_number(-(alt.cost as f64))
+                ));
                 if self.partial_words {
                     out.push_str(", \"result\": [");
                     for (j, span) in self.entries(alt).iter().enumerate() {
@@ -508,7 +638,8 @@ impl<'m> Recognizer<'m> {
                 self.write_word(&mut w, span, false, true, now);
                 w.pop();
                 let since = self.stable.get(j).map(|s| s.1).unwrap_or(now);
-                let stable_ms = ((now - since) as f64 / self.sample_rate as f64 * 1000.0).round() as u64;
+                let stable_ms =
+                    ((now - since) as f64 / self.sample_rate as f64 * 1000.0).round() as u64;
                 w.push_str(&format!(", \"stable_ms\": {stable_ms}}}"));
                 out.push_str(&w);
             }
@@ -520,7 +651,9 @@ impl<'m> Recognizer<'m> {
     }
 
     fn final_json(&self) -> String {
-        let Some(dec) = self.decoder.as_ref() else { return "{\"text\": \"\"}".into() };
+        let Some(dec) = self.decoder.as_ref() else {
+            return "{\"text\": \"\"}".into();
+        };
         if dec.num_frames_decoded() == 0 {
             return "{\"text\": \"\"}".into();
         }
@@ -533,7 +666,10 @@ impl<'m> Recognizer<'m> {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                out.push_str(&format!("{{\"confidence\": {}, ", escape_json_number(-(alt.cost as f64))));
+                out.push_str(&format!(
+                    "{{\"confidence\": {}, ",
+                    escape_json_number(-(alt.cost as f64))
+                ));
                 if self.words {
                     out.push_str("\"result\": [");
                     for (j, span) in self.word_entries(alt).iter().enumerate() {
@@ -611,12 +747,19 @@ impl<'m> Recognizer<'m> {
 
     /// Sample position, in audio fed since construction, of the last decoded frame's end.
     pub fn decoded_sample(&self) -> u64 {
-        let decoded = self.decoder.as_ref().map(|d| d.num_frames_decoded()).unwrap_or(0);
+        let decoded = self
+            .decoder
+            .as_ref()
+            .map(|d| d.num_frames_decoded())
+            .unwrap_or(0);
         self.samples_round_start + (self.frame_offset + decoded) as u64 * self.frame_samples()
     }
 
     pub fn num_frames_decoded(&self) -> usize {
-        self.decoder.as_ref().map(|d| d.num_frames_decoded()).unwrap_or(0)
+        self.decoder
+            .as_ref()
+            .map(|d| d.num_frames_decoded())
+            .unwrap_or(0)
     }
 
     pub fn num_active_tokens(&self) -> usize {

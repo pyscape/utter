@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
 """Gates G2, G3 and G5: the stock vosk wheel and utter fed identical blocks.
 
-  oracle: run vosk over a corpus with a grammar, recording the partial after every block and
-          every final (Result on endpoint, FinalResult at the end) with word times.
-  score:  compare a `stream` JSON-lines run against the oracle: partial text per block, final
-          word sequence per segment with the disagreement split the consumer cares about, word
-          times, endpoint times, and compute per block.
+oracle: run vosk over a corpus with a grammar, recording the partial after every block and
+        every final (Result on endpoint, FinalResult at the end) with word times.
+score:  compare a `stream` JSON-lines run against the oracle: partial text per block, final
+        word sequence per segment with the disagreement split the consumer cares about, word
+        times, endpoint times, and compute per block.
 """
+
 import argparse
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from g0 import dither0_model, edit_distance  # noqa: E402
+from g0 import dither0_model  # noqa: E402
 
 RATE = 16000
 
 
 def oracle(args):
     import vosk
+
     vosk.SetLogLevel(-1)
     model_dir = dither0_model(args.model) if args.dither0 else Path(args.model)
     model = vosk.Model(str(model_dir))
@@ -27,14 +29,15 @@ def oracle(args):
     block = RATE * args.block_ms // 1000 * 2
     out = {}
     import wave
+
     for wav_path in sorted(Path(args.corpus).glob("*.wav")):
-        w = wave.open(str(wav_path))
-        pcm = w.readframes(w.getnframes())
+        with wave.open(str(wav_path)) as w:
+            pcm = w.readframes(w.getnframes())
         rec = vosk.KaldiRecognizer(model, RATE, json.dumps(grammar))
         rec.SetWords(True)
         partials, segments, fed = [], [], 0
         for i in range(0, len(pcm), block):
-            chunk = pcm[i:i + block]
+            chunk = pcm[i : i + block]
             fed += len(chunk) // 2
             if rec.AcceptWaveform(chunk):
                 segments.append({"end_sample": fed, "result": json.loads(rec.Result())})
@@ -42,8 +45,7 @@ def oracle(args):
             else:
                 partials.append(json.loads(rec.PartialResult()))
         segments.append({"end_sample": fed, "result": json.loads(rec.FinalResult())})
-        out[wav_path.stem] = {"block_ms": args.block_ms, "samples": fed, "partials": partials,
-                              "segments": segments}
+        out[wav_path.stem] = {"block_ms": args.block_ms, "samples": fed, "partials": partials, "segments": segments}
         print(wav_path.stem, len(segments), file=sys.stderr)
     Path(args.out).write_text(json.dumps(out))
 
@@ -126,9 +128,9 @@ def score(args):
             for k, t in enumerate(hs):
                 if k in used:
                     continue
-                if abs(t["end_sample"] - s["end_sample"]) <= step_samples * 5:
-                    if best is None or abs(t["end_sample"] - s["end_sample"]) < abs(hs[best]["end_sample"] - s["end_sample"]):
-                        best = k
+                gap = abs(t["end_sample"] - s["end_sample"])
+                if gap <= step_samples * 5 and (best is None or gap < abs(hs[best]["end_sample"] - s["end_sample"])):
+                    best = k
             rw = words_of(s["result"].get("text", ""))
             ref_words_total += len(rw)
             seg_total += 1
@@ -169,17 +171,30 @@ def score(args):
         per_take.append((take, tb, te, take_tot, take_eq))
     lines = [f"# G2, G3, G5: stream against the stock wheel, {step_ms} ms blocks", ""]
     lines.append(f"- Partial text equal on {eq_blocks} / {blocks} blocks ({pct(eq_blocks, blocks):.2f}%) [G2 asks 95%]")
-    lines.append(f"- Segments: vosk {vosk_segments}, utter {utter_segments}; paired within 5 blocks: {seg_matched}; "
-                 f"word sequence equal on {seg_equal} / {seg_total} vosk segments ({pct(seg_equal, seg_total):.2f}%) [G2 asks 99%]")
-    lines.append(f"- Word disagreement over {ref_words_total} vosk words: {only_vosk} only in vosk, {only_utter} only in utter, {subs} substitutions")
-    lines.append(f"- Word times within 30 ms on {word_within} / {word_pairs} words of equal segments ({pct(word_within, word_pairs):.2f}%) [G2 asks 95%]")
-    lines.append(f"- Endpoints: vosk {endpoints_ref}, utter {endpoints_hyp}; within 0.2 s: {endpoints_within} / {endpoints_ref} ({pct(endpoints_within, endpoints_ref):.2f}%) [G5 asks 95%]")
+    lines.append(
+        f"- Segments: vosk {vosk_segments}, utter {utter_segments}; paired within 5 blocks: {seg_matched}; "
+        f"word sequence equal on {seg_equal} / {seg_total} vosk segments ({pct(seg_equal, seg_total):.2f}%) [G2 asks 99%]"
+    )
+    lines.append(
+        f"- Word disagreement over {ref_words_total} vosk words: {only_vosk} only in vosk, {only_utter} only in utter, {subs} substitutions"
+    )
+    lines.append(
+        f"- Word times within 30 ms on {word_within} / {word_pairs} words of equal segments ({pct(word_within, word_pairs):.2f}%) [G2 asks 95%]"
+    )
+    lines.append(
+        f"- Endpoints: vosk {endpoints_ref}, utter {endpoints_hyp}; within 0.2 s: {endpoints_within} / {endpoints_ref} ({pct(endpoints_within, endpoints_ref):.2f}%) [G5 asks 95%]"
+    )
     if compute:
         c = sorted(compute)
-        p = lambda q: c[min(len(c) - 1, int(q * len(c)))] / 1000.0
+
+        def p(q):
+            return c[min(len(c) - 1, int(q * len(c)))] / 1000.0
+
         total_s = sum(compute) / 1e6
         audio_s = sum(r["samples"] for r in ref.values() if r) / RATE
-        lines.append(f"- Compute per block: p50 {p(0.5):.2f} ms, p95 {p(0.95):.2f} ms, p99 {p(0.99):.2f} ms, max {c[-1]/1000:.1f} ms; RTF {total_s/audio_s:.4f} [budget p95 5 ms, RTF 0.05]")
+        lines.append(
+            f"- Compute per block: p50 {p(0.5):.2f} ms, p95 {p(0.95):.2f} ms, p99 {p(0.99):.2f} ms, max {c[-1] / 1000:.1f} ms; RTF {total_s / audio_s:.4f} [budget p95 5 ms, RTF 0.05]"
+        )
     lines.append("")
     lines.append("| take | blocks | equal partials | vosk segments | equal |")
     lines.append("|---|---|---|---|---|")

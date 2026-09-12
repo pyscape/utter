@@ -18,7 +18,13 @@ pub struct OnlineMfcc {
 
 impl OnlineMfcc {
     pub fn new(opts: &MfccOptions) -> Self {
-        OnlineMfcc { mfcc: Mfcc::new(opts), remainder: Vec::new(), remainder_offset: 0, frames: Vec::new(), input_finished: false }
+        OnlineMfcc {
+            mfcc: Mfcc::new(opts),
+            remainder: Vec::new(),
+            remainder_offset: 0,
+            frames: Vec::new(),
+            input_finished: false,
+        }
     }
 
     pub fn dim(&self) -> usize {
@@ -39,7 +45,8 @@ impl OnlineMfcc {
             if local + len > self.remainder.len() {
                 break;
             }
-            self.mfcc.compute_frame(&self.remainder[local..local + len], &mut row);
+            self.mfcc
+                .compute_frame(&self.remainder[local..local + len], &mut row);
             self.frames.push(row.clone());
         }
         // Drop samples no future frame will read.
@@ -73,7 +80,11 @@ pub struct FeaturePipeline<'a> {
 
 impl<'a> FeaturePipeline<'a> {
     pub fn new(opts: &MfccOptions, ivector: Option<&'a IvectorInfo>) -> Self {
-        FeaturePipeline { mfcc: OnlineMfcc::new(opts), ivector: ivector.map(IvectorStream::new), ivector_pushed: 0 }
+        FeaturePipeline {
+            mfcc: OnlineMfcc::new(opts),
+            ivector: ivector.map(IvectorStream::new),
+            ivector_pushed: 0,
+        }
     }
 
     pub fn accept(&mut self, samples: &[f32]) {

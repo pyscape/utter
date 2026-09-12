@@ -109,19 +109,28 @@ impl<R: Read> KaldiReader<R> {
         let n = n as usize;
         let mut buf = vec![0u8; n * 4];
         self.r.read_exact(&mut buf)?;
-        Ok(buf.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+        Ok(buf
+            .chunks_exact(4)
+            .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect())
     }
 
     fn read_f32_raw(&mut self, count: usize) -> Result<Vec<f32>> {
         let mut buf = vec![0u8; count * 4];
         self.r.read_exact(&mut buf)?;
-        Ok(buf.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+        Ok(buf
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect())
     }
 
     fn read_f64_raw(&mut self, count: usize) -> Result<Vec<f64>> {
         let mut buf = vec![0u8; count * 8];
         self.r.read_exact(&mut buf)?;
-        Ok(buf.chunks_exact(8).map(|c| f64::from_le_bytes(c.try_into().unwrap())).collect())
+        Ok(buf
+            .chunks_exact(8)
+            .map(|c| f64::from_le_bytes(c.try_into().unwrap()))
+            .collect())
     }
 
     pub fn read_float_vec(&mut self) -> Result<Vec<f32>> {
@@ -166,15 +175,22 @@ impl<R: Read> KaldiReader<R> {
 /// Kaldi text-form matrix (` [ a b c\n d e f ]`), the form `global_cmvn.stats` ships in.
 pub fn parse_text_matrix(txt: &str) -> Result<(usize, usize, Vec<f64>)> {
     let body = txt.trim();
-    let body = body.strip_prefix('[').ok_or_else(|| err("text matrix must start with ["))?;
-    let body = body.strip_suffix(']').ok_or_else(|| err("text matrix must end with ]"))?;
+    let body = body
+        .strip_prefix('[')
+        .ok_or_else(|| err("text matrix must start with ["))?;
+    let body = body
+        .strip_suffix(']')
+        .ok_or_else(|| err("text matrix must end with ]"))?;
     let mut rows = 0;
     let mut cols = 0;
     let mut data = Vec::new();
     for line in body.lines() {
         let vals: Vec<f64> = line
             .split_whitespace()
-            .map(|v| v.parse::<f64>().map_err(|_| err(&format!("bad number {v}"))))
+            .map(|v| {
+                v.parse::<f64>()
+                    .map_err(|_| err(&format!("bad number {v}")))
+            })
             .collect::<Result<_>>()?;
         if vals.is_empty() {
             continue;
@@ -194,5 +210,8 @@ pub fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
     if from > hay.len() {
         return None;
     }
-    hay[from..].windows(needle.len()).position(|w| w == needle).map(|p| p + from)
+    hay[from..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|p| p + from)
 }

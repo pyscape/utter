@@ -8,6 +8,7 @@ equals the partial on every block; a best path without a word is offered as [sil
 blocks whose libvosk partial was empty never yield a vocabulary word at rank 0; and the contest
 census: how many partials carrying a word have a rival one word away.
 """
+
 import argparse
 import json
 from pathlib import Path
@@ -24,11 +25,12 @@ def one_word_apart(a, b):
         return sum(x != y for x, y in zip(a, b)) == 1
     if abs(len(a) - len(b)) != 1:
         return False
-    s, l = (a, b) if len(a) < len(b) else (b, a)
-    for i in range(len(l)):
-        if l[:i] + l[i + 1:] == s:
-            return True
-    return False
+    short, long = (a, b) if len(a) < len(b) else (b, a)
+    return any(long[:i] + long[i + 1 :] == short for i in range(len(long)))
+
+
+def pct(a, b):
+    return 100.0 * a / b if b else float("nan")
 
 
 def main():
@@ -67,22 +69,29 @@ def main():
             for e in p.get("partial_result", []):
                 if e["word"] == "[sil]":
                     sil_entries += 1
-            if r is not None and i < len(r["partials"]) and r["partials"][i] is not None:
-                if not r["partials"][i].get("partial", ""):
-                    vosk_empty += 1
-                    if words_of(p["partial"]):
-                        vosk_empty_utter_word += 1
+            ref_partial = r["partials"][i] if r is not None and i < len(r["partials"]) else None
+            if ref_partial is not None and not ref_partial.get("partial", ""):
+                vosk_empty += 1
+                if words_of(p["partial"]):
+                    vosk_empty_utter_word += 1
             w0 = words_of(p["partial"])
             if w0:
                 with_word += 1
                 if len(alts) > 1 and one_word_apart(w0, words_of(alts[1]["text"])):
                     contest += 1
-    pct = lambda a, b: 100.0 * a / b if b else float("nan")
     lines = ["# G4: partial alternatives", ""]
-    lines.append(f"- rank 0 equals the partial on {rank0_eq} / {blocks} blocks ({pct(rank0_eq, blocks):.2f}%) [asks every block]")
-    lines.append(f"- best path without a word on {empty_best} blocks, offered as [sil] at rank 0 on {empty_as_sil} ({pct(empty_as_sil, empty_best):.2f}%)")
-    lines.append(f"- blocks whose libvosk partial was empty: {vosk_empty}; rank 0 a vocabulary word on {vosk_empty_utter_word} ({pct(vosk_empty_utter_word, vosk_empty):.3f}%) [asks 0]")
-    lines.append(f"- contest census: {contest} / {with_word} partials with a word have a rival one word away ({pct(contest, with_word):.2f}%)")
+    lines.append(
+        f"- rank 0 equals the partial on {rank0_eq} / {blocks} blocks ({pct(rank0_eq, blocks):.2f}%) [asks every block]"
+    )
+    lines.append(
+        f"- best path without a word on {empty_best} blocks, offered as [sil] at rank 0 on {empty_as_sil} ({pct(empty_as_sil, empty_best):.2f}%)"
+    )
+    lines.append(
+        f"- blocks whose libvosk partial was empty: {vosk_empty}; rank 0 a vocabulary word on {vosk_empty_utter_word} ({pct(vosk_empty_utter_word, vosk_empty):.3f}%) [asks 0]"
+    )
+    lines.append(
+        f"- contest census: {contest} / {with_word} partials with a word have a rival one word away ({pct(contest, with_word):.2f}%)"
+    )
     lines.append(f"- [sil] entries in partial word lists: {sil_entries}")
     lines.append("- alternatives per block: " + ", ".join(f"{k}: {v}" for k, v in sorted(alt_counts.items())))
     text = "\n".join(lines) + "\n"

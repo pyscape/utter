@@ -23,7 +23,11 @@ pub struct Mat {
 
 impl Mat {
     pub fn new(r: usize, c: usize) -> Self {
-        Mat { r, c, d: vec![0.0; r * c] }
+        Mat {
+            r,
+            c,
+            d: vec![0.0; r * c],
+        }
     }
     #[inline]
     pub fn row(&self, i: usize) -> &[f32] {
@@ -39,10 +43,24 @@ impl Mat {
 }
 
 pub enum Comp {
-    Affine { w: Mat, b: Vec<f32> },
-    Linear { w: Mat },
-    Tdnn { offsets: Vec<i32>, w: Mat, b: Vec<f32> },
-    BatchNorm { mean: Vec<f32>, var: Vec<f32>, eps: f32, trms: f32 },
+    Affine {
+        w: Mat,
+        b: Vec<f32>,
+    },
+    Linear {
+        w: Mat,
+    },
+    Tdnn {
+        offsets: Vec<i32>,
+        w: Mat,
+        b: Vec<f32>,
+    },
+    BatchNorm {
+        mean: Vec<f32>,
+        var: Vec<f32>,
+        eps: f32,
+        trms: f32,
+    },
     Relu,
     Identity,
 }
@@ -88,14 +106,25 @@ fn named_vec(buf: &[u8], s: usize, e: usize, tok: &[u8]) -> Option<Vec<f32>> {
     find(&buf[s..e], tok, 0).map(|off| vec_at(buf, s + off + tok.len()))
 }
 fn named_f32(buf: &[u8], s: usize, e: usize, tok: &[u8]) -> Option<f32> {
-    find(&buf[s..e], tok, 0).map(|off| KaldiReader::new(&buf[s + off + tok.len()..]).read_f32().unwrap())
+    find(&buf[s..e], tok, 0).map(|off| {
+        KaldiReader::new(&buf[s + off + tok.len()..])
+            .read_f32()
+            .unwrap()
+    })
 }
 
 impl Nnet3 {
     pub fn parse(buf: &[u8]) -> Nnet3 {
         let comps = parse_components(buf);
         let (nodes, input_dim, ivector_dim) = parse_graph(buf);
-        let mut net = Nnet3 { comps, nodes, ivector_dim, input_dim, output_dim: 0, context: (0, 0) };
+        let mut net = Nnet3 {
+            comps,
+            nodes,
+            ivector_dim,
+            input_dim,
+            output_dim: 0,
+            context: (0, 0),
+        };
         net.output_dim = match net.comps.get("output.affine") {
             Some(Comp::Affine { w, .. }) => w.r,
             _ => 0,
@@ -112,7 +141,13 @@ impl Nnet3 {
                 let (l, r) = self.desc_context(desc);
                 match self.comps.get(comp) {
                     Some(Comp::Tdnn { offsets, .. }) => {
-                        let lo = offsets.iter().copied().min().unwrap_or(0).min(0).unsigned_abs() as usize;
+                        let lo = offsets
+                            .iter()
+                            .copied()
+                            .min()
+                            .unwrap_or(0)
+                            .min(0)
+                            .unsigned_abs() as usize;
                         let hi = offsets.iter().copied().max().unwrap_or(0).max(0) as usize;
                         (l + lo, r + hi)
                     }
@@ -140,7 +175,10 @@ impl Nnet3 {
                 let (lb, rb) = self.desc_context(b);
                 (la.max(lb), ra.max(rb))
             }
-            Desc::Append(parts) => parts.iter().map(|p| self.desc_context(p)).fold((0, 0), |(l, r), (l2, r2)| (l.max(l2), r.max(r2))),
+            Desc::Append(parts) => parts
+                .iter()
+                .map(|p| self.desc_context(p))
+                .fold((0, 0), |(l, r), (l2, r2)| (l.max(l2), r.max(r2))),
         }
     }
 
@@ -160,7 +198,7 @@ impl Nnet3 {
     pub fn forward(&self, feats: Mat, ivector: &[f32], subsampling: usize) -> Mat {
         let out = self.forward_window(feats, ivector);
         let cols = out.c;
-        let rows = (out.r + subsampling - 1) / subsampling;
+        let rows = out.r.div_ceil(subsampling);
         let mut y = Mat::new(rows, cols);
         for (j, i) in (0..out.r).step_by(subsampling).enumerate() {
             y.d[j * cols..(j + 1) * cols].copy_from_slice(out.row(i));
@@ -172,7 +210,11 @@ impl Nnet3 {
         if let Some(m) = cache.get(name) {
             return m.clone();
         }
-        let r = match self.nodes.get(name).unwrap_or_else(|| panic!("no node {name}")) {
+        let r = match self
+            .nodes
+            .get(name)
+            .unwrap_or_else(|| panic!("no node {name}"))
+        {
             Node::Input => panic!("input {name} not pre-populated"),
             Node::DimRange { src, off, dim } => {
                 let s = self.eval_node(src, cache, t);
@@ -233,14 +275,23 @@ impl Nnet3 {
     }
 
     fn apply(&self, comp: &str, x: Mat) -> Mat {
-        match self.comps.get(comp).unwrap_or_else(|| panic!("no comp {comp}")) {
+        match self
+            .comps
+            .get(comp)
+            .unwrap_or_else(|| panic!("no comp {comp}"))
+        {
             Comp::Identity => x,
             Comp::Relu => {
                 let mut m = x;
                 m.d.iter_mut().for_each(|v| *v = v.max(0.0));
                 m
             }
-            Comp::BatchNorm { mean, var, eps, trms } => {
+            Comp::BatchNorm {
+                mean,
+                var,
+                eps,
+                trms,
+            } => {
                 let mut m = x;
                 let scale: Vec<f32> = var.iter().map(|v| trms / (v + eps).sqrt()).collect();
                 for i in 0..m.r {
@@ -260,7 +311,8 @@ impl Nnet3 {
                 for (k, &o) in offsets.iter().enumerate() {
                     let shifted = clamp_offset(&x, o);
                     for i in 0..x.r {
-                        spliced.d[i * inn * sp + k * inn..i * inn * sp + k * inn + inn].copy_from_slice(shifted.row(i));
+                        spliced.d[i * inn * sp + k * inn..i * inn * sp + k * inn + inn]
+                            .copy_from_slice(shifted.row(i));
                     }
                 }
                 spliced.affine(w, if b.is_empty() { None } else { Some(b) })
@@ -294,13 +346,18 @@ fn parse_components(buf: &[u8]) -> HashMap<String, Comp> {
         let name = r.read_token().unwrap();
         let ctype = r.read_token().unwrap();
         let comp = match ctype.as_str() {
-            "<NaturalGradientAffineComponent>" | "<FixedAffineComponent>" | "<AffineComponent>" => Comp::Affine {
-                w: named_mat(buf, s, e, b"<LinearParams> ").unwrap(),
-                b: named_vec(buf, s, e, b"<BiasParams> ").unwrap_or_default(),
+            "<NaturalGradientAffineComponent>" | "<FixedAffineComponent>" | "<AffineComponent>" => {
+                Comp::Affine {
+                    w: named_mat(buf, s, e, b"<LinearParams> ").unwrap(),
+                    b: named_vec(buf, s, e, b"<BiasParams> ").unwrap_or_default(),
+                }
+            }
+            "<LinearComponent>" => Comp::Linear {
+                w: named_mat(buf, s, e, b"<Params> ").unwrap(),
             },
-            "<LinearComponent>" => Comp::Linear { w: named_mat(buf, s, e, b"<Params> ").unwrap() },
             "<TdnnComponent>" => {
-                let off = find(&buf[s..e], b"<TimeOffsets> ", 0).unwrap() + s + b"<TimeOffsets> ".len();
+                let off =
+                    find(&buf[s..e], b"<TimeOffsets> ", 0).unwrap() + s + b"<TimeOffsets> ".len();
                 let offsets = KaldiReader::new(&buf[off..]).read_i32_vec().unwrap();
                 Comp::Tdnn {
                     offsets,
@@ -361,12 +418,26 @@ fn parse_graph(buf: &[u8]) -> (HashMap<String, Node>, usize, usize) {
             let name = kv(rest, "name").unwrap().to_string();
             let comp = kv(rest, "component").unwrap().to_string();
             let desc = &line[line.find("input=").unwrap() + 6..];
-            nodes.insert(name, Node::Component { comp, desc: parse_desc(desc.trim()) });
+            nodes.insert(
+                name,
+                Node::Component {
+                    comp,
+                    desc: parse_desc(desc.trim()),
+                },
+            );
         } else if let Some(rest) = line.strip_prefix("output-node") {
             let name = kv(rest, "name").unwrap().to_string();
             let di = line.find("input=").unwrap() + 6;
-            let desc = &line[di..line[di..].find(" objective=").map(|x| x + di).unwrap_or(line.len())];
-            nodes.insert(name, Node::Output { desc: parse_desc(desc.trim()) });
+            let desc = &line[di..line[di..]
+                .find(" objective=")
+                .map(|x| x + di)
+                .unwrap_or(line.len())];
+            nodes.insert(
+                name,
+                Node::Output {
+                    desc: parse_desc(desc.trim()),
+                },
+            );
         }
     }
     (nodes, input_dim, ivector_dim)
@@ -399,7 +470,10 @@ fn tokenize(s: &str) -> Vec<String> {
 fn parse_expr(toks: &[String], pos: &mut usize) -> Desc {
     let head = toks[*pos].clone();
     *pos += 1;
-    let is_op = matches!(head.as_str(), "Offset" | "Scale" | "Sum" | "Append" | "ReplaceIndex" | "Round" | "IfDefined");
+    let is_op = matches!(
+        head.as_str(),
+        "Offset" | "Scale" | "Sum" | "Append" | "ReplaceIndex" | "Round" | "IfDefined"
+    );
     if is_op && *pos < toks.len() && toks[*pos] == "(" {
         *pos += 1;
         let mut args = vec![parse_expr(toks, pos)];
@@ -469,7 +543,12 @@ impl Nnet3 {
         // topological order over component, dim-range and output nodes
         let mut order = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        fn visit(net: &Nnet3, name: &str, seen: &mut std::collections::HashSet<String>, order: &mut Vec<String>) {
+        fn visit(
+            net: &Nnet3,
+            name: &str,
+            seen: &mut std::collections::HashSet<String>,
+            order: &mut Vec<String>,
+        ) {
             if seen.contains(name) {
                 return;
             }
@@ -488,7 +567,13 @@ impl Nnet3 {
             order.push(name.to_string());
         }
         visit(self, "output", &mut seen, &mut order);
-        Streamer { net: self, order, rows: HashMap::new(), history: 16, ivector: vec![0.0; self.ivector_dim] }
+        Streamer {
+            net: self,
+            order,
+            rows: HashMap::new(),
+            history: 16,
+            ivector: vec![0.0; self.ivector_dim],
+        }
     }
 }
 
@@ -535,7 +620,9 @@ impl<'n> Streamer<'n> {
         match self.net.nodes.get(name) {
             None | Some(Node::Input) => input.first,
             Some(Node::DimRange { src, .. }) => self.node_first(src, input),
-            Some(Node::Component { comp, desc }) => self.desc_first(desc, input) - self.comp_offsets(comp).0,
+            Some(Node::Component { comp, desc }) => {
+                self.desc_first(desc, input) - self.comp_offsets(comp).0
+            }
             Some(Node::Output { desc }) => self.desc_first(desc, input),
         }
     }
@@ -547,7 +634,11 @@ impl<'n> Streamer<'n> {
             Desc::Scale(_, a) => self.desc_first(a, input),
             Desc::ReplaceIndex(_) => i64::MIN / 4,
             Desc::Sum(a, b) => self.desc_first(a, input).max(self.desc_first(b, input)),
-            Desc::Append(v) => v.iter().map(|p| self.desc_first(p, input)).max().unwrap_or(input.first),
+            Desc::Append(v) => v
+                .iter()
+                .map(|p| self.desc_first(p, input))
+                .max()
+                .unwrap_or(input.first),
         }
     }
 
@@ -556,7 +647,11 @@ impl<'n> Streamer<'n> {
         match self.net.nodes.get(name) {
             None | Some(Node::Input) => input.limit,
             Some(Node::DimRange { src, .. }) => self.node_avail(src, input),
-            _ => self.rows.get(name).map(|(f, r)| f + r.len() as i64).unwrap_or(self.node_first(name, input)),
+            _ => self
+                .rows
+                .get(name)
+                .map(|(f, r)| f + r.len() as i64)
+                .unwrap_or(self.node_first(name, input)),
         }
     }
 
@@ -567,7 +662,11 @@ impl<'n> Streamer<'n> {
             Desc::Scale(_, a) => self.desc_avail(a, input),
             Desc::ReplaceIndex(_) => i64::MAX / 4,
             Desc::Sum(a, b) => self.desc_avail(a, input).min(self.desc_avail(b, input)),
-            Desc::Append(v) => v.iter().map(|p| self.desc_avail(p, input)).min().unwrap_or(input.limit),
+            Desc::Append(v) => v
+                .iter()
+                .map(|p| self.desc_avail(p, input))
+                .min()
+                .unwrap_or(input.limit),
         }
     }
 
@@ -596,7 +695,10 @@ impl<'n> Streamer<'n> {
                 let mut m = Mat::new((b - a) as usize, dim);
                 for (i, t) in (a..b).enumerate() {
                     let idx = t - first;
-                    assert!(idx >= 0 && (idx as usize) < rows.len(), "row {t} of {name} not available");
+                    assert!(
+                        idx >= 0 && (idx as usize) < rows.len(),
+                        "row {t} of {name} not available"
+                    );
                     m.d[i * dim..(i + 1) * dim].copy_from_slice(&rows[idx as usize]);
                 }
                 m
@@ -620,7 +722,10 @@ impl<'n> Streamer<'n> {
                 m
             }
             Desc::Append(parts) => {
-                let mats: Vec<Mat> = parts.iter().map(|p| self.eval_desc(p, a, b, input)).collect();
+                let mats: Vec<Mat> = parts
+                    .iter()
+                    .map(|p| self.eval_desc(p, a, b, input))
+                    .collect();
                 let rows = (b - a) as usize;
                 let cols: usize = mats.iter().map(|m| m.c).sum();
                 let mut out = Mat::new(rows, cols);
@@ -662,7 +767,11 @@ impl<'n> Streamer<'n> {
             let first = self.node_first(&name, input);
             let (lo, hi) = comp.map(|c| self.comp_offsets(c)).unwrap_or((0, 0));
             let avail = self.desc_avail(desc, input) - hi;
-            let next = self.rows.get(&name).map(|(f, r)| f + r.len() as i64).unwrap_or(first);
+            let next = self
+                .rows
+                .get(&name)
+                .map(|(f, r)| f + r.len() as i64)
+                .unwrap_or(first);
             if avail <= next {
                 continue;
             }
@@ -678,7 +787,8 @@ impl<'n> Streamer<'n> {
                         for i in 0..n {
                             for (k, &o) in offsets.iter().enumerate() {
                                 let src = i + (o as i64 - lo) as usize;
-                                spliced.d[i * inn * sp + k * inn..i * inn * sp + (k + 1) * inn].copy_from_slice(x.row(src));
+                                spliced.d[i * inn * sp + k * inn..i * inn * sp + (k + 1) * inn]
+                                    .copy_from_slice(x.row(src));
                             }
                         }
                         spliced.affine(w, if b.is_empty() { None } else { Some(b) })
@@ -687,7 +797,10 @@ impl<'n> Streamer<'n> {
                 },
                 None => x,
             };
-            let entry = self.rows.entry(name.clone()).or_insert_with(|| (first, std::collections::VecDeque::new()));
+            let entry = self
+                .rows
+                .entry(name.clone())
+                .or_insert_with(|| (first, std::collections::VecDeque::new()));
             if matches!(node, Node::Output { .. }) {
                 output_first = next;
                 for i in 0..y.r {

@@ -2,6 +2,13 @@
 //!
 //! `[[rr:TD-2]]`
 
+// Index loops over parallel slices read as the mathematics does; the lint's iterator forms do not.
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::type_complexity
+)]
+
 pub mod capi;
 pub mod compose;
 pub mod decode;

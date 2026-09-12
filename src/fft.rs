@@ -20,11 +20,24 @@ pub struct RealFft {
 impl RealFft {
     pub fn new(n: usize) -> RealFft {
         assert!(n.is_power_of_two() && n >= 2);
-        let twiddle_re = (0..n / 2).map(|k| (-2.0 * PI * k as f64 / n as f64).cos() as f32).collect();
-        let twiddle_im = (0..n / 2).map(|k| (-2.0 * PI * k as f64 / n as f64).sin() as f32).collect();
+        let twiddle_re = (0..n / 2)
+            .map(|k| (-2.0 * PI * k as f64 / n as f64).cos() as f32)
+            .collect();
+        let twiddle_im = (0..n / 2)
+            .map(|k| (-2.0 * PI * k as f64 / n as f64).sin() as f32)
+            .collect();
         let bits = n.trailing_zeros();
-        let bitrev = (0..n).map(|i| i.reverse_bits() >> (usize::BITS - bits)).collect();
-        RealFft { n, twiddle_re, twiddle_im, bitrev, buf_re: vec![0.0; n], buf_im: vec![0.0; n] }
+        let bitrev = (0..n)
+            .map(|i| i.reverse_bits() >> (usize::BITS - bits))
+            .collect();
+        RealFft {
+            n,
+            twiddle_re,
+            twiddle_im,
+            bitrev,
+            buf_re: vec![0.0; n],
+            buf_im: vec![0.0; n],
+        }
     }
 
     pub fn size(&self) -> usize {
@@ -85,7 +98,11 @@ mod tests {
                 im += x as f64 * ang.sin();
             }
             let want = (re * re + im * im) as f32;
-            assert!((power[k] - want).abs() < 1e-3 * (1.0 + want.abs()), "bin {k}: {} vs {want}", power[k]);
+            assert!(
+                (power[k] - want).abs() < 1e-3 * (1.0 + want.abs()),
+                "bin {k}: {} vs {want}",
+                power[k]
+            );
         }
     }
 }

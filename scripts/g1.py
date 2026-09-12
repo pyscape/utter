@@ -7,6 +7,7 @@ C++ port of Kaldi's feature code) on a set of WAV takes, both at dither 0.
 kaldi_native_fbank must be importable (pip install kaldi-native-fbank, into a --target dir if
 the environment is frozen, then PYTHONPATH).
 """
+
 import argparse
 import struct
 import subprocess
@@ -55,8 +56,8 @@ def main():
     worst = 0.0
     rows = []
     for wav_path in args.wavs:
-        w = wave.open(wav_path)
-        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
+        with wave.open(wav_path) as w:
+            pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
         ref = knf_mfcc(conf, pcm)
         with tempfile.NamedTemporaryFile(suffix=".bin") as tmp:
             subprocess.run([args.dump, args.conf, wav_path, tmp.name], check=True)

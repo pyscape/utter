@@ -36,6 +36,13 @@ pub fn read_wav(path: &std::path::Path) -> Result<Wav> {
     if bits != 16 {
         return Err(err("only 16-bit PCM is supported"));
     }
-    let samples = data.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
-    Ok(Wav { sample_rate, channels, samples })
+    let samples = data
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    Ok(Wav {
+        sample_rate,
+        channels,
+        samples,
+    })
 }

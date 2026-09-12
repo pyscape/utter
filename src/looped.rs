@@ -21,7 +21,13 @@ pub struct LoopedNnet<'m> {
 
 impl<'m> LoopedNnet<'m> {
     pub fn new(model: &'m Model) -> Self {
-        LoopedNnet { model, streamer: model.net.streamer(), outputs: Vec::new(), chunks_computed: 0, frame_offset: 0 }
+        LoopedNnet {
+            model,
+            streamer: model.net.streamer(),
+            outputs: Vec::new(),
+            chunks_computed: 0,
+            frame_offset: 0,
+        }
     }
 
     pub fn set_frame_offset(&mut self, offset: usize) {
@@ -44,7 +50,7 @@ impl<'m> LoopedNnet<'m> {
         }
         let sf = self.model.conf.frame_subsampling_factor;
         let total = if pipe.mfcc.is_input_finished() {
-            (features_ready + sf - 1) / sf
+            features_ready.div_ceil(sf)
         } else {
             let rctx = self.model.net.context.1;
             let non_subsampled = features_ready.saturating_sub(rctx);
@@ -88,7 +94,13 @@ impl<'m> LoopedNnet<'m> {
         }
         // Kaldi's chunk sees input rows up to the chunk end plus the right context, no further,
         // even when more frames are ready.
-        let view = InputView { frames: &pipe.mfcc.frames, ready, finished, limit: (end + rctx) as i64, first: -(lctx as i64) };
+        let view = InputView {
+            frames: &pipe.mfcc.frames,
+            ready,
+            finished,
+            limit: (end + rctx) as i64,
+            first: -(lctx as i64),
+        };
         let (first, rows) = self.streamer.advance(&view, &ivector);
         let scale = self.model.conf.acoustic_scale;
         for (i, row) in rows.into_iter().enumerate() {
@@ -97,12 +109,16 @@ impl<'m> LoopedNnet<'m> {
                 continue;
             }
             let t = t as usize;
-            if t % sf == 0 {
+            if t.is_multiple_of(sf) {
                 assert_eq!(t / sf, self.outputs.len(), "output rows out of order");
-                self.outputs.push(row.into_iter().map(|v| v * scale).collect());
+                self.outputs
+                    .push(row.into_iter().map(|v| v * scale).collect());
             }
         }
         self.chunks_computed += 1;
-        assert!(self.outputs.len() >= end / sf, "chunk produced too few output rows");
+        assert!(
+            self.outputs.len() >= end / sf,
+            "chunk produced too few output rows"
+        );
     }
 }

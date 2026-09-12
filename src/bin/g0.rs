@@ -30,14 +30,23 @@ fn parse_args() -> Args {
         modes: vec!["zero".into(), "faithful".into()],
         dither: None,
         step_ms: 40,
-        threads: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+        threads: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--model" => a.model = PathBuf::from(it.next().expect("--model DIR")),
             "--grammar" => a.grammar = PathBuf::from(it.next().expect("--grammar FILE")),
-            "--modes" => a.modes = it.next().expect("--modes a,b").split(',').map(String::from).collect(),
+            "--modes" => {
+                a.modes = it
+                    .next()
+                    .expect("--modes a,b")
+                    .split(',')
+                    .map(String::from)
+                    .collect()
+            }
             "--dither" => a.dither = Some(it.next().expect("--dither F").parse().unwrap()),
             "--step-ms" => a.step_ms = it.next().expect("--step-ms N").parse().unwrap(),
             "--threads" => a.threads = it.next().expect("--threads N").parse().unwrap(),
@@ -72,7 +81,7 @@ fn forward_chunked(
     let net = &model.net;
     let sf = model.conf.frame_subsampling_factor;
     let t = feats.r;
-    let n_out = (t + sf - 1) / sf;
+    let n_out = t.div_ceil(sf);
     let (lctx, rctx) = net.context;
     let mut out = Mat::new(n_out, net.output_dim);
     let mut k = 0;
@@ -91,7 +100,7 @@ fn forward_chunked(
         let y = net.forward_window(window, &iv);
         let mut ti = begin;
         while ti < end {
-            if ti % sf == 0 {
+            if ti.is_multiple_of(sf) {
                 let o = ti / sf;
                 let row = ti - begin + lctx;
                 out.d[o * out.c..(o + 1) * out.c].copy_from_slice(y.row(row));
@@ -103,7 +112,14 @@ fn forward_chunked(
     out
 }
 
-fn decode_take(model: &Model, graph: &utter::fst::VectorFst, wav: &Path, mode: &str, dither: Option<f32>, step_ms: usize) -> String {
+fn decode_take(
+    model: &Model,
+    graph: &utter::fst::VectorFst,
+    wav: &Path,
+    mode: &str,
+    dither: Option<f32>,
+    step_ms: usize,
+) -> String {
     let w = read_wav(wav).expect("wav");
     assert_eq!(w.channels, 1, "mono only");
     let samples: Vec<f32> = w.samples.iter().map(|&s| s as f32).collect();
@@ -122,7 +138,10 @@ fn decode_take(model: &Model, graph: &utter::fst::VectorFst, wav: &Path, mode: &
     let loglikes = match mode {
         "zero" => forward_chunked(model, &feats, chunk_in, |_, _| vec![0.0; ivdim]),
         "faithful" => {
-            let info = model.ivector.as_ref().expect("model has no i-vector extractor");
+            let info = model
+                .ivector
+                .as_ref()
+                .expect("model has no i-vector extractor");
             let mut stream = IvectorStream::new(info);
             let rctx = model.net.context.1;
             let total = feats.r;
@@ -173,10 +192,18 @@ fn decode_take(model: &Model, graph: &utter::fst::VectorFst, wav: &Path, mode: &
     };
     let t_net = t1.elapsed();
     let t2 = Instant::now();
-    let dec = BatchDecoder { beam: model.conf.beam, acoustic_scale: model.conf.acoustic_scale, max_active: model.conf.max_active };
+    let dec = BatchDecoder {
+        beam: model.conf.beam,
+        acoustic_scale: model.conf.acoustic_scale,
+        max_active: model.conf.max_active,
+    };
     let (ids, cost) = dec.decode(graph, &model.tm.tid2pdf, &loglikes);
     let t_dec = t2.elapsed();
-    let words: Vec<&str> = ids.iter().map(|&i| model.word(i)).filter(|w| !w.is_empty() && *w != "<eps>").collect();
+    let words: Vec<&str> = ids
+        .iter()
+        .map(|&i| model.word(i))
+        .filter(|w| !w.is_empty() && *w != "<eps>")
+        .collect();
     let mut s = String::new();
     s.push_str("{\"take\": ");
     utter::json::write_string(&mut s, wav.file_stem().unwrap().to_str().unwrap());
@@ -214,11 +241,21 @@ fn main() {
     let grammar_text = std::fs::read_to_string(&args.grammar).expect("grammar file");
     let grammar = utter::json::parse_string_array(&grammar_text).expect("grammar JSON");
     let t1 = Instant::now();
-    let graph = model.compile_grammar(&grammar, None, 5_000_000, |w| eprintln!("warning: {w}")).expect("compose");
-    eprintln!("graph compiled in {:?}: {} states {} arcs", t1.elapsed(), graph.num_states(), graph.num_arcs());
+    let graph = model
+        .compile_grammar(&grammar, None, 5_000_000, |w| eprintln!("warning: {w}"))
+        .expect("compose");
+    eprintln!(
+        "graph compiled in {:?}: {} states {} arcs",
+        t1.elapsed(),
+        graph.num_states(),
+        graph.num_arcs()
+    );
 
-    let jobs: Vec<(PathBuf, String)> =
-        args.wavs.iter().flat_map(|w| args.modes.iter().map(move |m| (w.clone(), m.clone()))).collect();
+    let jobs: Vec<(PathBuf, String)> = args
+        .wavs
+        .iter()
+        .flat_map(|w| args.modes.iter().map(move |m| (w.clone(), m.clone())))
+        .collect();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let out = std::sync::Mutex::new(Vec::<(usize, String)>::new());
     std::thread::scope(|sc| {
