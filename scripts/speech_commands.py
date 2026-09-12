@@ -25,10 +25,10 @@ the letters a to z, the NATO alphabet, and red, yellow, blue, black and white. T
 - grammar size: the 35 dataset words plus filler up to each --grammar-sizes entry, which is
   the dial a host turns, against accuracy, construction and RTF;
 - twelve-class: the ten command words plus the unknown-word symbol, where the other 25 words
-  must decode to [unk] and background noise to nothing;
-- background noise under the full grammar, with and without the unknown-word symbol: phantom
-  words per minute, and whether the silence reading is still offered as a rival when rank 0
-  is a word.
+  must decode to [unk], and the background recordings for silence finals per minute;
+- background noise under the full grammar, with and without the unknown-word symbol: each
+  recording fed continuously through one recognizer, for silence finals per minute and for
+  whether the silence reading is still offered as a rival when rank 0 is a word.
 
 Latency is the fed-audio time at which the label first appears in a partial, minus the word's
 end from the clip's own energy envelope (the last 10 ms frame within 20 dB of the clip's peak),
@@ -455,6 +455,10 @@ def feed(rec, pcm, block_ms, on_partial=None):
 
 def final_words(finals):
     return [w for f in finals for w in words_of(f.get("text", ""))]
+
+
+def finals_with_a_word(finals):
+    return sum(1 for f in finals if words_of(f.get("text", "")))
 
 
 def run_clip(engine, pcm, block_ms, label):
@@ -1047,7 +1051,7 @@ def twelve_class_pass(modules, model, clips, noise, block_ms, lines, report):
     lines.append("## Twelve-class: ten commands plus the unknown-word symbol")
     lines.append("")
     lines.append(
-        "| engine | commands correct | fillers and digits read as unknown | fillers and digits read as a command | noise seconds | noise seconds with a word |"
+        "| engine | commands correct | fillers and digits read as unknown | fillers and digits read as a command | noise minutes | silence finals per minute |"
     )
     lines.append("|---|---|---|---|---|---|")
     twelve = {}
@@ -1071,26 +1075,27 @@ def twelve_class_pass(modules, model, clips, noise, block_ms, lines, report):
                     other_unk += 1
                 elif words:
                     other_cmd += 1
-        noise_seconds = noise_words = 0
+        noise_samples = silence_finals = 0
         for path in noise:
             pcm = read_pcm(path)
-            sec = RATE * 2
-            for i in range(0, len(pcm) - sec + 1, sec):
-                finals = feed(eng.new(), pcm[i : i + sec], block_ms)
-                noise_seconds += 1
-                noise_words += bool(final_words(finals))
+            # [[rr:TD-8#Measurements count a word whose own span carries no speech]]
+            finals = feed(eng.new(), pcm, block_ms)
+            noise_samples += len(pcm) // 2
+            silence_finals += finals_with_a_word(finals)
+        noise_minutes = noise_samples / RATE / 60.0
         twelve[name] = dict(
             cmd_ok=cmd_ok,
             cmd_total=cmd_total,
             other_unk=other_unk,
             other_cmd=other_cmd,
             other_total=other_total,
-            noise_seconds=noise_seconds,
-            noise_words=noise_words,
+            noise_minutes=noise_minutes,
+            silence_finals=silence_finals,
         )
         lines.append(
             f"| {name} | {cmd_ok} / {cmd_total} ({pct(cmd_ok, cmd_total):.2f}%) | {other_unk} / {other_total} ({pct(other_unk, other_total):.2f}%) | "
-            f"{other_cmd} ({pct(other_cmd, other_total):.2f}%) | {noise_seconds} | {noise_words} |"
+            f"{other_cmd} ({pct(other_cmd, other_total):.2f}%) | {noise_minutes:.1f} | "
+            f"{silence_finals / noise_minutes if noise_minutes else float('nan'):.1f} |"
         )
     report["twelve"] = twelve
 
@@ -1100,7 +1105,7 @@ def noise_pass(modules, model, noise, block_ms, grammar, lines, report):
     lines.append("## Background noise under the full grammar")
     lines.append("")
     lines.append(
-        "| engine | grammar | noise minutes | partial blocks | blocks with a word at rank 0 | phantom final words per minute | word blocks with the silence reading among the rivals |"
+        "| engine | grammar | noise minutes | partial blocks | blocks with a word at rank 0 | silence finals per minute | word blocks with the silence reading among the rivals |"
     )
     lines.append("|---|---|---|---|---|---|---|")
     out = {}
@@ -1109,35 +1114,38 @@ def noise_pass(modules, model, noise, block_ms, grammar, lines, report):
         for variant, g in [("full", grammar), ("full + [unk]", grammar + ["[unk]"])]:
             note(f"  {name}, {variant}")
             eng = Engine(name, mod, model, g)
-            blocks = word_blocks = sil_rival = finals_words = seconds = 0
+            blocks = word_blocks = sil_rival = silence_finals = samples = 0
             for path in noise:
                 pcm = read_pcm(path)
-                sec = RATE * 2
-                for i in range(0, len(pcm) - sec + 1, sec):
-                    counts = {"blocks": 0, "words": 0, "rival": 0}
+                counts = {"blocks": 0, "words": 0, "rival": 0}
 
-                    def on_partial(fed, p, counts=counts):
-                        counts["blocks"] += 1
-                        if words_of(p.get("partial", "")):
-                            counts["words"] += 1
-                            alts = p.get("partial_alternatives") or []
-                            if any(a["text"] == "[sil]" for a in alts[1:]):
-                                counts["rival"] += 1
+                def on_partial(fed, p, counts=counts):
+                    counts["blocks"] += 1
+                    if words_of(p.get("partial", "")):
+                        counts["words"] += 1
+                        alts = p.get("partial_alternatives") or []
+                        if any(a["text"] == "[sil]" for a in alts[1:]):
+                            counts["rival"] += 1
 
-                    finals = feed(eng.new(alternatives=4), pcm[i : i + sec], block_ms, on_partial)
-                    blocks += counts["blocks"]
-                    word_blocks += counts["words"]
-                    sil_rival += counts["rival"]
-                    finals_words += len(final_words(finals))
-                    seconds += 1
-            minutes = seconds / 60.0
+                # [[rr:TD-8#Measurements count a word whose own span carries no speech]]
+                finals = feed(eng.new(alternatives=4), pcm, block_ms, on_partial)
+                blocks += counts["blocks"]
+                word_blocks += counts["words"]
+                sil_rival += counts["rival"]
+                silence_finals += finals_with_a_word(finals)
+                samples += len(pcm) // 2
+            minutes = samples / RATE / 60.0
             out[f"{name}/{variant}"] = dict(
-                minutes=minutes, blocks=blocks, word_blocks=word_blocks, sil_rival=sil_rival, final_words=finals_words
+                minutes=minutes,
+                blocks=blocks,
+                word_blocks=word_blocks,
+                sil_rival=sil_rival,
+                silence_finals=silence_finals,
             )
             rival = f"{sil_rival} / {word_blocks}" if name != "vosk" else "no alternatives"
             lines.append(
                 f"| {name} | {variant} | {minutes:.1f} | {blocks} | {word_blocks} ({pct(word_blocks, blocks):.2f}%) | "
-                f"{finals_words / minutes if minutes else float('nan'):.1f} | {rival} |"
+                f"{silence_finals / minutes if minutes else float('nan'):.1f} | {rival} |"
             )
     report["noise"] = out
 
