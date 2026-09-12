@@ -64,6 +64,10 @@ pub enum Comp {
     },
     Relu,
     Identity,
+    /// A component type this forward pass does not implement. Held rather than refused at
+    /// parse time because a model carries components the output never reaches, the xent
+    /// branch among them; only one the output depends on is fatal.
+    Unsupported(String),
 }
 
 pub enum Desc {
@@ -132,6 +136,63 @@ impl Nnet3 {
         };
         net.context = net.node_context("output");
         net
+    }
+
+    /// Component types the output depends on and this forward pass does not implement, in the
+    /// order met. Empty for a model that can be decoded. A component the output never reaches
+    /// is not reported: the xent branch is never evaluated.
+    pub fn unsupported(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        self.walk("output", &mut seen, &mut out);
+        out
+    }
+
+    fn walk(
+        &self,
+        name: &str,
+        seen: &mut std::collections::HashSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        if !seen.insert(name.to_string()) {
+            return;
+        }
+        match self.nodes.get(name) {
+            None | Some(Node::Input) => {}
+            Some(Node::DimRange { src, .. }) => self.walk(src, seen, out),
+            Some(Node::Output { desc }) => self.walk_desc(desc, seen, out),
+            Some(Node::Component { comp, desc }) => {
+                if let Some(Comp::Unsupported(t)) = self.comps.get(comp) {
+                    if !out.contains(t) {
+                        out.push(t.clone());
+                    }
+                }
+                self.walk_desc(desc, seen, out);
+            }
+        }
+    }
+
+    fn walk_desc(
+        &self,
+        d: &Desc,
+        seen: &mut std::collections::HashSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        match d {
+            Desc::Ref(n) => self.walk(n, seen, out),
+            Desc::Offset(a, _) | Desc::Scale(_, a) | Desc::ReplaceIndex(a) => {
+                self.walk_desc(a, seen, out)
+            }
+            Desc::Sum(a, b) => {
+                self.walk_desc(a, seen, out);
+                self.walk_desc(b, seen, out);
+            }
+            Desc::Append(parts) => {
+                for x in parts {
+                    self.walk_desc(x, seen, out)
+                }
+            }
+        }
     }
 
     fn node_context(&self, name: &str) -> (usize, usize) {
@@ -282,6 +343,7 @@ impl Nnet3 {
             .unwrap_or_else(|| panic!("no comp {comp}"))
         {
             Comp::Identity => x,
+            Comp::Unsupported(t) => panic!("component type {t} is not implemented"),
             Comp::Relu => {
                 let mut m = x;
                 m.d.iter_mut().for_each(|v| *v = v.max(0.0));
@@ -370,7 +432,12 @@ fn parse_components(buf: &[u8]) -> HashMap<String, Comp> {
                 }
             }
             "<RectifiedLinearComponent>" => Comp::Relu,
-            _ => Comp::Identity,
+            // Trained-time only: at inference each passes its input through unchanged.
+            "<NoOpComponent>"
+            | "<DropoutComponent>"
+            | "<GeneralDropoutComponent>"
+            | "<SpecAugmentTimeMaskComponent>" => Comp::Identity,
+            other => Comp::Unsupported(other.to_string()),
         };
         comps.insert(name, comp);
     }

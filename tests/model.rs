@@ -217,3 +217,14 @@ fn silence_weighting_can_be_turned_off_for_the_kaldi_comparison() {
     let (_, finals) = decode(&mut rec, &clip("yes"));
     assert_eq!(text_of(finals.last().unwrap()), "yes");
 }
+
+#[test]
+fn an_unimplemented_component_is_refused_at_load() {
+    let Some(dir) = model_dir() else { return };
+    // The stock model reaches none, or it would not decode.
+    let model = Model::open(&dir).unwrap();
+    assert!(model.net.unsupported().is_empty());
+    // A component the output never reaches is not fatal: the model carries a log-softmax on
+    // the xent branch, which is never evaluated.
+    assert!(Model::open(&dir).is_ok());
+}

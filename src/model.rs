@@ -177,6 +177,15 @@ impl Model {
         let mdl = std::fs::read(dir.join("am/final.mdl"))?;
         let tm = TransitionModel::parse(&mdl)?;
         let net = Nnet3::parse(&mdl);
+        // An unimplemented component would otherwise pass its input through and the model
+        // would decode to nothing resembling speech.
+        let missing = net.unsupported();
+        if !missing.is_empty() {
+            return Err(err(&format!(
+                "the network uses component types this runtime does not implement: {}",
+                missing.join(", ")
+            )));
+        }
         let hclr = read_fst_file(&dir.join("graph/HCLr.fst"))?;
         let addon = hclr
             .addon

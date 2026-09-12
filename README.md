@@ -134,8 +134,14 @@ Any Vosk small model with the standard layout: `am/final.mdl`,
 `graph/HCLr.fst`, `graph/words.txt`, `graph/disambig_tid.int`,
 `graph/phones/word_boundary.int`, `ivector/`, `conf/mfcc.conf`,
 `conf/model.conf`. The English small model is the reference; the
-German, French, Spanish and Russian small models share the layout and
-are checked before they are claimed.
+German, French, Spanish and Russian small models are believed to share
+the layout and are unchecked until each is decoded against the wheel.
+
+A model whose network uses a component this runtime does not implement
+is refused when it is opened, naming the component, rather than
+decoding with that layer passed through. The larger English model,
+`vosk-model-en-us-0.22-lgraph`, is refused on that rule: it is a
+CNN-TDNN and the convolution is not implemented.
 
 ## Verification
 
