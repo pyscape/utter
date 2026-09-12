@@ -414,7 +414,13 @@ def energy_end(pcm, frame_ms=10, drop_db=20.0):
 
 class Engine:
     def __init__(self, name, module, model_dir, grammar, unknown_cost=None):
+        # `utterpy@300`: utterpy with a host endpoint bound at 300 ms of trailing silence;
+        # `utterpy@300/4`: the same, vetoed while a reading extending the partial is within 4 nats
         self.name = name
+        self.endpoint_bound = None
+        if "@" in name:
+            parts = name.split("@", 1)[1].split("/")
+            self.endpoint_bound = (float(parts[0]), float(parts[1]) if len(parts) > 1 else None)
         self.mod = module
         self.model = module.Model(str(model_dir))
         self.grammar = json.dumps(grammar)
@@ -432,6 +438,8 @@ class Engine:
         else:
             rec = self.mod.KaldiRecognizer(self.model, RATE, self.grammar)
         rec.SetWords(True)
+        if self.endpoint_bound is not None:
+            rec.SetEndpointBound(*self.endpoint_bound)
         if alternatives and hasattr(rec, "SetPartialAlternatives"):
             rec.SetPartialAlternatives(alternatives)
         return rec
@@ -824,7 +832,7 @@ def trace_worker(job_path):
     job = json.loads(Path(job_path).read_text())
     modules = {}
     for name in job["engines"]:
-        modules[name] = __import__("vosk" if name == "vosk" else name)
+        modules[name] = __import__(name.split("@")[0])
         if name == "vosk":
             modules[name].SetLogLevel(-1)
     clips = [(None, Path(p)) for p in job["clips"]]
@@ -1471,7 +1479,7 @@ def main():
 
     modules = {}
     for name in args.engines.split(","):
-        modules[name] = __import__("vosk" if name == "vosk" else name)
+        modules[name] = __import__(name.split("@")[0])
         if name == "vosk":
             modules[name].SetLogLevel(-1)
 
