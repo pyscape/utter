@@ -12,8 +12,10 @@ the letters a to z, the NATO alphabet, and red, yellow, blue, black and white. T
   the clips the two engines disagree about, overall and per word;
 - agreement: the clips whose finals are identical, and the empty finals each engine returns
   split by direction, because reproducing the oracle and scoring like it are different claims;
-- determinism: a sample decoded twice in this process and once in a fresh one, comparing the
-  whole partial trace, because a hash seed drawn per process is invisible to a repeat inside it;
+- determinism: the whole split decoded in each of two fresh processes, comparing every partial
+  with its readings and the final, because a hash seed drawn per process is invisible to a
+  repeat inside it and a tie broken by chance on one clip in two thousand is invisible in a
+  sample of two hundred;
 - endpoint latency: the clip followed by silence, to the block at which the engine closes a
   segment itself, which is the pause a speaker waits through and nothing else here measures;
 - block size: 10 to 100 ms against accuracy, first-appearance latency and RTF, comparing the
@@ -46,6 +48,7 @@ compute figures mean nothing.
 
 import argparse
 import array
+import hashlib
 import json
 import math
 import platform
@@ -320,8 +323,12 @@ def mcnemar(b, c):
     if n == 0:
         return 1.0
     k = min(b, c)
-    tail = sum(math.comb(n, i) for i in range(k + 1)) / (2.0**n)
-    return min(1.0, 2.0 * tail)
+    # In log space throughout: the trust and states pages reach thousands of discordant clips,
+    # where 2.0**n and math.comb both overflow a float.
+    terms = [math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1) for i in range(k + 1)]
+    top = max(terms)
+    log_tail = top + math.log(sum(math.exp(t - top) for t in terms)) - n * math.log(2.0)
+    return min(1.0, 2.0 * math.exp(log_tail)) if log_tail > -700.0 else 0.0
 
 
 def holm(pvalues):
@@ -366,14 +373,61 @@ def provenance(args, modules):
             versions[name] = md.version(name)
         except Exception:
             versions[name] = "?"
+    head = (rev + ("+dirty" if dirty else "")) if rev else "?"
+    wheel_path, wheel_rev = wheel_build()
     return dict(
         date=time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime()),
-        utter_revision=(rev + ("+dirty" if dirty else "")) if rev else "?",
+        utter_revision=head,
+        wheel_path=wheel_path,
+        wheel_revision=wheel_rev,
+        wheel_matches_head=same_revision(wheel_rev, rev, bool(dirty)),
         engines=versions,
         model=Path(args.model).name,
         cpu=cpu or platform.processor() or platform.machine(),
         python=platform.python_version(),
         block_ms=args.block_ms,
+    )
+
+
+def same_revision(wheel_rev, head, head_dirty):
+    """Whether the binding was built from the checkout as it stands. A dirty build never matches:
+    it was compiled from edits, and nothing names which."""
+    if wheel_rev is None or head is None:
+        return False
+    built_dirty = wheel_rev.endswith("-dirty")
+    return wheel_rev.removesuffix("-dirty").startswith(head) and not built_dirty and not head_dirty
+
+
+def wheel_build():
+    """The binding's file and the utter revision it was compiled from. A page's `git rev-parse`
+    names the checkout the script was read from, which is not evidence about the runtime that
+    decoded: the binding is a compiled artifact and can be any age."""
+    try:
+        import utterpy
+    except Exception:
+        return None, None
+    rev = getattr(utterpy, "UTTER_REVISION", None)
+    return getattr(utterpy, "__file__", None), rev
+
+
+def provenance_line(prov):
+    """The header sentence every page opens with."""
+    engines = ", ".join(f"{k} {v}" for k, v in prov["engines"].items())
+    if prov.get("wheel_revision"):
+        agree = (
+            "the checkout's HEAD"
+            if prov["wheel_matches_head"]
+            else f"**not** the checkout as it stands ({prov['utter_revision']})"
+        )
+        wheel = f"binding {prov['wheel_path']} built from utter {prov['wheel_revision']}, {agree}"
+    else:
+        wheel = (
+            f"binding {prov['wheel_path']}, which does not report the utter revision it was built "
+            "from, so the revision above is the checkout's and not the runtime's"
+        )
+    return (
+        f"Run {prov['date']}, utter {prov['utter_revision']}, {engines}, model {prov['model']}, "
+        f"{prov['cpu']}, Python {prov['python']}. Decoded by the {wheel}."
     )
 
 
@@ -809,20 +863,27 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
     report["full"] = results
 
 
-def trace_clip(engine, pcm, block_ms):
-    """Every partial the engine showed, in order, and the final. The trace is kept whole because
-    a final can be stable while the path to it is not, and the path is what a host renders."""
+def trace_clip(engine, pcm, block_ms, alternatives=0):
+    """Every partial the engine showed with its readings, in order, and the final. The trace is
+    kept whole because a final can be stable while the path to it is not, and the path is what a
+    host renders; it is compared as a digest because the whole split's traces are too large to
+    carry between processes."""
     partials = []
-    finals = feed(engine.new(), pcm, block_ms, lambda fed, p: partials.append(p.get("partial", "")))
-    return [partials, final_words(finals)]
+
+    def keep(fed, p):
+        partials.append([p.get("partial", ""), p.get("partial_alternatives") or []])
+
+    finals = feed(engine.new(alternatives=alternatives), pcm, block_ms, keep)
+    digest = hashlib.sha256(json.dumps(partials, sort_keys=True).encode()).hexdigest()
+    return [digest, final_words(finals)]
 
 
-def determinism_traces(modules, model, clips, block_ms, grammar):
+def determinism_traces(modules, model, clips, block_ms, grammar, alternatives=0):
     """One pass over the clips per engine, a recognizer each, as a host would run them."""
     out = {}
     for name, mod in modules.items():
         eng = Engine(name, mod, model, grammar)
-        out[name] = [trace_clip(eng, read_pcm(path), block_ms) for _, path in clips]
+        out[name] = [trace_clip(eng, read_pcm(path), block_ms, alternatives) for _, path in clips]
     return out
 
 
@@ -836,10 +897,13 @@ def trace_worker(job_path):
         if name == "vosk":
             modules[name].SetLogLevel(-1)
     clips = [(None, Path(p)) for p in job["clips"]]
-    json.dump(determinism_traces(modules, job["model"], clips, job["block_ms"], job["grammar"]), sys.stdout)
+    traces = determinism_traces(
+        modules, job["model"], clips, job["block_ms"], job["grammar"], job.get("alternatives", 0)
+    )
+    json.dump(traces, sys.stdout)
 
 
-def fresh_process_traces(model, clips, block_ms, grammar, engines):
+def fresh_process_traces(model, clips, block_ms, grammar, engines, alternatives=0):
     """The same decode in a process started for it. A repeat inside one process cannot see a
     per-process seed: it draws the same one. Rust's default hasher is seeded once per process, so
     a hash map's iteration order — and with it which tokens a narrowing cutoff reaches first and
@@ -849,6 +913,7 @@ def fresh_process_traces(model, clips, block_ms, grammar, engines):
         block_ms=block_ms,
         grammar=grammar,
         engines=list(engines),
+        alternatives=alternatives,
         clips=[str(p) for _, p in clips],
     )
     path = Path(tempfile.mkdtemp()) / "trace-job.json"
@@ -868,56 +933,58 @@ def fresh_process_traces(model, clips, block_ms, grammar, engines):
     return json.loads(proc.stdout)
 
 
-def determinism_pass(modules, model, clips, block_ms, grammar, lines, report, count):
+def determinism_pass(modules, model, clips, block_ms, grammar, lines, report, count, alternatives):
     """Whether the same bytes give the same reading twice. Nothing else on this page would
     notice if they did not: every other pass decodes each clip once, so a reading that moves
-    between runs is invisible to it and shows up only as noise in next week's comparison."""
-    step = max(1, len(clips) // count)
-    chosen = clips[::step][:count]
-    note(f"determinism: {len(chosen)} clips x {len(modules)} engines, twice here and once in a fresh process")
-    first = determinism_traces(modules, model, chosen, block_ms, grammar)
-    second = determinism_traces(modules, model, chosen, block_ms, grammar)
-    fresh = fresh_process_traces(model, chosen, block_ms, grammar, modules)
+    between runs is invisible to it and shows up only as noise in next week's comparison.
+
+    Both passes are processes started for the purpose. A repeat inside one process cannot see a
+    per-process seed: it draws the same one, so a reading that depends on a hash order is
+    perfectly stable within a run and moves only between runs. The whole split is compared
+    because a tie broken by chance on one clip in two thousand is invisible in a sample of two
+    hundred; `--determinism-clips N` takes a sample of N when a run has to be cheap."""
+    chosen = clips
+    if count > 0 and count < len(clips):
+        step = max(1, len(clips) // count)
+        chosen = clips[::step][:count]
+    note(f"determinism: {len(chosen)} clips x {len(modules)} engines, in two fresh processes")
+    first = fresh_process_traces(model, chosen, block_ms, grammar, modules, alternatives)
+    second = fresh_process_traces(model, chosen, block_ms, grammar, modules, alternatives)
     lines.append("## Determinism")
     lines.append("")
     lines.append(
-        f"{len(chosen)} clips decoded twice in this process and once in a process started for the "
-        "purpose, comparing the whole partial trace and the final. The fresh process is the half "
-        "that matters: a hash seed drawn once per process gives a map the same iteration order for "
-        "every repeat within a run, so a reading that depends on it is perfectly stable until the "
-        "next run. Any clip that moves is named in the JSON."
+        f"{len(chosen)} clips decoded in two processes started for the purpose, comparing every "
+        f"partial with its {alternatives} readings, block by block, and the final. A process is "
+        "what matters: a hash seed drawn once per process gives a map the same iteration order "
+        "for every repeat within a run, so a reading that depends on it is perfectly stable until "
+        "the next run. The partial column compares a digest of the whole trace; any clip whose "
+        "final moves is named in the JSON."
     )
     lines.append("")
-    lines.append(
-        "| engine | clips | same process: partials | same process: finals | fresh process: partials | fresh process: finals |"
-    )
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("| engine | clips | partials and readings | finals |")
+    lines.append("|---|---|---|---|")
     out = {}
     for name in modules:
-        row = {}
-        for tag, other in [("same_process", second[name]), ("fresh_process", fresh.get(name) or [])]:
-            moved = {"partials": [], "finals": []}
-            for (_, path), x, y in zip(chosen, first[name], other):
-                if x[0] != y[0]:
-                    moved["partials"].append(str(path))
-                if x[1] != y[1]:
-                    moved["finals"].append(str(path))
-            moved["compared"] = min(len(first[name]), len(other))
-            row[tag] = moved
-        out[name] = row
-        s, f = row["same_process"], row["fresh_process"]
-        cells = [len(s["partials"]), len(s["finals"])]
-        cells += ["n/a", "n/a"] if not f["compared"] else [len(f["partials"]), len(f["finals"])]
-        lines.append(f"| {name} | {len(chosen)} | " + " | ".join(str(c) for c in cells) + " |")
+        moved = {"partials": [], "finals": []}
+        a, b = first.get(name) or [], second.get(name) or []
+        for (_, path), x, y in zip(chosen, a, b):
+            if x[0] != y[0]:
+                moved["partials"].append(str(path))
+            if x[1] != y[1]:
+                moved["finals"].append(str(path))
+        moved["compared"] = min(len(a), len(b))
+        out[name] = {"fresh_processes": moved}
+        cells = ["n/a", "n/a"] if not moved["compared"] else [len(moved["partials"]), len(moved["finals"])]
+        lines.append(f"| {name} | {moved['compared']} | " + " | ".join(str(c) for c in cells) + " |")
     lines.append("")
     unstable = [
-        f"{name}, {tag.replace('_', ' ')}: {len(m['partials'])} partial traces and {len(m['finals'])} finals"
+        f"{name}: {len(m['partials'])} partial traces and {len(m['finals'])} finals"
         for name, row in out.items()
-        for tag, m in row.items()
+        for m in row.values()
         if m["partials"] or m["finals"]
     ]
     lines.append(
-        "Every clip read the same way every time."
+        "Every clip read the same way both times."
         if not unstable
         else "**Not reproducible.** " + "; ".join(unstable) + "."
     )
@@ -1357,6 +1424,8 @@ def grammar_size_pass(modules, model, clips, block_ms, lines, report, sizes, cou
 def steady_state_pass(modules, model, clips, block_ms, grammar, lines, report, seconds):
     """Compute on continuous audio: one recognizer over the clips joined end to end, which is
     how a host runs, rather than the fixed cost of a clip at a time."""
+    if seconds <= 0:
+        return {}
     step = max(1, len(clips) // seconds)
     joined = b"".join(read_pcm(p) for _, p in clips[::step][:seconds])
     audio = len(joined) / 2 / RATE
@@ -1458,7 +1527,19 @@ def main():
     ap.add_argument("--snr-clips", type=int, default=800, help="clips per noise level")
     ap.add_argument("--grammar-sizes", default="35,60,92,150,200,246", help="grammar sweep, empty to skip")
     ap.add_argument("--grammar-clips", type=int, default=400, help="clips per grammar size")
-    ap.add_argument("--determinism-clips", type=int, default=200, help="clips decoded three times, 0 to skip")
+    ap.add_argument(
+        "--determinism-clips",
+        type=int,
+        default=0,
+        help="clips decoded in each of two fresh processes; 0 is the whole split",
+    )
+    ap.add_argument("--no-determinism", action="store_true", help="skip the determinism pass")
+    ap.add_argument(
+        "--determinism-alternatives",
+        type=int,
+        default=5,
+        help="partial alternatives carried in the compared trace",
+    )
     ap.add_argument("--endpoint-clips", type=int, default=800, help="clips for endpoint latency, 0 to skip")
     ap.add_argument("--endpoint-pad-ms", type=int, default=2000, help="silence appended so an endpoint can fire")
     ap.add_argument("--block-sizes", default="10,20,40,80,100", help="block-size sweep, empty to skip")
@@ -1501,19 +1582,25 @@ def main():
         f"Grammar: the dataset's 35 words plus {len(LETTERS)} letters, {len(NATO)} NATO words and {len(COLOURS)} colours, {len(full_grammar)} entries."
     )
     lines.append("")
-    lines.append(
-        f"Run {prov['date']}, utter {prov['utter_revision']}, "
-        + ", ".join(f"{k} {v}" for k, v in prov["engines"].items())
-        + f", model {prov['model']}, {prov['cpu']}, Python {prov['python']}."
-    )
+    lines.append(provenance_line(prov))
     lines.append("")
     preflight(modules, args.model, full_grammar, args.block_ms, clips, lines, report)
     full_grammar_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report)
     write_clip_records(args.out + ".clips.jsonl", clips, report["full"])
     for r in report["full"].values():
         del r["outcome"]
-    if args.determinism_clips:
-        determinism_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report, args.determinism_clips)
+    if not args.no_determinism:
+        determinism_pass(
+            modules,
+            args.model,
+            clips,
+            args.block_ms,
+            full_grammar,
+            lines,
+            report,
+            args.determinism_clips,
+            args.determinism_alternatives,
+        )
     if args.endpoint_clips:
         endpoint_pass(
             modules,
