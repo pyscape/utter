@@ -579,7 +579,18 @@ built:
 
 ## Implemented by
 
-- Nothing yet. Milestones, in order: vendor and build (G0); the graph
-  reader, bigram and composition; the streaming front end and chunked
-  network (G1); the decoder with partials, intervals and endpointing
-  (G2, G3, G5); alternatives and finals (G4); the C ABI.
+- `src/model.rs`: the model directory, `conf/model.conf`, the word table
+  from `graph/Gr.fst`, and grammar compilation.
+- `src/fst.rs`, `src/grammar.rs`, `src/compose.rs`: the OpenFst reader
+  with the lookahead add-on, the bigram estimator, and the lookahead
+  composition.
+- `src/mfcc.rs`, `src/fft.rs`, `src/frontend.rs`, `src/ivector.rs`,
+  `src/silence_weighting.rs`: the front end.
+- `src/nnet3.rs`, `src/gemm.rs`, `src/looped.rs`: the network and its
+  chunked, looped execution.
+- `src/decoder.rs`, `src/recognizer.rs`: search, partials, intervals,
+  alternatives, endpointing, finals, and libvosk's lifecycle and shapes.
+- `src/capi.rs` and `include/utter.h`: the C ABI. The Python surface is
+  the `utterpy` repository.
+- `scripts/` and `docs/gates/`: the gate tooling and the figures each
+  gate produced.
