@@ -310,39 +310,36 @@ against libvosk.
 
 ### The graph: composition
 
-libvosk composes with OpenFst's default `ComposeFst` over the lookahead
-matcher the graph type carries, which selects the lookahead compose
-filter with weight and label pushing, then maps every input label in
-`disambig_tid.int` to epsilon, lazily with a 32 MiB cache. Lookahead
-exists to keep a composition from expanding paths that can never reach
-a G arc, and the determinized HCL makes that expansion the common case:
-word labels are delayed, so nearly the whole graph sits behind output
-epsilons and a plain eager composition copies it once per G state,
-which passed two million states on a grammar of a few dozen words before
-it was stopped.
+libvosk composes with OpenFst's `ComposeFst` over the lookahead matcher
+the graph type carries, lazily with a 32 MiB cache, then maps every
+input label in `disambig_tid.int` to epsilon. For `StdArc` with output
+lookahead OpenFst selects a fixed filter stack, and that stack is what
+places a word's label: the alternate sequence filter (G's epsilons
+before HCLr's), label reachability over the graph's interval sets, the
+lookahead weight (the log-semiring sum of the reachable G arcs, the
+final weight taken by minimum) pushed onto HCLr's epsilon arcs and
+quantized to 1/1024 in the filter state, and G's arc pushed whole onto
+the first HCLr epsilon arc from which that word is the only grammar word
+still reachable. A determinized HCL places a word's label where the
+phone sequence disambiguates the word among the whole lexicon, often at
+the word's end; the pushed label sits where the grammar makes the word
+unambiguous, which for a grammar of a few dozen words is a few phones
+in. That placement is the partial latency: a word surfaces in the
+partial as soon as the beam's best path commits to it, and revises when
+the beam changes its mind.
 
-The runtime therefore composes eagerly at construction with the
-standard epsilon-sequencing filter (G's backoff arcs are epsilons on its
-input side) and prunes with the add-on's interval sets: a state pair is
-not expanded when no output label the G state accepts is reachable from
-the HCLr state. This is the reachability test the lookahead matcher
-performs, applied at build time. The disambiguation labels are erased
-and states that cannot reach a final state are trimmed; the connected
-result is identical to the unpruned composition. A grammar of a few dozen
-words composes to about twelve thousand states and thirty thousand arcs
-in single-digit milliseconds; the supported bound is fewer than 300
-words. The result
-is a plain vector FST the decoder walks directly.
-
-This yields the same paths and path weights as libvosk's graph, not the
-same weight placement: the lookahead filter also pushes G's weights and
-labels earlier along a word's arcs, which lets the beam discard a losing
-word sooner. Best paths are identical; pruning near the beam edge can
-differ, which gate G2 measures. Should G2 fail on that account, weight
-pushing after eager composition is the fallback, a single pass over the
-trimmed graph. The runtime refuses a grammar whose composition exceeds a
-configured state count rather than silently taking seconds; a
-large-vocabulary G, which would need lazy composition, is out of scope.
+The runtime reproduces this stack exactly, eagerly at construction: the
+result is a plain vector FST with the same states, arcs, labels and
+weights libvosk's lazy composition would create, so pruning sees the
+same graph, and nothing is connected away afterwards. Plain composition
+without the filters is not an option: the whole graph sits behind output
+epsilons and a plain eager composition copies it once per G state, which
+passed two million states on a grammar of a few dozen words before it
+was stopped, and its labels arrive a chunk late. A grammar of a few
+dozen words composes to under a thousand states in single-digit
+milliseconds; the supported bound is fewer than 300 words. The runtime
+refuses a grammar whose composition exceeds a configured state count;
+a large-vocabulary G is out of scope.
 
 ### The decoder: search
 
@@ -475,7 +472,10 @@ stream need never read a final; nothing is reported only there.
 ### Packaging
 
 The library is this repository. It offers a `cdylib` target with the C
-ABI. No C, C++ or system library anywhere in the build. The Vosk-Rust
+ABI. The Python surface is a separate repository, `utterpy`, a pyo3
+extension built with maturin that depends on this crate and exposes the
+vosk wheel's object surface and JSON so a host selects it without an
+adapter; it is the only place that depends on anything. No C, C++ or system library anywhere in the build. The Vosk-Rust
 modules the runtime starts from are vendored as source under their
 Apache-2.0 licence with attribution, not pulled as a crate. `accept`
 never holds a lock a caller can observe; one recognizer is used from
@@ -570,9 +570,9 @@ built:
 - The zero-dependency policy puts the GEMM kernel and the FFT in the
   runtime's own hands; the kernel is the one place performance can
   miss its budget, and the `gemm` feature is the bounded escape.
-- Eager composition without lookahead places G's weights later along a
-  word than libvosk's graph does; G2 measures the pruning consequence,
-  weight pushing is the fallback.
+- The composition reproduces OpenFst's lookahead filter stack arc for
+  arc; a change in OpenFst's filters would be a change to make here, and
+  G2's partial figure is the check.
 - Floating-point summation order in the network differs from Kaldi's
   BLAS; chunked execution is checked at G1 against the same reference
   Vosk-Rust used.
