@@ -204,8 +204,12 @@ bare bound fires into it. The beam can see it, in the readings that
 extend the partial by a further word, and the bound takes a veto: no
 final while such a reading is within a margin the host names. The
 benchmarks run the bound, the vetoed bound and the stock rules side by
-side (`utterpy@300` and `utterpy@300/4` in the harness). Both numbers
-are the host's; the runtime ships neither.
+side (`utterpy@300` and `utterpy@300/8` in the harness). On the built
+streams the stock rules end 942 utterances inside a pause, the bare
+300 ms bound 1,208, the bound vetoed at 4 nats 1,207 and at 8 nats
+1,159: the readings that extend the partial sit four to eight nats
+behind the leader as a word begins, so the margin has to reach them.
+Both numbers are the host's; the runtime ships neither.
 
 ### Measurements count a word whose own span carries no speech
 
