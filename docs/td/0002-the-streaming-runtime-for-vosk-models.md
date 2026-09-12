@@ -72,7 +72,8 @@ relabeling the grammar side must be transformed with.
 ### Scope
 
 In: Kaldi-exact feature extraction (MFCC, online CMVN, splice, LDA) and
-the online i-vector extractor with a zero-i-vector mode; the nnet3 chain
+the online i-vector extractor with a zero-i-vector mode, including
+libvosk's silence weighting of its statistics; the nnet3 chain
 acoustic model in streaming chunks; the runtime grammar compiled to the
 bigram libvosk compiles and composed with the model's graph; a
 frame-synchronous token-passing decoder with Kaldi's pruning semantics;
@@ -85,8 +86,7 @@ extended.
 Out: lattices, lattice determinization, minimum Bayes risk confidences
 and lattice n-best; decoding against the full language model
 `graph/Gr.fst`; RNNLM and constant-ARPA rescoring; speaker vectors;
-silence weighting of i-vector statistics (inactive in libvosk at its
-default weight); batch and GPU recognizers.
+batch and GPU recognizers.
 
 ### Inputs: the model directory
 
@@ -219,6 +219,20 @@ with `final.ie` by 15 conjugate-gradient iterations, the most recent
 estimate handed to every network chunk. The network input itself is the
 raw MFCC frame; online CMVN applies only inside this branch.
 
+The statistics are silence-weighted as libvosk configures Kaldi's
+`OnlineSilenceWeighting`: weight 1e-3 for the frames the current
+best-path traceback labels with a silence phone, 1.0 for the rest,
+`max_state_duration` -1 (off). Before every decoder advance the
+traceback is recomputed and delta weights are produced over the frames
+ready, with `frame_offset * 3` as the first input frame of the
+utterance, and handed to the i-vector feature, which applies them as
+its statistics reach each frame; a frame already counted is corrected
+by the difference, retroactively over the last hundred decoder frames
+when the traceback changes. The weighting object is fresh for every
+utterance, so the frames of a new utterance carry the silence weight
+until a traceback exists. Frames newer than the traceback take the most
+recent weight.
+
 Vosk-Rust implements the batch extractor at 0.999 correlation to Kaldi's
 `ivector-extract` and reports that Kaldi's online tool has an
 extraction-order behaviour it did not reproduce. The runtime carries a
@@ -304,8 +318,8 @@ exists to keep a composition from expanding paths that can never reach
 a G arc, and the determinized HCL makes that expansion the common case:
 word labels are delayed, so nearly the whole graph sits behind output
 epsilons and a plain eager composition copies it once per G state,
-which passed two million states on a 62-word grammar before it was
-stopped.
+which passed two million states on a grammar of a few dozen words before
+it was stopped.
 
 The runtime therefore composes eagerly at construction with the
 standard epsilon-sequencing filter (G's backoff arcs are epsilons on its
@@ -314,8 +328,10 @@ not expanded when no output label the G state accepts is reachable from
 the HCLr state. This is the reachability test the lookahead matcher
 performs, applied at build time. The disambiguation labels are erased
 and states that cannot reach a final state are trimmed; the connected
-result is identical to the unpruned composition. For the reference
-grammar of 62 words: 12,281 states and 32,537 arcs in 8 ms. The result
+result is identical to the unpruned composition. A grammar of a few dozen
+words composes to about twelve thousand states and thirty thousand arcs
+in single-digit milliseconds; the supported bound is fewer than 300
+words. The result
 is a plain vector FST the decoder walks directly.
 
 This yields the same paths and path weights as libvosk's graph, not the
