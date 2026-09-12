@@ -444,6 +444,9 @@ pub struct IvectorOptions {
     pub cmn_window: usize,
     pub speaker_frames: usize,
     pub global_frames: usize,
+    /// The wheel's Kaldi recomputes the CMVN window only for a frame whose raw c0 is above
+    /// this (`--cmn-min-energy`); upstream Kaldi has no such threshold.
+    pub min_energy: f32,
     pub left_context: usize,
     pub right_context: usize,
 }
@@ -461,10 +464,17 @@ impl Default for IvectorOptions {
             cmn_window: 600,
             speaker_frames: 600,
             global_frames: 200,
+            min_energy: 50.0,
             left_context: 3,
             right_context: 3,
         }
     }
+}
+
+fn conf_float(txt: &str, key: &str) -> Option<f32> {
+    txt.lines()
+        .find_map(|line| line.trim().strip_prefix(&format!("--{key}=")))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 fn conf_int(txt: &str, key: &str) -> Option<usize> {
@@ -506,6 +516,9 @@ impl IvectorInfo {
         if let Ok(t) = std::fs::read_to_string(dir.join("online_cmvn.conf")) {
             if let Some(v) = conf_int(&t, "cmn-window") {
                 opts.cmn_window = v;
+            }
+            if let Some(v) = conf_float(&t, "cmn-min-energy") {
+                opts.min_energy = v;
             }
             if let Some(v) = conf_int(&t, "global-frames") {
                 opts.global_frames = v;
@@ -570,6 +583,8 @@ pub struct IvectorStream<'a> {
     frames: Vec<Vec<f32>>,
     /// Running sums of the raw frames, for the CMVN window.
     prefix: Vec<Vec<f64>>,
+    /// What the last `cmvn_frame` call left, smoothed: sums then count.
+    cmvn_stats: Vec<f64>,
     stats: OnlineIvectorStats,
     num_frames_stats: usize,
     current: Vec<f64>,
@@ -590,6 +605,7 @@ impl<'a> IvectorStream<'a> {
             info,
             frames: Vec::new(),
             prefix: vec![vec![0.0; info.global_mean_stats.len() - 1]],
+            cmvn_stats: vec![0.0; info.global_mean_stats.len()],
             stats: OnlineIvectorStats::new(dim, info.extractor.prior_offset, info.opts.max_count),
             num_frames_stats: 0,
             current,
@@ -638,18 +654,22 @@ impl<'a> IvectorStream<'a> {
                 _ => out.push((f, w)),
             }
         }
-        let o = &self.info.opts;
-        let fd = self.info.extractor.feat_dim;
-        let mut ll = vec![0.0f32; self.info.gmm.num_gauss];
+        let info = self.info;
+        let o = &info.opts;
+        let fd = info.extractor.feat_dim;
+        let mut ll = vec![0.0f32; info.gmm.num_gauss];
         let mut scratch: Vec<f32> = Vec::new();
         let mut raw: Vec<Vec<f32>> = Vec::with_capacity(out.len());
         let mut posts = Vec::with_capacity(out.len());
         for &(t, weight) in &out {
+            // Kaldi fetches every frame's normalized view before it reads the weights, and the
+            // CMVN state depends on the order of those fetches, so a zero weight skips only the
+            // posteriors.
+            let mut f = vec![0.0f32; fd];
+            self.lda_frame(t, true, &mut f);
             let mut post = Vec::new();
             if weight != 0.0 {
-                let mut f = vec![0.0f32; fd];
-                self.lda_frame(t, true, &mut f);
-                self.info.gmm.loglikes(&f, &mut ll, &mut scratch);
+                info.gmm.loglikes(&f, &mut ll, &mut scratch);
                 post = select_posteriors(&ll, o.num_gselect, self.min_post_for(weight));
                 for p in post.iter_mut() {
                     p.1 *= o.posterior_scale * weight;
@@ -661,7 +681,7 @@ impl<'a> IvectorStream<'a> {
             raw.push(g);
         }
         let refs: Vec<&[f32]> = raw.iter().map(|v| v.as_slice()).collect();
-        self.stats.acc(&self.info.extractor, &refs, &posts);
+        self.stats.acc(&info.extractor, &refs, &posts);
     }
 
     fn update_stats_until_frame_weighted(&mut self, frame: usize) {
@@ -714,38 +734,44 @@ impl<'a> IvectorStream<'a> {
         }
     }
 
-    fn cmvn_frame(&self, t: usize, out: &mut [f32]) {
-        let o = &self.info.opts;
+    /// The wheel's `OnlineCmvn::GetFrame`: the window is recomputed only for a frame whose raw
+    /// c0 is above `min_energy`; a quieter frame reuses whatever the previous call left, already
+    /// smoothed, and smooths it again, so a run of quiet frames drifts toward the global mean
+    /// and the result depends on the order frames are asked for. The fork leaves the
+    /// statistics undefined when the first frame asked for is quiet; zero is what a fresh
+    /// process gives. `[[rr:i-vector: against the wheel's Kaldi, passed once its quiet-frame rule was matched]]`
+    fn cmvn_frame(&mut self, t: usize, out: &mut [f32]) {
+        let info = self.info;
+        let o = &info.opts;
         let dim = out.len();
-        let lo = (t + 1).saturating_sub(o.cmn_window);
-        let count = (t + 1 - lo) as f64;
-        let mut sums: Vec<f64> = (0..dim)
-            .map(|d| self.prefix[t + 1][d] - self.prefix[lo][d])
-            .collect();
-        let mut cur_count = count;
-        if cur_count < o.cmn_window as f64 {
-            let global_count = self.info.global_mean_stats[dim];
-            let mut from_global = o.cmn_window as f64 - cur_count;
-            if from_global > o.global_frames as f64 {
-                from_global = o.global_frames as f64;
+        if self.frames[t][0] > o.min_energy {
+            let lo = (t + 1).saturating_sub(o.cmn_window);
+            for d in 0..dim {
+                self.cmvn_stats[d] = self.prefix[t + 1][d] - self.prefix[lo][d];
             }
+            self.cmvn_stats[dim] = (t + 1 - lo) as f64;
+        }
+        let cur_count = self.cmvn_stats[dim];
+        if cur_count < o.cmn_window as f64 {
+            let from_global = (o.cmn_window as f64 - cur_count).min(o.global_frames as f64);
             if from_global > 0.0 {
-                let scale = from_global / global_count;
-                for d in 0..dim {
-                    sums[d] += scale * self.info.global_mean_stats[d];
+                let scale = from_global / info.global_mean_stats[dim];
+                for d in 0..=dim {
+                    self.cmvn_stats[d] += scale * info.global_mean_stats[d];
                 }
-                cur_count += from_global;
             }
         }
+        let count = self.cmvn_stats[dim];
         let src = &self.frames[t];
         for d in 0..dim {
-            out[d] = src[d] - (sums[d] / cur_count) as f32;
+            out[d] = src[d] - (self.cmvn_stats[d] / count) as f32;
         }
     }
 
     /// Spliced then LDA-transformed frame t, from raw frames or from CMVN frames.
-    fn lda_frame(&self, t: usize, normalized: bool, out: &mut [f32]) {
-        let o = &self.info.opts;
+    fn lda_frame(&mut self, t: usize, normalized: bool, out: &mut [f32]) {
+        let info = self.info;
+        let o = &info.opts;
         let dim = self.frames[0].len();
         let total = self.frames.len();
         let width = o.left_context + 1 + o.right_context;
@@ -762,9 +788,9 @@ impl<'a> IvectorStream<'a> {
                 spliced[n * dim..(n + 1) * dim].copy_from_slice(&self.frames[t2]);
             }
         }
-        let rows = self.info.lda_rows;
-        out[..rows].copy_from_slice(&self.info.lda_offset);
-        for (c, col) in self.info.lda_t.chunks_exact(rows).enumerate() {
+        let rows = info.lda_rows;
+        out[..rows].copy_from_slice(&info.lda_offset);
+        for (c, col) in info.lda_t.chunks_exact(rows).enumerate() {
             let s = spliced[c];
             for r in 0..rows {
                 out[r] += col[r] * s;
@@ -773,8 +799,9 @@ impl<'a> IvectorStream<'a> {
     }
 
     fn update_stats_until(&mut self, frame: usize) {
-        let o = &self.info.opts;
-        let fd = self.info.extractor.feat_dim;
+        let info = self.info;
+        let o = &info.opts;
+        let fd = info.extractor.feat_dim;
         let mut pending: Vec<usize> = Vec::new();
         let flush = |this: &mut Self, pending: &mut Vec<usize>| {
             if pending.is_empty() {
