@@ -10,7 +10,7 @@
 
 use crate::fst::{Label, StateId, VectorFst, NO_STATE};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 use std::sync::Arc;
 
 pub struct Link {
@@ -30,6 +30,9 @@ pub struct Token {
     pub link: Option<Rc<Link>>,
     /// Phone of the last emitting arc on this path, for change detection.
     pub phone: i32,
+    /// Creation order within the frame; ties in cost go to the newest token, as Kaldi's token
+    /// list, iterated newest first with a strict comparison, resolves them.
+    pub seq: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +72,7 @@ pub struct Decoder<'g> {
     has_eps: Vec<bool>,
     tmp_costs: Vec<f32>,
     queue: Vec<StateId>,
+    seq: u32,
 }
 
 impl<'g> Decoder<'g> {
@@ -84,6 +88,7 @@ impl<'g> Decoder<'g> {
             has_eps,
             tmp_costs: Vec::new(),
             queue: Vec::new(),
+            seq: 0,
         };
         d.init_decoding();
         d
@@ -95,7 +100,8 @@ impl<'g> Decoder<'g> {
         if self.fst.start == NO_STATE {
             return;
         }
-        self.cur.insert(self.fst.start, Token { cost: 0.0, link: None, phone: 0 });
+        self.seq = 0;
+        self.cur.insert(self.fst.start, Token { cost: 0.0, link: None, phone: 0, seq: 0 });
         let beam = self.config.beam;
         self.process_nonemitting(beam);
     }
@@ -189,9 +195,12 @@ impl<'g> Decoder<'g> {
                 if tot + adaptive_beam < next_cutoff {
                     next_cutoff = tot + adaptive_beam;
                 }
-                let better = match next.get(&a.nextstate) {
-                    Some(t) => tot < t.cost,
-                    None => true,
+                let (better, seq) = match next.get(&a.nextstate) {
+                    Some(t) => (tot < t.cost, t.seq),
+                    None => {
+                        self.seq += 1;
+                        (true, self.seq)
+                    }
                 };
                 if better {
                     let phone = self.tid2phone[a.ilabel as usize];
@@ -205,7 +214,7 @@ impl<'g> Decoder<'g> {
                     } else {
                         tok.link.clone()
                     };
-                    next.insert(a.nextstate, Token { cost: tot, link, phone });
+                    next.insert(a.nextstate, Token { cost: tot, link, phone, seq });
                 }
             }
         }
@@ -234,9 +243,12 @@ impl<'g> Decoder<'g> {
                 if tot >= cutoff {
                     continue;
                 }
-                let better = match self.cur.get(&a.nextstate) {
-                    Some(t) => tot < t.cost,
-                    None => true,
+                let (better, seq) = match self.cur.get(&a.nextstate) {
+                    Some(t) => (tot < t.cost, t.seq),
+                    None => {
+                        self.seq += 1;
+                        (true, self.seq)
+                    }
                 };
                 if better {
                     let link = if a.olabel != 0 {
@@ -244,7 +256,7 @@ impl<'g> Decoder<'g> {
                     } else {
                         tok.link.clone()
                     };
-                    self.cur.insert(a.nextstate, Token { cost: tot, link, phone: tok.phone });
+                    self.cur.insert(a.nextstate, Token { cost: tot, link, phone: tok.phone, seq });
                     self.queue.push(a.nextstate);
                 }
             }
@@ -259,7 +271,7 @@ impl<'g> Decoder<'g> {
         for (&s, t) in &self.cur {
             let fw = if any_final { self.fst.states[s as usize].final_weight } else { 0.0 };
             let c = t.cost + fw;
-            if c.is_finite() && best.map(|(_, b)| c < b).unwrap_or(true) {
+            if c.is_finite() && best.map(|(bt, b)| c < b || (c == b && t.seq > bt.seq)).unwrap_or(true) {
                 best = Some((t, c));
             }
         }
@@ -349,7 +361,7 @@ impl<'g> Decoder<'g> {
             }
             words.reverse();
             match groups.get_mut(&words) {
-                Some(g) if g.0 <= c => {}
+                Some(g) if g.0 < c || (g.0 == c && g.1.seq >= t.seq) => {}
                 Some(g) => *g = (c, t),
                 None => {
                     groups.insert(words, (c, t));
@@ -357,7 +369,7 @@ impl<'g> Decoder<'g> {
             }
         }
         let mut v: Vec<(f32, &Token)> = groups.into_values().collect();
-        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(b.1.seq.cmp(&a.1.seq)));
         v.truncate(max);
         v.into_iter().map(|(c, t)| self.trace(t, c)).collect()
     }
