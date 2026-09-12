@@ -46,6 +46,9 @@ IN_CONTENTION = -2.0  # nats of deficit to the leader, for the merge-loss proxy
 OPERATING_TRUST = 0.9  # the README's bar: sigmoid(gap) >= 0.9, a lead of about 2.2 nats
 BARS = (0.5, 0.7, 0.8, 0.9, 0.95, 0.99)
 BOOTSTRAP = 1000
+# Four printed confidences enter a reconstructed delta, each rounded to six decimals, and the
+# runtime's leads and their difference are single precision: a few times 1e-6 either way.
+RUNTIME_TOL = 2e-5
 
 GAP_EDGES = [(0.0, 0.5), (0.5, 1.0), (1.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, float("inf"))]
 TRUST_EDGES = [(0.0, 0.5), (0.5, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 0.95), (0.95, 1.01)]
@@ -126,6 +129,43 @@ def relation_of(top, text):
     return "differs"
 
 
+def empty_parity():
+    """The cross-check's tally: where both sources have a delta they must agree; where only the
+    runtime has one the reading entered the reported list and the harness has no record of it."""
+    return dict(agreed=0, runtime_only=0, neither=0, max_diff=0.0)
+
+
+def runtime_motion(p):
+    """`relation` and `lead_delta` as the runtime reports them, by reading text, or None from a
+    build that predates the keys. The runtime keeps the history over every surviving group, so it
+    reports a delta where the harness, which sees only the readings reported, has none
+    (`[[rr:TD-9#Readings are read once per decoding advance]]`)."""
+    alts = p.get("partial_alternatives") or []
+    if not alts or "lead_delta" not in alts[0]:
+        return None
+    return {e["text"]: (e["relation"], e["lead_delta"]) for e in alts}
+
+
+def check_motion(rt, derived, top, parity):
+    """The harness's derivation is the cross-check on the runtime's fields. A reading reported at
+    both advances has its lead from the same two confidences either way, so the two must agree;
+    a reading the harness cannot see is the runtime's alone."""
+    for text, (rel, delta) in rt.items():
+        want = relation_of(top, text)
+        if rel != want:
+            raise AssertionError(f"relation {rel!r} from the runtime, {want!r} derived, on {text!r}")
+        mine = derived.get(text)
+        if mine is not None and delta is None:
+            raise AssertionError(f"lead_delta {mine} derived, null from the runtime, on {text!r}")
+        if mine is None:
+            parity["runtime_only" if delta is not None else "neither"] += 1
+            continue
+        if abs(delta - mine) > RUNTIME_TOL:
+            raise AssertionError(f"lead_delta {delta} from the runtime, {mine} derived, on {text!r}")
+        parity["agreed"] += 1
+        parity["max_diff"] = max(parity["max_diff"], abs(delta - mine))
+
+
 def entropy_of(readings):
     """Shannon entropy in nats of the softmax over the confidences."""
     if not readings:
@@ -141,7 +181,7 @@ def energy_of(p):
     return lead[-1]["energy_dbfs"] if lead else None
 
 
-def advance_states(series):
+def advance_states(series, parity=None):
     """The blocks where the readings changed, each with what the readings had done by then.
 
     A block that carries no readings at all is not an advance: the decoder has not run a chunk
@@ -152,6 +192,8 @@ def advance_states(series):
     alive = {}
     churn = 0
     prev = None
+    if parity is None:
+        parity = empty_parity()
     for i, (fed, readings, p) in enumerate(series):
         if not readings or (prev is not None and readings == series[i - 1][1]):
             continue
@@ -162,12 +204,19 @@ def advance_states(series):
         top = texts[0]
         if prev is not None and prev["top"] != top:
             churn += 1
-        delta = {}
+        derived = {}
         if prev is not None:
             for t in texts:
                 before = prev["lead"].get(t)
                 if before is not None and lead[t] is not None:
-                    delta[t] = lead[t] - before
+                    derived[t] = lead[t] - before
+        rt = runtime_motion(p)
+        delta = derived
+        rel = {t: relation_of(top, t) for t in texts}
+        if rt is not None:
+            check_motion(rt, derived, top, parity)
+            delta = {t: d for t, (_, d) in rt.items() if d is not None}
+            rel = {t: r for t, (r, _) in rt.items()}
         st = dict(
             block=i,
             fed=fed,
@@ -176,6 +225,8 @@ def advance_states(series):
             top=top,
             lead=lead,
             delta=delta,
+            derived_delta=derived,
+            relation=rel,
             alive=dict(alive),
             churn=churn,
             entropy=ent,
@@ -222,9 +273,16 @@ def features_at(st, vanished):
         vanished=vanished,
         had_history=st["top"] in st["prev_texts"],
         readings=[
-            dict(text=t, conf=c, relation=relation_of(st["top"], t), lead=st["lead"][t], lead_delta=st["delta"].get(t))
+            dict(text=t, conf=c, relation=st["relation"][t], lead=st["lead"][t], lead_delta=st["delta"].get(t))
             for t, c in r
         ],
+        # The same three figures as the harness alone derives them, for the availability table:
+        # the runtime's history reaches groups the reported readings never showed.
+        derived=dict(
+            lead_delta0=st["derived_delta"].get(st["top"]),
+            lead_delta1=st["derived_delta"].get(rank1),
+            displaced_delta=st["derived_delta"].get(prev_top),
+        ),
     )
 
 
@@ -233,6 +291,7 @@ def decode(clips, eng, block_ms, alternatives):
     every advance from there to the end of the clip."""
     recs = []
     diag = dict(clips=0, intervals=[], advances=[], first_advance_ms=[], gaps_after_start=0, sighting_off_advance=0)
+    parity = empty_parity()
     t0 = time.monotonic()
     for n, path in enumerate(clips):
         if n and n % 2000 == 0:
@@ -250,7 +309,7 @@ def decode(clips, eng, block_ms, alternatives):
             rec.SetPartialWords(True)
         finals = sc.feed(rec, sc.read_pcm(path), block_ms, on_partial)
 
-        states = advance_states(series)
+        states = advance_states(series, parity)
         diag["clips"] += 1
         diag["advances"].append(len(states))
         if states:
@@ -285,6 +344,7 @@ def decode(clips, eng, block_ms, alternatives):
                 series=entries,
             )
         )
+    diag["parity"] = parity
     return recs, diag
 
 
@@ -651,53 +711,69 @@ def availability_section(feats, diag, lines, fig):
         f"needs. A one-second clip therefore holds {dist(diag['advances'])} advances, and a first "
         "sighting has almost no history behind it.",
         "",
-        "The two moments a rule is read at, and the two places the figure could come from. The "
-        "harness sees the readings the runtime reports, five of them here, and derives the motion "
-        "from its own series; the runtime keeps the history over every surviving group, so a "
-        "reading entering the list carries motion the harness has no record of "
-        "(`[[rr:TD-9#Readings are read once per decoding advance]]`). The runtime column is "
-        "**pending**: it is filled when the fields are read from the JSON instead of derived, and "
-        "until then this page's availability is a lower bound on the runtime's.",
+        "The two moments a rule is read at, and the two places the figure comes from. The harness "
+        "sees the readings the runtime reports, five of them here, and derives the motion from "
+        "its own series; the runtime keeps the history over every surviving group, so a reading "
+        "entering the list carries motion the harness has no record of "
+        "(`[[rr:TD-9#Readings are read once per decoding advance]]`). Every figure below is the "
+        "runtime's; the harness columns are what a host that differenced its own partials would "
+        "have had instead, and where both are defined the two agree, which is this page's "
+        "cross-check on the fields.",
         "",
-        "| figure | defined at the sighting | defined one advance later | runtime, over every group |",
-        "|---|---|---|---|",
+        "| figure | harness top-n, at the sighting | runtime, at the sighting | harness top-n, one "
+        "advance later | runtime, one advance later |",
+        "|---|---|---|---|---|",
     ]
     held = [f for f in feats if f["hold"]]
+
+    def both(key, label, runtime_only=False):
+        """The count from the harness's own derivation and from the runtime, at each moment."""
+        if runtime_only:
+            at = sum(1 for f in feats if f[key] is not None)
+            hold = sum(1 for f in held if f["hold"][key] is not None)
+            return (key, label, at, at, hold, hold)
+        return (
+            key,
+            label,
+            sum(1 for f in feats if f["derived"][key] is not None),
+            len(defined(feats, key)),
+            sum(1 for f in held if f["hold"]["derived"][key] is not None),
+            sum(1 for f in held if f["hold"][key] is not None),
+        )
+
     rows = [
         (
             "history",
             "the rank-0 reading was there at the previous advance (`had_history`)",
             sum(1 for f in feats if f["had_history"]),
+            sum(1 for f in feats if f["had_history"]),
+            sum(1 for f in held if f["hold"]["had_history"]),
             sum(1 for f in held if f["hold"]["had_history"]),
         ),
-        (
-            "lead_delta0",
-            "`lead_delta` of rank 0 is defined",
-            len(defined(feats, "lead_delta0")),
-            sum(1 for f in held if f["hold"]["lead_delta0"] is not None),
-        ),
-        (
-            "lead_delta1",
-            "`lead_delta` of rank 1 is defined",
-            len(defined(feats, "lead_delta1")),
-            sum(1 for f in held if f["hold"]["lead_delta1"] is not None),
-        ),
-        (
-            "displaced_delta",
-            "`lead_delta` of the reading that led before is defined",
-            len(defined(feats, "displaced_delta")),
-            sum(1 for f in held if f["hold"]["displaced_delta"] is not None),
-        ),
-        (
-            "entropy_delta",
-            "`entropy_delta` is defined (there was a previous advance)",
-            len(defined(feats, "entropy_delta")),
-            sum(1 for f in held if f["hold"]["entropy_delta"] is not None),
-        ),
+        both("lead_delta0", "`lead_delta` of rank 0 is defined"),
+        both("lead_delta1", "`lead_delta` of rank 1 is defined"),
+        both("displaced_delta", "`lead_delta` of the reading that led before is defined"),
+        both("entropy_delta", "`entropy_delta` is defined (there was a previous advance)", runtime_only=True),
     ]
-    for _, label, c, h in rows:
-        hold_cell = f"{h} / {len(held)} ({100 * h / len(held):.1f}%)" if held else "-"
-        lines.append(f"| {label} | {c} / {n} ({100 * c / n:.1f}%) | {hold_cell} | pending |")
+
+    def cell(c, total):
+        return f"{c} / {total} ({100 * c / total:.1f}%)" if total else "-"
+
+    for _, label, dc, rc, dh, rh in rows:
+        lines.append(f"| {label} | {cell(dc, n)} | {cell(rc, n)} | {cell(dh, len(held))} | {cell(rh, len(held))} |")
+    par = diag.get("parity") or {}
+    if par:
+        lines += [
+            "",
+            f"The cross-check behind those columns: over every advance of every clip decoded, "
+            f"{par['agreed']} readings carried a `lead_delta` from both the runtime and the "
+            f"harness's own derivation and all {par['agreed']} agreed, the largest disagreement "
+            f"{par['max_diff']:.1e} nats against a tolerance of {RUNTIME_TOL:.0e} (the "
+            "confidences print to six decimals and the runtime's leads are single precision); "
+            f"{par['runtime_only']} more carried one from the runtime alone, a reading entering "
+            "the reported list with a history the harness never saw; and there was no reading the "
+            "harness could difference and the runtime could not.",
+        ]
     alive = [f["advances_alive"] for f in feats]
     alive1 = sum(1 for v in alive if v == 1)
     lines += [
@@ -710,10 +786,12 @@ def availability_section(feats, diag, lines, fig):
     fig["availability"] = dict(
         first_sightings=n,
         clips_decoded=diag["clips"],
-        defined={k: c for k, _, c, _ in rows},
-        defined_at_hold={k: h for k, _, _, h in rows},
+        defined={k: c for k, _, _, c, _, _ in rows},
+        defined_at_hold={k: h for k, _, _, _, _, h in rows},
+        defined_harness={k: c for k, _, c, _, _, _ in rows},
+        defined_harness_at_hold={k: h for k, _, _, _, h, _ in rows},
         hold_available=len(held),
-        runtime_all_groups="pending",
+        parity=par,
         advances_alive_p50=sc.quantile(alive, 0.5),
         advances_alive_p90=sc.quantile(alive, 0.9),
         born_at_sighting=alive1,
@@ -1017,6 +1095,97 @@ def vanishing_section(feats, lines, fig):
         with_n=len(with_ev),
         revised_without=sum(1 for f in without if not f["survived"]),
         without_n=len(without),
+    )
+
+
+def census_section(feats, census, lines, fig):
+    """The decoder's own count beside the harness proxy above. `stream --census` counts per take,
+    so the unit here is the clip's whole decode and not the audio before the sighting. Neither
+    quantity settles what a lattice would keep (`[[rr:TD-9#No lattice is added for this feature]]`).
+    """
+    rows = census["clips"]
+    have = [f for f in feats if f["clip"] in rows]
+    if not have:
+        return
+    n = len(have)
+    merges = [rows[f["clip"]]["merges_close"] for f in have]
+    lost = [rows[f["clip"]]["readings_lost"] for f in have]
+    lost_close = [rows[f["clip"]]["readings_lost_close"] for f in have]
+
+    def rate(g):
+        r = sum(1 for f in g if not f["survived"])
+        return r, f"{r} / {len(g)} ({100 * r / (len(g) or 1):.1f}%)"
+
+    with_lc = [f for f, c in zip(have, lost_close) if c]
+    without_lc = [f for f, c in zip(have, lost_close) if not c]
+    cuts = [sc.quantile(merges, q) for q in (0.25, 0.5, 0.75)]
+    bands = []
+    for lo, hi in zip([0.0, *cuts], [*cuts, float("inf")]):
+        g = [f for f, c in zip(have, merges) if lo <= c < hi]
+        if g:
+            bands.append((lo, hi, g))
+    lines += [
+        "",
+        "### The decoder's own count",
+        "",
+        "The proxy above reads the readings that were reported. The decoder can count what it "
+        "dropped, and `stream --census` does, without touching a decision. Three quantities, kept "
+        "apart because they are not the same event: `merges_close`, two paths meeting at one "
+        f"state with different word sequences and costs within {-IN_CONTENTION:g} nats, counted "
+        "whichever of the two is dropped; `readings_lost`, word sequences present among the "
+        "surviving groups at one chunk and gone at the next; and `readings_lost_close`, those of "
+        f"them that were within {-IN_CONTENTION:g} nats of the leader when last seen. A collision "
+        "is not a reading lost: the loser's word sequence usually survives elsewhere in the beam, "
+        "and neither path need be anywhere near the leader.",
+        "",
+        f"Over {n} clips, per clip: {sum(merges) / n:.0f} close collisions ({dist(merges, 0)} by "
+        f"median / p90), {sum(lost) / n:.1f} readings lost, and {sum(lost_close) / n:.2f} of those "
+        f"lost from within {-IN_CONTENTION:g} nats of the leader. Collisions are not rare events "
+        f"to be correlated with anything: {sum(1 for c in merges if c)} of {n} clips have at least "
+        "one, so the question is how many, not whether.",
+        "",
+        "Revision rate of the first word by how many close collisions the clip's decode recorded, in quartiles:",
+        "",
+        "| close collisions in the decode | clips | revised |",
+        "|---|---|---|",
+    ]
+    fig_bands = []
+    for lo, hi, g in bands:
+        label = f"{lo:.0f} to {hi:.0f}" if hi != float("inf") else f"{lo:.0f} and up"
+        r, cell = rate(g)
+        lines.append(f"| {label} | {len(g)} | {cell} |")
+        fig_bands.append(dict(lo=lo, hi=None if hi == float("inf") else hi, n=len(g), revised=r))
+    r_with, cell_with = rate(with_lc)
+    r_without, cell_without = rate(without_lc)
+    lines += [
+        "",
+        f"And by the quantity the proxy above was reaching for, a reading lost from within "
+        f"{-IN_CONTENTION:g} nats of the leader, which the decoder sees over every surviving group "
+        "and the proxy sees only among the five reported:",
+        "",
+        "| clips | revised |",
+        "|---|---|",
+        f"| at least one close reading lost | {cell_with} |",
+        f"| none | {cell_without} |",
+        "",
+        "Read this as an observation and not as a verdict. It counts collisions and "
+        "disappearances; what a retained history or a summed posterior would have been worth is "
+        "a measurement of its own, which the record defers rather than closes.",
+    ]
+    fig["census"] = dict(
+        clips=n,
+        merges_close=sum(merges),
+        merges_close_per_clip=sum(merges) / n,
+        clips_with_merge=sum(1 for c in merges if c),
+        readings_lost=sum(lost),
+        readings_lost_per_clip=sum(lost) / n,
+        readings_lost_close=sum(lost_close),
+        readings_lost_close_per_clip=sum(lost_close) / n,
+        merge_bands=fig_bands,
+        revised_with_close_loss=r_with,
+        with_close_loss_n=len(with_lc),
+        revised_without_close_loss=r_without,
+        without_close_loss_n=len(without_lc),
     )
 
 
@@ -1492,10 +1661,15 @@ def reading_section(feats, best, base, strat, diag, rules, lines, fig):
         f"should. {diag['gaps_after_start']} blocks after a clip's first advance carried no "
         f"readings at all, and {diag['sighting_off_advance']} first sightings fell on a block that "
         "was not an advance. The merge count is a proxy: beam pruning removes readings too, and "
-        "nothing in the output distinguishes the two. One clip decoded eight times in fresh "
-        "processes gave identical readings and identical finals, so these figures are a property "
-        "of the build and not of a run; the build is the one the page was measured with, and an "
-        "older wheel that ordered two readings of equal cost by hash moved a few of the finals. A "
+        "nothing in the output distinguishes the two; the decoder's own count is beside it above. "
+        "The whole split was decoded twice, each pass in a process started for it, comparing "
+        "every partial with its readings block by block and every final, and no clip read "
+        "differently the second time (`scripts/speech_commands.py` `determinism_pass`). Two "
+        "processes are what the comparison needs: a hash seed is drawn once per process, so a "
+        "reading that depends on a map's iteration order is perfectly stable within a run and "
+        "moves only between runs, and a repeat inside one process cannot see it. These figures "
+        "are therefore a property of the build, which is the build this page names; an older "
+        "wheel that ordered two readings of equal cost by hash moved a few of the finals. A "
         "corpus of sentences would give the motion the room a one-second clip does not, and is "
         "where this should be measured again.",
         "",
@@ -1605,6 +1779,8 @@ def build_page(feats, diag, fit_feats, fit_name, split, block_ms, alternatives, 
     hold_section(feats, best, base, lines, fig)
     next_advance_section(feats, lines, fig)
     vanishing_section(feats, lines, fig)
+    if fig.get("census_file"):
+        census_section(feats, json.loads(Path(fig["census_file"]).read_text()), lines, fig)
     rules = rules_section(feats, fit_feats, fit_name, lines, fig)
     reading_section(feats, best, base, strat, diag, rules, lines, fig)
     return lines
@@ -1623,6 +1799,7 @@ def main():
     ap.add_argument("--fit-clips", default=None, help="records to fit the rules on; default is the scored set")
     ap.add_argument("--json", default=None, help="write every figure as JSON")
     ap.add_argument("--split", default="testing", choices=("testing", "validation"))
+    ap.add_argument("--census", default=None, help="the merge census from scripts/merge_census.py")
     ap.add_argument("--block-ms", type=int, default=40)
     ap.add_argument("--stride", type=int, default=1)
     ap.add_argument("--alternatives", type=int, default=5)
@@ -1665,6 +1842,8 @@ def main():
         fit_on=fit_name,
         fit_clips=len(fit_feats),
         provenance=diag.get("provenance"),
+        census_file=a.census,
+        args=vars(a),
     )
     lines = build_page(feats, diag, fit_feats, fit_name, a.split, a.block_ms, a.alternatives, fig)
     Path(a.out).write_text("\n".join(lines))

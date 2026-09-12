@@ -228,6 +228,45 @@ def relation(w0, w):
     return "differs"
 
 
+def runtime_motion(p):
+    """`relation` and `lead_delta` as the runtime reports them, by reading text, or None from a
+    build that predates the keys. The runtime's history runs over every surviving group, so it
+    reports a delta for a reading entering the list that this harness has no record of
+    (`[[rr:TD-9#Readings are read once per decoding advance]]`)."""
+    alts = p.get("partial_alternatives") or []
+    if not alts or "lead_delta" not in alts[0]:
+        return None
+    return {e["text"]: (e["relation"], e["lead_delta"]) for e in alts}
+
+
+# Four printed confidences enter a reconstructed delta, each rounded to six decimals, and the
+# runtime's leads and their difference are single precision: a few times 1e-6 either way.
+RUNTIME_TOL = 2e-5
+
+
+def check_motion(rt, derived, rel, parity):
+    """The harness's derivation is the cross-check on the runtime's fields, over the readings it
+    can see: a reading reported at both advances has its lead from the same two confidences
+    either way."""
+    for text, (r, delta) in rt.items():
+        if r != rel[text]:
+            raise AssertionError(f"relation {r!r} from the runtime, {rel[text]!r} derived, on {text!r}")
+        mine = derived.get(text)
+        if mine is not None and delta is None:
+            raise AssertionError(f"lead_delta {mine} derived, null from the runtime, on {text!r}")
+        if mine is None:
+            parity["runtime_only" if delta is not None else "neither"] += 1
+            continue
+        if abs(delta - mine) > RUNTIME_TOL:
+            raise AssertionError(f"lead_delta {delta} from the runtime, {mine} derived, on {text!r}")
+        parity["agreed"] += 1
+        parity["max_diff"] = max(parity["max_diff"], abs(delta - mine))
+
+
+def empty_parity():
+    return dict(agreed=0, runtime_only=0, neither=0, max_diff=0.0)
+
+
 def trailing_sil(p):
     e = p.get("partial_result") or []
     if e and e[-1]["word"] == "[sil]":
@@ -256,20 +295,26 @@ def inner_sil_spans(p):
     return out
 
 
-def build_state(fed, seg, p, readings, prev, first_seen):
+def build_state(fed, seg, p, readings, prev, first_seen, parity=None):
     texts = [t for t, _ in readings]
     for t in texts:
         first_seen.setdefault(t, fed)
     lead = reading_leads(readings)
-    delta = {}
+    derived = {}
     if prev is not None:
         for t in texts:
             before = prev["lead"].get(t)
             if before is not None and lead[t] is not None:
-                delta[t] = lead[t] - before
+                derived[t] = lead[t] - before
     words = {t: word_list(t) for t in texts}
     w0 = words[texts[0]]
     rel = {t: relation(w0, words[t]) for t in texts}
+    delta = derived
+    rt = runtime_motion(p)
+    if rt is not None:
+        check_motion(rt, derived, rel, parity if parity is not None else empty_parity())
+        delta = {t: d for t, (_, d) in rt.items() if d is not None}
+        rel = {t: r for t, (r, _) in rt.items()}
     extends = [
         dict(rank=i, text=t, extra=words[t][len(w0) :], lead=lead[t], lead_delta=delta.get(t))
         for i, t in enumerate(texts)
@@ -298,7 +343,7 @@ def build_state(fed, seg, p, readings, prev, first_seen):
     )
 
 
-def run_stream(eng, pcm, block_ms, alternatives, words_on=True):
+def run_stream(eng, pcm, block_ms, alternatives, words_on=True, parity=None):
     """Feed one stream in blocks, keeping every partial's readings with the position fed and
     every final with its own. A final clears the decoder's history, so the series is cut there:
     ages and lead deltas start again in the next segment."""
@@ -327,7 +372,7 @@ def run_stream(eng, pcm, block_ms, alternatives, words_on=True):
         readings = beam_readings(p)
         adv = None
         if readings and readings != prev_readings:
-            st = build_state(fed, seg, p, readings, prev, first_seen)
+            st = build_state(fed, seg, p, readings, prev, first_seen, parity)
             st["i"] = len(states)
             st["grew"] = len(st["words0"]) > len(prev_words0)
             prev_words0 = st["words0"]
@@ -1358,7 +1403,9 @@ def split_clips(data, name, rng):
     return rows
 
 
-def decode_split(eng, data, split, args, gaps_paths, vosk_eng=None, pause_ms=PAUSE_MS, word_target=None, tag=None):
+def decode_split(
+    eng, data, split, args, gaps_paths, vosk_eng=None, pause_ms=PAUSE_MS, word_target=None, tag=None, parity=None
+):
     """Build and decode this split's streams, one at a time, keeping the truth and the series but
     not the audio."""
     rng = random.Random(args.seed + (0 if split == "validation" else 1))
@@ -1371,7 +1418,7 @@ def decode_split(eng, data, split, args, gaps_paths, vosk_eng=None, pause_ms=PAU
     vosk = dict(rows=[], partial_words=None)
     while n_words < want and len(clips) > UTTERANCES_PER_STREAM * WORDS_PER_UTTERANCE[1]:
         pcm, words, gap_rows = build_stream(rng, clips, gaps, args.utterances, pause_ms)
-        states, blocks, finals = run_stream(eng, pcm, args.block_ms, args.alternatives)
+        states, blocks, finals = run_stream(eng, pcm, args.block_ms, args.alternatives, parity=parity)
         s = dict(
             key=f"{name}/{len(streams)}",
             split=name,
@@ -1561,6 +1608,8 @@ def main():
 
     report = dict(
         provenance=sc.provenance(a, ["utterpy", "vosk"] if a.with_vosk else ["utterpy"]),
+        # The stream set is built from the seed and these: a page cannot be reproduced without them.
+        args=vars(a),
         wheel=utterpy.__file__,
         grammar_size=len(grammar),
         seed=a.seed,
@@ -1576,10 +1625,12 @@ def main():
     )
 
     t0 = time.monotonic()
+    parity = empty_parity()
     sc.note("validation streams (thresholds are fitted here)")
-    val, _ = decode_split(eng, data, "validation", a, gaps_paths)
+    val, _ = decode_split(eng, data, "validation", a, gaps_paths, parity=parity)
     sc.note("testing streams (every reported figure comes from here)")
-    test, vosk = decode_split(eng, data, "testing", a, gaps_paths, vosk_eng)
+    test, vosk = decode_split(eng, data, "testing", a, gaps_paths, vosk_eng, parity=parity)
+    report["parity"] = parity
     report["sizes"] = dict(validation=stream_sizes(val), testing=stream_sizes(test))
     report["decode_seconds"] = time.monotonic() - t0
 
@@ -1851,7 +1902,15 @@ def main():
         lo, hi = (float(x) for x in spec.split("-"))
         sc.note(f"pause variant {spec} ms")
         vstreams, _ = decode_split(
-            eng, data, "testing", a, gaps_paths, pause_ms=(lo, hi), word_target=a.variant_words, tag=f"pause{spec}"
+            eng,
+            data,
+            "testing",
+            a,
+            gaps_paths,
+            pause_ms=(lo, hi),
+            word_target=a.variant_words,
+            tag=f"pause{spec}",
+            parity=parity,
         )
         theta = report["C5_onset"]["best_theta"]["motion"]
         variants[spec] = dict(
@@ -2166,6 +2225,7 @@ def page(r, a, chosen):
     sz = r["sizes"]["testing"]
     vz = r["sizes"]["validation"]
     adv = r["advance_ms"]
+    par = r["parity"]
     L = [
         "# Silence direction and word transitions on a built stream",
         "",
@@ -2175,6 +2235,14 @@ def page(r, a, chosen):
         f"{r['grammar_size']} entries. {p['block_ms']} ms blocks, {r['alternatives']} partial "
         f"alternatives, partial words on, seed {r['seed']}. Measured by "
         "`scripts/partial_states.py`.",
+        "",
+        "Every reading's `relation` and `lead_delta` below are the runtime's own, read off the "
+        "partial. The harness derives them again from its series as a check: over the streams "
+        f"decoded here {par['agreed']} readings carried a delta from both and all {par['agreed']} "
+        f"agreed, the largest disagreement {par['max_diff']:.1e} nats against a tolerance of "
+        f"{RUNTIME_TOL:.0e}; {par['runtime_only']} more carried one from the runtime alone, a "
+        "reading entering the reported list whose history the harness never saw "
+        "(`[[rr:TD-9#Readings are read once per decoding advance]]`).",
         "",
         "A Speech Commands clip holds one word, so it holds no transition between words and no "
         "finish. The streams here are built from the clips: utterances of one to five words, "

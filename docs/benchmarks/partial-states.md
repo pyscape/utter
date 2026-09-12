@@ -1,8 +1,10 @@
 # Silence direction and word transitions on a built stream
 
-Run 2026-09-12 23:06:54Z, utter 9aa6a83+dirty, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 96e272c0ea28c53f022fbbff8bdcfa66aa30abd4-dirty, **not** the checkout as it stands (9aa6a83+dirty).
+Run 2026-09-12 23:43:31Z, utter 9ca0c02+dirty, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter e1e5147d24723046a68f3b18a1d8722a0e9a4032, **not** the checkout as it stands (9ca0c02+dirty).
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 40 ms blocks, 8 partial alternatives, partial words on, seed 20260912. Measured by `scripts/partial_states.py`.
+
+Every reading's `relation` and `lead_delta` below are the runtime's own, read off the partial. The harness derives them again from its series as a check: over the streams decoded here 220372 readings carried a delta from both and all 220372 agreed, the largest disagreement 3.0e-06 nats against a tolerance of 2e-05; 79875 more carried one from the runtime alone, a reading entering the reported list whose history the harness never saw (`[[rr:TD-9#Readings are read once per decoding advance]]`).
 
 A Speech Commands clip holds one word, so it holds no transition between words and no finish. The streams here are built from the clips: utterances of one to five words, pauses of 100-800 ms between the words of an utterance, finishes of 2-3 s between utterances, and every gap cut in rotation from the dataset's own six background recordings, scaled to about -50 dBFS RMS rather than written as digital zeros, which the floor tracker treats apart (`[[rr:TD-8#The runtime reports the floor]]`). Every word's position and every gap's length are therefore exact, and each word's onset and offset are the first and last 10 ms frame within 20 dB of its clip's peak, which owes nothing to the decoder.
 
@@ -17,7 +19,7 @@ The readings change only when the decoder advances a chunk: over the testing str
 
 R0 is TD-8's reading of the fields, and nothing else: a word arriving at rank 0 is speech beginning (a detection, no lead), the trailing `[sil]` entry's span past a bound is speech ending, a span that goes on growing is silence being kept, and a word at rank 0 with no trailing span is speech continuing. R1 is R0 plus the readings' motion: at an utterance's start the empty reading `[sil]` losing its lead means a word is coming, and mid-utterance a reading that extends rank 0 by a word and is gaining on the field means the next word is forming.
 
-Fitted on the validation streams, at the 240 ms horizon, by the macro F1 over the four states: first the bound on the trailing span (500 ms chosen), then the two motion thresholds at that bound (`[sil]` lead_delta at or below -8.00 nats, an extending reading's lead_delta at or above +0.00 nats). TD-8's own bound, 300 ms, is reported beside them because the record quotes its private figures there.
+Fitted on the validation streams, at the 240 ms horizon, by the macro F1 over the four states: first the bound on the trailing span (500 ms chosen), then the two motion thresholds at that bound (`[sil]` lead_delta at or below -8.00 nats, an extending reading's lead_delta at or above +0.25 nats). TD-8's own bound, 300 ms, is reported beside them because the record quotes its private figures there.
 
 | bound (ms) | macro F1 | F1 of *toward* | F1 of *away* | false *away* calls/min in finishes |
 |---|---|---|---|---|
@@ -34,48 +36,48 @@ The motion thresholds, over the same validation streams at the chosen bound. A p
 
 | `[sil]` lead_delta at or below | extending lead_delta at or above | macro F1 | F1 of *away* | F1 of *toward* | false *away* calls/min in finishes |
 |---|---|---|---|---|---|
-| +0.00 | +0.00 | 0.155 | 0.150 | 0.104 | 74.7 |
-| +0.00 | +0.25 | 0.156 | 0.139 | 0.104 | 72.8 |
-| +0.00 | +0.50 | 0.156 | 0.130 | 0.104 | 70.8 |
-| +0.00 | +1.00 | 0.155 | 0.122 | 0.103 | 67.4 |
-| +0.00 | +2.00 | 0.153 | 0.114 | 0.104 | 63.3 |
-| +0.00 | +4.00 | 0.153 | 0.109 | 0.105 | 60.1 |
-| -0.25 | +0.00 | 0.192 | 0.129 | 0.107 | 48.6 |
-| -0.25 | +0.25 | 0.192 | 0.113 | 0.107 | 46.7 |
-| -0.25 | +0.50 | 0.191 | 0.100 | 0.107 | 44.7 |
-| -0.25 | +1.00 | 0.189 | 0.087 | 0.107 | 41.3 |
-| -0.25 | +2.00 | 0.185 | 0.071 | 0.108 | 37.2 |
-| -0.25 | +4.00 | 0.183 | 0.061 | 0.109 | 34.0 |
-| -0.50 | +0.00 | 0.200 | 0.124 | 0.105 | 34.0 |
-| -0.50 | +0.25 | 0.200 | 0.106 | 0.105 | 32.1 |
-| -0.50 | +0.50 | 0.198 | 0.091 | 0.105 | 30.1 |
-| -0.50 | +1.00 | 0.195 | 0.076 | 0.105 | 26.7 |
-| -0.50 | +2.00 | 0.190 | 0.056 | 0.106 | 22.6 |
-| -0.50 | +4.00 | 0.188 | 0.043 | 0.107 | 19.4 |
-| -1.00 | +0.00 | 0.205 | 0.122 | 0.115 | 27.1 |
-| -1.00 | +0.25 | 0.204 | 0.102 | 0.115 | 25.1 |
-| -1.00 | +0.50 | 0.203 | 0.086 | 0.115 | 23.1 |
-| -1.00 | +1.00 | 0.199 | 0.069 | 0.115 | 19.8 |
-| -1.00 | +2.00 | 0.194 | 0.048 | 0.115 | 15.7 |
-| -1.00 | +4.00 | 0.191 | 0.033 | 0.116 | 12.5 |
-| -2.00 | +0.00 | 0.210 | 0.124 | 0.130 | 26.6 |
-| -2.00 | +0.25 | 0.209 | 0.104 | 0.130 | 24.7 |
-| -2.00 | +0.50 | 0.207 | 0.088 | 0.130 | 22.7 |
-| -2.00 | +1.00 | 0.204 | 0.070 | 0.130 | 19.4 |
-| -2.00 | +2.00 | 0.198 | 0.048 | 0.131 | 15.3 |
-| -2.00 | +4.00 | 0.195 | 0.032 | 0.131 | 12.0 |
-| -4.00 | +0.00 | 0.219 | 0.130 | 0.157 | 26.5 |
-| -4.00 | +0.25 | 0.218 | 0.109 | 0.157 | 24.6 |
-| -4.00 | +0.50 | 0.216 | 0.091 | 0.157 | 22.6 |
-| -4.00 | +1.00 | 0.212 | 0.073 | 0.157 | 19.3 |
-| -4.00 | +2.00 | 0.206 | 0.049 | 0.157 | 15.2 |
-| -4.00 | +4.00 | 0.203 | 0.031 | 0.158 | 11.9 |
-| -8.00 | +0.00 | 0.225 | 0.132 | 0.170 | 26.5 |
-| -8.00 | +0.25 | 0.223 | 0.111 | 0.170 | 24.6 |
-| -8.00 | +0.50 | 0.221 | 0.093 | 0.170 | 22.6 |
-| -8.00 | +1.00 | 0.217 | 0.074 | 0.170 | 19.3 |
-| -8.00 | +2.00 | 0.211 | 0.049 | 0.170 | 15.2 |
-| -8.00 | +4.00 | 0.207 | 0.031 | 0.171 | 11.9 |
+| +0.00 | +0.00 | 0.152 | 0.150 | 0.094 | 72.7 |
+| +0.00 | +0.25 | 0.154 | 0.141 | 0.094 | 72.1 |
+| +0.00 | +0.50 | 0.155 | 0.134 | 0.094 | 71.4 |
+| +0.00 | +1.00 | 0.154 | 0.127 | 0.094 | 70.5 |
+| +0.00 | +2.00 | 0.153 | 0.122 | 0.094 | 67.6 |
+| +0.00 | +4.00 | 0.151 | 0.112 | 0.094 | 63.1 |
+| -0.25 | +0.00 | 0.190 | 0.131 | 0.098 | 46.6 |
+| -0.25 | +0.25 | 0.191 | 0.118 | 0.098 | 46.0 |
+| -0.25 | +0.50 | 0.191 | 0.108 | 0.098 | 45.3 |
+| -0.25 | +1.00 | 0.189 | 0.097 | 0.098 | 44.4 |
+| -0.25 | +2.00 | 0.187 | 0.088 | 0.098 | 41.5 |
+| -0.25 | +4.00 | 0.182 | 0.069 | 0.098 | 37.0 |
+| -0.50 | +0.00 | 0.198 | 0.127 | 0.096 | 32.0 |
+| -0.50 | +0.25 | 0.199 | 0.113 | 0.096 | 31.3 |
+| -0.50 | +0.50 | 0.198 | 0.101 | 0.096 | 30.7 |
+| -0.50 | +1.00 | 0.197 | 0.089 | 0.096 | 29.7 |
+| -0.50 | +2.00 | 0.194 | 0.077 | 0.096 | 26.9 |
+| -0.50 | +4.00 | 0.188 | 0.055 | 0.096 | 22.4 |
+| -1.00 | +0.00 | 0.204 | 0.126 | 0.106 | 25.0 |
+| -1.00 | +0.25 | 0.204 | 0.110 | 0.106 | 24.4 |
+| -1.00 | +0.50 | 0.203 | 0.098 | 0.106 | 23.8 |
+| -1.00 | +1.00 | 0.201 | 0.085 | 0.106 | 22.8 |
+| -1.00 | +2.00 | 0.198 | 0.072 | 0.106 | 19.9 |
+| -1.00 | +4.00 | 0.192 | 0.047 | 0.106 | 15.5 |
+| -2.00 | +0.00 | 0.208 | 0.128 | 0.121 | 24.6 |
+| -2.00 | +0.25 | 0.209 | 0.112 | 0.121 | 24.0 |
+| -2.00 | +0.50 | 0.208 | 0.100 | 0.121 | 23.3 |
+| -2.00 | +1.00 | 0.206 | 0.086 | 0.121 | 22.4 |
+| -2.00 | +2.00 | 0.202 | 0.073 | 0.121 | 19.5 |
+| -2.00 | +4.00 | 0.196 | 0.047 | 0.121 | 15.0 |
+| -4.00 | +0.00 | 0.218 | 0.133 | 0.148 | 24.5 |
+| -4.00 | +0.25 | 0.218 | 0.117 | 0.148 | 23.9 |
+| -4.00 | +0.50 | 0.217 | 0.103 | 0.148 | 23.2 |
+| -4.00 | +1.00 | 0.215 | 0.089 | 0.148 | 22.3 |
+| -4.00 | +2.00 | 0.211 | 0.075 | 0.148 | 19.4 |
+| -4.00 | +4.00 | 0.205 | 0.048 | 0.148 | 14.9 |
+| -8.00 | +0.00 | 0.223 | 0.135 | 0.162 | 24.5 |
+| -8.00 | +0.25 | 0.223 | 0.119 | 0.162 | 23.9 |
+| -8.00 | +0.50 | 0.222 | 0.105 | 0.162 | 23.2 |
+| -8.00 | +1.00 | 0.220 | 0.091 | 0.162 | 22.3 |
+| -8.00 | +2.00 | 0.216 | 0.077 | 0.162 | 19.4 |
+| -8.00 | +4.00 | 0.209 | 0.048 | 0.162 | 14.9 |
 
 ## A. Silence direction
 
@@ -89,25 +91,25 @@ Read the *away* row first. R0's *away* is a detection with no lead by constructi
 
 | state | blocks (truth) | R0 precision | R0 recall | R1 precision | R1 recall |
 |---|---|---|---|---|---|
-| away | 10633 | 2.3% | 2.8% | 8.2% | 23.8% |
-| toward | 11715 | 29.7% | 13.1% | 29.3% | 12.7% |
+| away | 10633 | 2.3% | 2.8% | 7.6% | 24.2% |
+| toward | 11715 | 29.7% | 13.1% | 28.9% | 12.3% |
 | maintaining silence | 73619 | 63.9% | 48.7% | 63.9% | 48.7% |
-| maintaining speech | 9275 | 5.0% | 16.7% | 4.3% | 6.1% |
+| maintaining speech | 9275 | 5.0% | 16.7% | 5.7% | 6.3% |
 
-F1 of *away*: R0 0.025, R1 0.122; paired bootstrap over utterances (1000 resamples) of R1 - R0, +0.096 with a 95% interval [+0.089, +0.105].
-F1 of *toward*: R0 0.182, R1 0.177; paired bootstrap over utterances (1000 resamples) of R1 - R0, -0.005 with a 95% interval [-0.009, -0.002].
+F1 of *away*: R0 0.025, R1 0.116; paired bootstrap over utterances (1000 resamples) of R1 - R0, +0.090 with a 95% interval [+0.083, +0.098].
+F1 of *toward*: R0 0.182, R1 0.173; paired bootstrap over utterances (1000 resamples) of R1 - R0, -0.009 with a 95% interval [-0.013, -0.005].
 
 ### W = 500 ms
 
 | state | blocks (truth) | R0 precision | R0 recall | R1 precision | R1 recall |
 |---|---|---|---|---|---|
-| away | 22636 | 10.2% | 5.9% | 21.8% | 29.8% |
-| toward | 18223 | 40.1% | 11.4% | 39.4% | 11.0% |
+| away | 22636 | 10.2% | 5.9% | 21.0% | 31.6% |
+| toward | 18223 | 40.1% | 11.4% | 39.0% | 10.7% |
 | maintaining silence | 61616 | 53.8% | 48.9% | 53.8% | 48.9% |
-| maintaining speech | 2767 | 2.4% | 26.4% | 1.6% | 7.5% |
+| maintaining speech | 2767 | 2.4% | 26.4% | 2.3% | 8.4% |
 
-F1 of *away*: R0 0.075, R1 0.252; paired bootstrap over utterances (1000 resamples) of R1 - R0, +0.177 with a 95% interval [+0.166, +0.188].
-F1 of *toward*: R0 0.177, R1 0.171; paired bootstrap over utterances (1000 resamples) of R1 - R0, -0.006 with a 95% interval [-0.009, -0.003].
+F1 of *away*: R0 0.075, R1 0.253; paired bootstrap over utterances (1000 resamples) of R1 - R0, +0.178 with a 95% interval [+0.167, +0.189].
+F1 of *toward*: R0 0.177, R1 0.168; paired bootstrap over utterances (1000 resamples) of R1 - R0, -0.010 with a 95% interval [-0.014, -0.006].
 
 ### Lead time per true transition
 
@@ -117,13 +119,13 @@ Every word's onset is a true move away from silence and every word's offset a mo
 |---|---|---|---|---|---|
 | R0 | away | 2208 | 1416 / 2208 (64.1%) | 1003 / 1416 (70.8%) | -976.7 / -642.2 / 431.3 |
 | R0 | toward | 2208 | 565 / 2208 (25.6%) | 486 / 565 (86.0%) | -398.2 / -178.7 / 45.0 |
-| R1 | away | 2208 | 1676 / 2208 (75.9%) | 1372 / 1676 (81.9%) | -983.1 / -752.8 / 365.4 |
-| R1 | toward | 2208 | 548 / 2208 (24.8%) | 469 / 548 (85.6%) | -393.5 / -174.1 / 59.3 |
+| R1 | away | 2208 | 1672 / 2208 (75.7%) | 1375 / 1672 (82.2%) | -985.9 / -778.1 / 364.8 |
+| R1 | toward | 2208 | 535 / 2208 (24.2%) | 458 / 535 (85.6%) | -397.1 / -177.7 / 59.3 |
 
 A call before the transition is not the same thing as foresight: a rule that calls *away* on a phantom word inside the gap has called it before the word, and the first call is what this table takes. The false alarm rates below are the other half of the figure, and the two should be read together.
 
-McNemar on *away* handled within the horizon: both 1416, R0 only 0, R1 only 260, neither 532, exact two-sided p = 1.08e-78.
-McNemar on *toward* handled within the horizon: both 548, R0 only 17, R1 only 0, neither 1643, exact two-sided p = 1.53e-05.
+McNemar on *away* handled within the horizon: both 1416, R0 only 0, R1 only 256, neither 536, exact two-sided p = 1.73e-77.
+McNemar on *toward* handled within the horizon: both 535, R0 only 30, R1 only 0, neither 1643, exact two-sided p = 1.86e-09.
 
 ### False alarms
 
@@ -132,7 +134,7 @@ McNemar on *toward* handled within the horizon: both 548, R0 only 17, R1 only 0,
 | audio | minutes | rule | away blocks/min | away calls/min |
 |---|---|---|---|---|
 | finish gaps | 31.4 | R0 | 40.7 | 10.46 |
-| finish gaps | 31.4 | R1 | 224.0 | 26.46 |
+| finish gaps | 31.4 | R1 | 230.7 | 24.07 |
 | recordings alone | 6.7 | R0 | 0.0 | 0.00 |
 | recordings alone | 6.7 | R1 | 0.0 | 0.00 |
 
@@ -140,32 +142,32 @@ The recordings alone also produced 61 finals over 6.7 minutes, 6 of them carryin
 
 ### The end-of-speech confusion
 
-TD-8's core problem in public form. Among the silent stretches, at each millisecond of trailing `[sil]` span: the share of inter-word pauses whose span reaches it before the next word begins (a pause taken for a finish) against the share of finishes whose span reaches it at all. The motion columns refuse the call at an advance where a reading extending rank 0 is gaining by at least +0 nats. The last column is how far ahead of the decoder's own endpoint final the call arrived.
+TD-8's core problem in public form. Among the silent stretches, at each millisecond of trailing `[sil]` span: the share of inter-word pauses whose span reaches it before the next word begins (a pause taken for a finish) against the share of finishes whose span reaches it at all. The motion columns refuse the call at an advance where a reading extending rank 0 is gaining by at least +0.25 nats. The last column is how far ahead of the decoder's own endpoint final the call arrived.
 
 | trailing span (ms) | pauses mistaken (1458) | with motion | finishes called (750) | with motion | called before the endpoint | median ms early |
 |---|---|---|---|---|---|---|
-| 100 | 1386 / 1458 (95.1%) | 884 / 1458 (60.6%) | 750 / 750 (100.0%) | 725 / 750 (96.7%) | 730 / 750 (97.3%) | 480.0 |
-| 200 | 1330 / 1458 (91.2%) | 800 / 1458 (54.9%) | 750 / 750 (100.0%) | 724 / 750 (96.5%) | 730 / 750 (97.3%) | 240.0 |
-| 300 | 1185 / 1458 (81.3%) | 460 / 1458 (31.6%) | 722 / 750 (96.3%) | 310 / 750 (41.3%) | 651 / 750 (86.8%) | 240.0 |
-| 400 | 717 / 1458 (49.2%) | 315 / 1458 (21.6%) | 600 / 750 (80.0%) | 246 / 750 (32.8%) | 295 / 750 (39.3%) | 240.0 |
-| 500 | 187 / 1458 (12.8%) | 83 / 1458 (5.7%) | 321 / 750 (42.8%) | 149 / 750 (19.9%) | 38 / 750 (5.1%) | 720.0 |
-| 600 | 175 / 1458 (12.0%) | 79 / 1458 (5.4%) | 316 / 750 (42.1%) | 146 / 750 (19.5%) | 32 / 750 (4.3%) | 960.0 |
-| 800 | 109 / 1458 (7.5%) | 44 / 1458 (3.0%) | 249 / 750 (33.2%) | 117 / 750 (15.6%) | 19 / 750 (2.5%) | 720.0 |
-| 1000 | 91 / 1458 (6.2%) | 35 / 1458 (2.4%) | 213 / 750 (28.4%) | 94 / 750 (12.5%) | 15 / 750 (2.0%) | 720.0 |
-| 1200 | 89 / 1458 (6.1%) | 35 / 1458 (2.4%) | 213 / 750 (28.4%) | 94 / 750 (12.5%) | 15 / 750 (2.0%) | 720.0 |
-| 1500 | 73 / 1458 (5.0%) | 31 / 1458 (2.1%) | 132 / 750 (17.6%) | 51 / 750 (6.8%) | 14 / 750 (1.9%) | 720.0 |
+| 100 | 1386 / 1458 (95.1%) | 919 / 1458 (63.0%) | 750 / 750 (100.0%) | 738 / 750 (98.4%) | 730 / 750 (97.3%) | 480.0 |
+| 200 | 1330 / 1458 (91.2%) | 898 / 1458 (61.6%) | 750 / 750 (100.0%) | 737 / 750 (98.3%) | 730 / 750 (97.3%) | 240.0 |
+| 300 | 1185 / 1458 (81.3%) | 660 / 1458 (45.3%) | 722 / 750 (96.3%) | 483 / 750 (64.4%) | 651 / 750 (86.8%) | 240.0 |
+| 400 | 717 / 1458 (49.2%) | 430 / 1458 (29.5%) | 600 / 750 (80.0%) | 373 / 750 (49.7%) | 295 / 750 (39.3%) | 240.0 |
+| 500 | 187 / 1458 (12.8%) | 70 / 1458 (4.8%) | 321 / 750 (42.8%) | 225 / 750 (30.0%) | 38 / 750 (5.1%) | 720.0 |
+| 600 | 175 / 1458 (12.0%) | 70 / 1458 (4.8%) | 316 / 750 (42.1%) | 225 / 750 (30.0%) | 32 / 750 (4.3%) | 960.0 |
+| 800 | 109 / 1458 (7.5%) | 27 / 1458 (1.9%) | 249 / 750 (33.2%) | 194 / 750 (25.9%) | 19 / 750 (2.5%) | 720.0 |
+| 1000 | 91 / 1458 (6.2%) | 20 / 1458 (1.4%) | 213 / 750 (28.4%) | 168 / 750 (22.4%) | 15 / 750 (2.0%) | 720.0 |
+| 1200 | 89 / 1458 (6.1%) | 20 / 1458 (1.4%) | 213 / 750 (28.4%) | 168 / 750 (22.4%) | 15 / 750 (2.0%) | 720.0 |
+| 1500 | 73 / 1458 (5.0%) | 11 / 1458 (0.8%) | 132 / 750 (17.6%) | 104 / 750 (13.9%) | 14 / 750 (1.9%) | 720.0 |
 
 That share of pauses is a fact about this stream's pauses, which are uniform over 100-800 ms by construction, so it is given again by the length of the pause that was built, at TD-8's 300 ms bound and at the fitted 500 ms one:
 
 | pause built (ms) | pauses | mistaken at 300 ms | with motion | mistaken at 500 ms | with motion |
 |---|---|---|---|---|---|
-| 100-200 | 205 | 115 / 205 (56.1%) | 41 / 205 (20.0%) | 26 / 205 (12.7%) | 9 / 205 (4.4%) |
-| 200-300 | 205 | 133 / 205 (64.9%) | 61 / 205 (29.8%) | 22 / 205 (10.7%) | 9 / 205 (4.4%) |
-| 300-400 | 202 | 160 / 202 (79.2%) | 48 / 202 (23.8%) | 24 / 202 (11.9%) | 9 / 202 (4.5%) |
-| 400-500 | 213 | 185 / 213 (86.9%) | 57 / 213 (26.8%) | 18 / 213 (8.5%) | 7 / 213 (3.3%) |
-| 500-600 | 215 | 193 / 215 (89.8%) | 76 / 215 (35.3%) | 20 / 215 (9.3%) | 13 / 215 (6.0%) |
-| 600-700 | 221 | 212 / 221 (95.9%) | 90 / 221 (40.7%) | 33 / 221 (14.9%) | 21 / 221 (9.5%) |
-| 700-800 | 197 | 187 / 197 (94.9%) | 87 / 197 (44.2%) | 44 / 197 (22.3%) | 15 / 197 (7.6%) |
+| 100-200 | 205 | 115 / 205 (56.1%) | 41 / 205 (20.0%) | 26 / 205 (12.7%) | 2 / 205 (1.0%) |
+| 200-300 | 205 | 133 / 205 (64.9%) | 68 / 205 (33.2%) | 22 / 205 (10.7%) | 4 / 205 (2.0%) |
+| 300-400 | 202 | 160 / 202 (79.2%) | 69 / 202 (34.2%) | 24 / 202 (11.9%) | 5 / 202 (2.5%) |
+| 400-500 | 213 | 185 / 213 (86.9%) | 97 / 213 (45.5%) | 18 / 213 (8.5%) | 4 / 213 (1.9%) |
+| 500-600 | 215 | 193 / 215 (89.8%) | 117 / 215 (54.4%) | 20 / 215 (9.3%) | 9 / 215 (4.2%) |
+| 600-700 | 221 | 212 / 221 (95.9%) | 130 / 221 (58.8%) | 33 / 221 (14.9%) | 20 / 221 (9.0%) |
+| 700-800 | 197 | 187 / 197 (94.9%) | 138 / 197 (70.1%) | 44 / 197 (22.3%) | 26 / 197 (13.2%) |
 
 ## B. Transitioning between words
 
@@ -191,10 +193,10 @@ Every advance in those windows that carried an extending reading, 7497 of them, 
 | lead still to run (ms) | advances | top-1 | top-3 | over a word | top-1 | top-3 | gaining | top-1 | top-3 |
 |---|---|---|---|---|---|---|---|---|---|
 | 0-240 | 0 | - | - | 0 | - | - | 0 | - | - |
-| 240-480 | 1634 | 256 / 1634 (15.7%) | 510 / 1634 (31.2%) | 55 | 8 / 55 (14.5%) | 25 / 55 (45.5%) | 909 | 50 / 909 (5.5%) | 66 / 909 (7.3%) |
-| 480-720 | 1398 | 19 / 1398 (1.4%) | 63 / 1398 (4.5%) | 106 | 3 / 106 (2.8%) | 6 / 106 (5.7%) | 736 | 13 / 736 (1.8%) | 22 / 736 (3.0%) |
-| 720-1000 | 2526 | 40 / 2526 (1.6%) | 100 / 2526 (4.0%) | 696 | 7 / 696 (1.0%) | 34 / 696 (4.9%) | 1673 | 24 / 1673 (1.4%) | 53 / 1673 (3.2%) |
-| 1000-inf | 1939 | 29 / 1939 (1.5%) | 59 / 1939 (3.0%) | 795 | 5 / 795 (0.6%) | 23 / 795 (2.9%) | 1387 | 22 / 1387 (1.6%) | 31 / 1387 (2.2%) |
+| 240-480 | 1634 | 256 / 1634 (15.7%) | 510 / 1634 (31.2%) | 55 | 8 / 55 (14.5%) | 25 / 55 (45.5%) | 1293 | 227 / 1293 (17.6%) | 430 / 1293 (33.3%) |
+| 480-720 | 1398 | 19 / 1398 (1.4%) | 63 / 1398 (4.5%) | 106 | 3 / 106 (2.8%) | 6 / 106 (5.7%) | 604 | 4 / 604 (0.7%) | 15 / 604 (2.5%) |
+| 720-1000 | 2526 | 40 / 2526 (1.6%) | 100 / 2526 (4.0%) | 696 | 7 / 696 (1.0%) | 34 / 696 (4.9%) | 967 | 13 / 967 (1.3%) | 34 / 967 (3.5%) |
+| 1000-inf | 1939 | 29 / 1939 (1.5%) | 59 / 1939 (3.0%) | 795 | 5 / 795 (0.6%) | 23 / 795 (2.9%) | 857 | 6 / 857 (0.7%) | 18 / 857 (2.1%) |
 
 ### False transitions, and what the `[sil]` entries measure
 
@@ -222,14 +224,14 @@ From a word's energy onset to the block the word itself leads the partial: media
 
 R0 is the host that sees a transition when rank 0 grows; R1 is the host that reads the extending reading's extra word where one appeared first, and R0 where none did. Paired on the transitions where rank 0 grew inside the window.
 
-R1 comes in two forms: the first extending reading of any kind, and the first that is *gaining* by at least +0.00 nats, which is what reading the motion means. The gaining form was available on 2161 / 2178 (99.2%) of the transitions, with a lead of 960.0 / 1440.0 ms (median / p90).
+R1 comes in two forms: the first extending reading of any kind, and the first that is *gaining* by at least +0.25 nats, which is what reading the motion means. The gaining form was available on 2167 / 2178 (99.5%) of the transitions, with a lead of 720.0 / 1440.0 ms (median / p90).
 
 | comparison | both right | R0 only | R1 only | neither | exact p |
 |---|---|---|---|---|---|
 | R0 against R1, any extender | 27 | 1332 | 11 | 808 | < 1e-308 |
-| R0 against R1, gaining extender | 31 | 1328 | 8 | 811 | < 1e-308 |
+| R0 against R1, gaining extender | 47 | 1312 | 14 | 805 | < 1e-308 |
 
-Milliseconds from the onset to the call: R0 380.6 / 610.2 (median / p90), R1 any -806.1 / -290.3, R1 gaining -636.7 / 155.2. Paired bootstrap over transitions (1000 resamples) of the mean difference in call time: any extender -863.5 ms, 95% interval [-890.2, -836.9]; gaining -650.8 ms, [-684.4, -619.4]. Earlier is better only if the word called is right, which the table above answers.
+Milliseconds from the onset to the call: R0 380.6 / 610.2 (median / p90), R1 any -806.1 / -290.3, R1 gaining -511.7 / 192.5. Paired bootstrap over transitions (1000 resamples) of the mean difference in call time: any extender -863.5 ms, 95% interval [-890.2, -836.9]; gaining -583.8 ms, [-612.9, -554.2]. Earlier is better only if the word called is right, which the table above answers.
 
 ## C. The readings' motion over many advances
 
@@ -241,22 +243,22 @@ Pearson r and sign agreement between a reading's `lead_delta` at one advance and
 
 | readings | band (nats) | pairs | r | sign agreement |
 |---|---|---|---|---|
-| all | all | 56654 | 0.035 | 50.1% |
-| all | <1 | 831 | 0.190 | 62.8% |
-| all | 1-4 | 12244 | 0.214 | 45.6% |
-| all | >=4 | 43579 | -0.030 | 51.1% |
+| all | all | 73557 | 0.115 | 52.4% |
+| all | <1 | 1454 | 0.223 | 62.0% |
+| all | 1-4 | 14433 | 0.216 | 45.6% |
+| all | >=4 | 57670 | 0.053 | 53.8% |
 | [sil] | all | 7552 | 0.124 | 49.1% |
 | [sil] | <1 | 211 | 0.525 | 81.5% |
 | [sil] | 1-4 | 3653 | 0.449 | 48.2% |
 | [sil] | >=4 | 3688 | -0.211 | 48.2% |
-| extends | all | 42113 | -0.099 | 50.4% |
-| extends | <1 | 203 | -0.256 | 69.5% |
-| extends | 1-4 | 7213 | -0.284 | 42.8% |
-| extends | >=4 | 34697 | -0.019 | 51.9% |
-| differs | all | 2803 | -0.182 | 46.9% |
-| differs | <1 | 192 | -0.093 | 40.4% |
-| differs | 1-4 | 764 | -0.206 | 45.9% |
-| differs | >=4 | 1847 | -0.107 | 48.2% |
+| extends | all | 56248 | 0.076 | 53.2% |
+| extends | <1 | 350 | 0.082 | 62.6% |
+| extends | 1-4 | 8300 | 0.088 | 43.1% |
+| extends | >=4 | 47598 | 0.082 | 54.9% |
+| differs | all | 4684 | -0.235 | 37.6% |
+| differs | <1 | 397 | -0.108 | 35.3% |
+| differs | 1-4 | 1469 | -0.231 | 30.7% |
+| differs | >=4 | 2818 | -0.110 | 42.9% |
 
 ### What the readings do in silence that is being kept
 
@@ -273,18 +275,18 @@ Every ground-truth onset and offset aligned at the advance that first covers it,
 
 | transition | advance | `[sil]` velocity (n) | leader velocity (n) | extending velocity (n) |
 |---|---|---|---|---|
-| away | -3 | -0.00 (805) | -0.00 (867) | 1.25 (2) |
-| away | -2 | -0.01 (795) | 0.00 (961) | 1.32 (21) |
-| away | -1 | 0.04 (957) | 0.05 (1172) | 0.44 (85) |
-| away | +0 | -0.15 (1242) | -0.10 (1473) | 0.41 (147) |
-| away | +1 | -2.04 (654) | 1.22 (1400) | 2.16 (25) |
-| away | +2 | -0.00 (160) | 4.31 (2048) | 1.03 (266) |
-| toward | -3 | 0.01 (898) | 0.02 (1043) | 0.50 (51) |
-| toward | -2 | 0.11 (1139) | 0.12 (1341) | 0.30 (76) |
-| toward | -1 | -1.23 (984) | -0.42 (1395) | 1.13 (61) |
-| toward | +0 | -2.65 (241) | 5.71 (1653) | 1.12 (120) |
-| toward | +1 | -0.00 (49) | 1.39 (2123) | 1.00 (710) |
-| toward | +2 | -0.00 (54) | -0.00 (1999) | 0.21 (1570) |
+| away | -3 | -0.00 (805) | 0.01 (914) | 4.22 (9) |
+| away | -2 | -0.01 (795) | 0.01 (991) | 3.92 (81) |
+| away | -1 | 0.04 (957) | 0.05 (1179) | 1.78 (177) |
+| away | +0 | -0.15 (1242) | -0.09 (1494) | 1.13 (209) |
+| away | +1 | -2.04 (654) | 7.47 (2144) | 5.61 (142) |
+| away | +2 | -0.00 (160) | 4.57 (2144) | 2.66 (1100) |
+| toward | -3 | 0.01 (898) | 0.02 (1063) | 2.23 (103) |
+| toward | -2 | 0.11 (1139) | 0.15 (1387) | 1.78 (136) |
+| toward | -1 | -1.23 (984) | 0.32 (1777) | 3.70 (154) |
+| toward | +0 | -2.65 (241) | 7.17 (2101) | 4.08 (525) |
+| toward | +1 | -0.00 (49) | 1.48 (2167) | 1.80 (1665) |
+| toward | +2 | -0.00 (54) | 0.00 (2005) | 0.29 (1816) |
 
 ### Calling a word before it arrives: exploratory
 
@@ -292,33 +294,33 @@ Every ground-truth onset and offset aligned at the advance that first covers it,
 
 The rule under test is the README's, and exactly it: a reading that is rank 0 plus one word and is gaining on the field, which before a first word is any word-carrying reading, since every one of them extends the empty reading. A run of consecutive advances where the rule holds is one call. Each call takes at most one word and each word at most one call: calls in time order claim the earliest unclaimed word whose onset falls between one advance before the call and 1000 ms after it. Every other call is a false alarm, counted against all the non-speech in the streams, the audio right after a word included, and every unclaimed word is a miss.
 
-Four baselines are scored the same way, because a rule that calls more words by calling more often has shown nothing about its signal: the same candidate merely *existing*, the candidate's *lead* rather than its motion, the trailing `[sil]` span, and a clock the host keeps itself since it last saw rank 0 grow. Each threshold is fitted on the validation streams twice, once for its own best F1 and once to spend the motion rule's false alarms (22.95 a non-speech minute there), and read on the testing streams:
+Four baselines are scored the same way, because a rule that calls more words by calling more often has shown nothing about its signal: the same candidate merely *existing*, the candidate's *lead* rather than its motion, the trailing `[sil]` span, and a clock the host keeps itself since it last saw rank 0 grow. Each threshold is fitted on the validation streams twice, once for its own best F1 and once to spend the motion rule's false alarms (32.05 a non-speech minute there), and read on the testing streams:
 
 | rule | threshold | calls | words called | precision | F1 | false alarms/min | at the motion rule's alarm rate: threshold | words called | F1 |
 |---|---|---|---|---|---|---|---|---|---|
-| a one-word extending reading gaining by at least (nats) | 0.50 | 3025 | 1559 / 2208 (70.6%) | 51.5% | 0.596 | 23.43 | 0.50 | 1559 / 2208 (70.6%) | 0.596 |
+| a one-word extending reading gaining by at least (nats) | 0.50 | 3836 | 1840 / 2208 (83.3%) | 48.0% | 0.609 | 31.90 | 0.50 | 1840 / 2208 (83.3%) | 0.609 |
 | a one-word extending reading exists at all | 0.00 | 3142 | 1312 / 2208 (59.4%) | 41.8% | 0.490 | 29.24 | 0.00 | 1312 / 2208 (59.4%) | 0.490 |
-| the best one-word extending reading's lead is at least (nats) | -8.00 | 2657 | 1245 / 2208 (56.4%) | 46.9% | 0.512 | 22.56 | -8.00 | 1245 / 2208 (56.4%) | 0.512 |
-| the trailing `[sil]` span has reached (ms) | 300.00 | 3379 | 1529 / 2208 (69.2%) | 45.3% | 0.547 | 29.56 | 400.00 | 1089 / 2208 (49.3%) | 0.498 |
-| this long since the host last saw rank 0 grow (ms) | 300.00 | 3168 | 1444 / 2208 (65.4%) | 45.6% | 0.537 | 27.55 | 300.00 | 1444 / 2208 (65.4%) | 0.537 |
+| the best one-word extending reading's lead is at least (nats) | -8.00 | 2657 | 1245 / 2208 (56.4%) | 46.9% | 0.512 | 22.56 | -12.00 | 1336 / 2208 (60.5%) | 0.490 |
+| the trailing `[sil]` span has reached (ms) | 300.00 | 3379 | 1529 / 2208 (69.2%) | 45.3% | 0.547 | 29.56 | 300.00 | 1529 / 2208 (69.2%) | 0.547 |
+| this long since the host last saw rank 0 grow (ms) | 300.00 | 3168 | 1444 / 2208 (65.4%) | 45.6% | 0.537 | 27.55 | 200.00 | 1474 / 2208 (66.8%) | 0.499 |
 
 Then the half of the figure that matters most, and the reason the earlier reading of it is withdrawn. A call before a word's onset is not evidence about that word unless some of the word has been fed. Splitting the motion rule's calls by what the decoder had heard when it fired:
 
 | the call landed | motion | the candidate merely existing |
 |---|---|---|
-| before any sample of the coming word's clip | 899 / 1559 (57.7%) | 699 / 1312 (53.3%) |
-| inside the clip, before its energy onset | 285 / 1559 (18.3%) | 394 / 1312 (30.0%) |
-| at or after the energy onset, a detection | 375 / 1559 (24.1%) | 219 / 1312 (16.7%) |
+| before any sample of the coming word's clip | 1065 / 1840 (57.9%) | 699 / 1312 (53.3%) |
+| inside the clip, before its energy onset | 307 / 1840 (16.7%) | 394 / 1312 (30.0%) |
+| at or after the energy onset, a detection | 468 / 1840 (25.4%) | 219 / 1312 (16.7%) |
 
-The lead of the calls that do come first is -900.4 / -554.6 / -139.9 ms (p10 / p50 / p90), but a lead measured over calls that mostly precede the word's clip entirely is not an acoustic warning of that word: it is a call made on the silence before it, which on this stream is a built gap of known length. That figure is reported here and **is not** to be read as the decoder hearing a word coming.
+The lead of the calls that do come first is -910.5 / -594.8 / -142.8 ms (p10 / p50 / p90), but a lead measured over calls that mostly precede the word's clip entirely is not an acoustic warning of that word: it is a call made on the silence before it, which on this stream is a built gap of known length. That figure is reported here and **is not** to be read as the decoder hearing a word coming.
 
 Because the pauses are built, the alarm rate and the calls are partly a fact about the distribution they were built from. The same rule at the same threshold on testing streams built with other pause ranges:
 
 | pauses built (ms) | words | non-speech minutes | words called | precision | false alarms/min | called before the clip |
 |---|---|---|---|---|---|---|
-| 100-800 (the page's streams) | 2208 | 62.6 | 1559 / 2208 (70.6%) | 51.5% | 23.43 | 899 / 1559 (57.7%) |
-| 100-300 | 606 | 15.2 | 425 / 606 (70.1%) | 55.8% | 22.12 | 202 / 425 (47.5%) |
-| 400-1600 | 606 | 20.6 | 394 / 606 (65.0%) | 39.3% | 29.48 | 192 / 394 (48.7%) |
+| 100-800 (the page's streams) | 2208 | 62.6 | 1840 / 2208 (83.3%) | 48.0% | 31.90 | 1065 / 1840 (57.9%) |
+| 100-300 | 606 | 15.2 | 512 / 606 (84.5%) | 54.1% | 28.55 | 308 / 512 (60.2%) |
+| 400-1600 | 606 | 20.6 | 497 / 606 (82.0%) | 39.3% | 37.28 | 212 / 497 (42.7%) |
 
 What this section establishes is a comparison, not a forecast: whether the motion beats candidate presence, candidate level, elapsed silence and a clock, at the alarm rate it costs, on spliced words. Whether any of it survives on continuous recorded commands is not measured here and is the work the record leaves open.
 
@@ -329,7 +331,7 @@ The same two motions read as raw crossings rather than as the README's rule, kep
 | signal | threshold (nats) | crossings | precision | onsets called | lead p10 / p50 / p90 ms | alarms/min in kept silence | alarms/min on the recordings |
 |---|---|---|---|---|---|---|---|
 | `[sil]` lead falling past | +0.00 | 4909 | 40.2% | 1091 / 2208 (49.4%) | -964.4 / -778.2 / -303.4 | 131.9 | 109.8 |
-| extending lead rising past | +0.00 | 2078 | 54.2% | 892 / 2208 (40.4%) | -870.7 / -520.5 / -169.9 | 0.1 | 0.0 |
+| extending lead rising past | +0.00 | 3745 | 52.4% | 1189 / 2208 (53.8%) | -918.6 / -644.5 / -244.9 | 0.1 | 0.0 |
 
 ### Leading but losing
 
@@ -337,14 +339,14 @@ Rank 0's lead is never negative, so the reversal `[[rr:TD-9#Every reading carrie
 
 | band (nats) | target | advances | positives | precision | recall | AUC of the lead | AUC of `lead_delta` |
 |---|---|---|---|---|---|---|---|
-| all | rank 0 changes next | 12477 | 1767 | 20.5% | 67.4% | 0.268 | 0.269 |
-| all | rank 0 unlike the final | 12477 | 8415 | 82.3% | 56.9% | 0.229 | 0.242 |
-| <1 | rank 0 changes next | 548 | 266 | 59.3% | 73.3% | 0.449 | 0.244 |
-| <1 | rank 0 unlike the final | 548 | 398 | 91.8% | 75.9% | 0.517 | 0.196 |
-| 1-4 | rank 0 changes next | 4675 | 861 | 24.8% | 84.0% | 0.179 | 0.168 |
-| 1-4 | rank 0 unlike the final | 4675 | 3960 | 92.8% | 68.4% | 0.670 | 0.213 |
-| >=4 | rank 0 changes next | 7254 | 640 | 10.6% | 42.7% | 0.376 | 0.383 |
-| >=4 | rank 0 unlike the final | 7254 | 4057 | 69.2% | 43.9% | 0.139 | 0.275 |
+| all | rank 0 changes next | 13406 | 1901 | 20.5% | 62.3% | 0.272 | 0.297 |
+| all | rank 0 unlike the final | 13406 | 8617 | 82.7% | 55.5% | 0.297 | 0.220 |
+| <1 | rank 0 changes next | 857 | 360 | 61.0% | 53.9% | 0.445 | 0.308 |
+| <1 | rank 0 unlike the final | 857 | 522 | 94.3% | 57.5% | 0.506 | 0.239 |
+| 1-4 | rank 0 changes next | 5077 | 900 | 24.8% | 80.1% | 0.208 | 0.188 |
+| 1-4 | rank 0 unlike the final | 5077 | 4018 | 92.9% | 67.2% | 0.719 | 0.154 |
+| >=4 | rank 0 changes next | 7472 | 641 | 10.6% | 42.1% | 0.375 | 0.372 |
+| >=4 | rank 0 unlike the final | 7472 | 4077 | 69.7% | 43.6% | 0.151 | 0.262 |
 
 ### The stock wheel on the same streams
 
