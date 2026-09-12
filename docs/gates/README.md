@@ -6,3 +6,6 @@ defined in `[[rr:TD-2#Verification and acceptance]]`. Corpora and models
 live in the first consumer's private checkout and are named here only by
 date and by the stock model's directory name; no take identifiers, audio
 or transcripts are copied in.
+
+`unknown-word-sweep.md` is not a gate but the measurement behind the
+`[unk]` option's default.
