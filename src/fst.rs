@@ -1,7 +1,7 @@
 //! Weighted finite-state transducers over the tropical semiring: the in-memory form the decoder
 //! walks, a reader for OpenFst's binary header, `ConstFst` body, symbol tables and the
 //! `olabel_lookahead` add-on, and connect.
-// [[rr:TD-2]]
+// [[rr:TD-2#The graph: reading HCLr.fst]]
 
 use crate::kaldi_io::err;
 use std::collections::HashMap;

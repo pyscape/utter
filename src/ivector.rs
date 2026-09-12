@@ -510,6 +510,11 @@ pub struct IvectorStream<'a> {
     num_frames_stats: usize,
     current: Vec<f64>,
     input_finished: bool,
+    /// Pending weight changes per input frame, lowest frame first.
+    delta_weights: std::collections::BinaryHeap<std::cmp::Reverse<(usize, u32)>>,
+    delta_values: Vec<f32>,
+    delta_weights_provided: bool,
+    most_recent_frame_with_weight: i64,
 }
 
 impl<'a> IvectorStream<'a> {
@@ -525,7 +530,97 @@ impl<'a> IvectorStream<'a> {
             num_frames_stats: 0,
             current,
             input_finished: false,
+            delta_weights: std::collections::BinaryHeap::new(),
+            delta_values: Vec::new(),
+            delta_weights_provided: false,
+            most_recent_frame_with_weight: -1,
         }
+    }
+
+    /// Kaldi's `UpdateFrameWeights`: weight changes for input frames, applied as their frames
+    /// are reached.
+    pub fn update_frame_weights(&mut self, deltas: &[(usize, f32)]) {
+        for &(frame, w) in deltas {
+            let idx = self.delta_values.len() as u32;
+            self.delta_values.push(w);
+            self.delta_weights.push(std::cmp::Reverse((frame, idx)));
+            if frame as i64 > self.most_recent_frame_with_weight {
+                self.most_recent_frame_with_weight = frame as i64;
+            }
+        }
+        self.delta_weights_provided = true;
+    }
+
+    /// Kaldi's `GetMinPost`.
+    fn min_post_for(&self, weight: f32) -> f32 {
+        let abs = weight.abs();
+        if abs == 0.0 {
+            return 0.99;
+        }
+        (self.info.opts.min_post / abs).min(0.99)
+    }
+
+    /// Kaldi's `UpdateStatsForFrames`: frames with weights, duplicates summed.
+    fn update_stats_for_frames(&mut self, frame_weights: &[(usize, f32)]) {
+        if frame_weights.is_empty() {
+            return;
+        }
+        let mut merged: Vec<(usize, f32)> = frame_weights.to_vec();
+        merged.sort_by_key(|p| p.0);
+        let mut out: Vec<(usize, f32)> = Vec::with_capacity(merged.len());
+        for (f, w) in merged {
+            match out.last_mut() {
+                Some(last) if last.0 == f => last.1 += w,
+                _ => out.push((f, w)),
+            }
+        }
+        let o = &self.info.opts;
+        let fd = self.info.extractor.feat_dim;
+        let mut ll = vec![0.0f32; self.info.gmm.num_gauss];
+        let mut raw: Vec<Vec<f32>> = Vec::with_capacity(out.len());
+        let mut posts = Vec::with_capacity(out.len());
+        for &(t, weight) in &out {
+            let mut post = Vec::new();
+            if weight != 0.0 {
+                let mut f = vec![0.0f32; fd];
+                self.lda_frame(t, true, &mut f);
+                self.info.gmm.loglikes(&f, &mut ll);
+                post = select_posteriors(&ll, o.num_gselect, self.min_post_for(weight));
+                for p in post.iter_mut() {
+                    p.1 *= o.posterior_scale * weight;
+                }
+            }
+            posts.push(post);
+            let mut g = vec![0.0f32; fd];
+            self.lda_frame(t, false, &mut g);
+            raw.push(g);
+        }
+        let refs: Vec<&[f32]> = raw.iter().map(|v| v.as_slice()).collect();
+        self.stats.acc(&self.info.extractor, &refs, &posts);
+    }
+
+    fn update_stats_until_frame_weighted(&mut self, frame: usize) {
+        assert!(frame as i64 <= self.most_recent_frame_with_weight, "i-vector frame has no weight yet");
+        let mut frame_weights: Vec<(usize, f32)> = Vec::new();
+        while self.num_frames_stats <= frame {
+            let t = self.num_frames_stats;
+            while let Some(std::cmp::Reverse((f, idx))) = self.delta_weights.peek().copied() {
+                if f > t {
+                    break;
+                }
+                self.delta_weights.pop();
+                frame_weights.push((f, self.delta_values[idx as usize]));
+            }
+            if t == frame {
+                self.update_stats_for_frames(&frame_weights);
+                frame_weights.clear();
+                let mut cur = std::mem::take(&mut self.current);
+                self.stats.get_ivector(self.info.opts.num_cg_iters, &mut cur);
+                self.current = cur;
+            }
+            self.num_frames_stats += 1;
+        }
+        self.update_stats_for_frames(&frame_weights);
     }
 
     pub fn push_frame(&mut self, frame: &[f32]) {
@@ -654,7 +749,11 @@ impl<'a> IvectorStream<'a> {
     pub fn get_frame(&mut self, frame: usize, out: &mut [f32]) {
         assert!(frame < self.num_frames_ready(), "i-vector frame not ready");
         if frame >= self.num_frames_stats {
-            self.update_stats_until(frame);
+            if self.delta_weights_provided {
+                self.update_stats_until_frame_weighted(frame);
+            } else {
+                self.update_stats_until(frame);
+            }
         }
         for (o, &v) in out.iter_mut().zip(&self.current) {
             *o = v as f32;

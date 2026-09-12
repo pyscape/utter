@@ -448,3 +448,263 @@ fn leaf_f32(d: &Desc) -> f32 {
         panic!("expected f32 leaf")
     }
 }
+
+/// Streaming evaluation after Kaldi's looped computation: every node keeps the rows it has
+/// computed on one timeline of input frames, and each advance computes, node by node, every
+/// row whose inputs exist. Frames before the first are copies of it and, once input has
+/// finished, frames after the last are copies of the last, so a node never clamps: the padding
+/// is at the input only, as in Kaldi.
+pub struct Streamer<'n> {
+    net: &'n Nnet3,
+    order: Vec<String>,
+    /// Per node in `order`: computed rows and the frame index of the first one.
+    rows: HashMap<String, (i64, std::collections::VecDeque<Vec<f32>>)>,
+    /// Rows a node keeps behind its frontier for consumers with negative offsets.
+    history: usize,
+    ivector: Vec<f32>,
+}
+
+impl Nnet3 {
+    pub fn streamer(&self) -> Streamer<'_> {
+        // topological order over component, dim-range and output nodes
+        let mut order = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        fn visit(net: &Nnet3, name: &str, seen: &mut std::collections::HashSet<String>, order: &mut Vec<String>) {
+            if seen.contains(name) {
+                return;
+            }
+            seen.insert(name.to_string());
+            match net.nodes.get(name) {
+                None | Some(Node::Input) => return,
+                Some(Node::DimRange { src, .. }) => visit(net, src, seen, order),
+                Some(Node::Component { desc, .. }) | Some(Node::Output { desc }) => {
+                    let mut refs = Vec::new();
+                    desc_refs(desc, &mut refs);
+                    for r in refs {
+                        visit(net, &r, seen, order);
+                    }
+                }
+            }
+            order.push(name.to_string());
+        }
+        visit(self, "output", &mut seen, &mut order);
+        Streamer { net: self, order, rows: HashMap::new(), history: 16, ivector: vec![0.0; self.ivector_dim] }
+    }
+}
+
+fn desc_refs(d: &Desc, out: &mut Vec<String>) {
+    match d {
+        Desc::Ref(n) => out.push(n.clone()),
+        Desc::Offset(a, _) | Desc::Scale(_, a) | Desc::ReplaceIndex(a) => desc_refs(a, out),
+        Desc::Sum(a, b) => {
+            desc_refs(a, out);
+            desc_refs(b, out);
+        }
+        Desc::Append(v) => v.iter().for_each(|p| desc_refs(p, out)),
+    }
+}
+
+/// The input rows available to a pass: frames `[0, ready)`, padded before the first and, when
+/// finished, after the last up to `limit`.
+pub struct InputView<'a> {
+    pub frames: &'a [Vec<f32>],
+    pub ready: usize,
+    pub finished: bool,
+    /// Rows at or beyond this frame index are not available yet (exclusive frontier).
+    pub limit: i64,
+    /// Earliest frame index the timeline starts at (negative: left context padding).
+    pub first: i64,
+}
+
+impl<'n> Streamer<'n> {
+    /// A TDNN component reads its input at these extreme time offsets; others at 0.
+    fn comp_offsets(&self, comp: &str) -> (i64, i64) {
+        match self.net.comps.get(comp) {
+            Some(Comp::Tdnn { offsets, .. }) => (
+                offsets.iter().copied().min().unwrap_or(0) as i64,
+                offsets.iter().copied().max().unwrap_or(0) as i64,
+            ),
+            _ => (0, 0),
+        }
+    }
+
+    fn node_first(&self, name: &str, input: &InputView) -> i64 {
+        if let Some((f, _)) = self.rows.get(name) {
+            return *f;
+        }
+        match self.net.nodes.get(name) {
+            None | Some(Node::Input) => input.first,
+            Some(Node::DimRange { src, .. }) => self.node_first(src, input),
+            Some(Node::Component { comp, desc }) => self.desc_first(desc, input) - self.comp_offsets(comp).0,
+            Some(Node::Output { desc }) => self.desc_first(desc, input),
+        }
+    }
+
+    fn desc_first(&self, d: &Desc, input: &InputView) -> i64 {
+        match d {
+            Desc::Ref(n) => self.node_first(n, input),
+            Desc::Offset(a, n) => self.desc_first(a, input) - *n as i64,
+            Desc::Scale(_, a) => self.desc_first(a, input),
+            Desc::ReplaceIndex(_) => i64::MIN / 4,
+            Desc::Sum(a, b) => self.desc_first(a, input).max(self.desc_first(b, input)),
+            Desc::Append(v) => v.iter().map(|p| self.desc_first(p, input)).max().unwrap_or(input.first),
+        }
+    }
+
+    /// Exclusive frontier of rows a node can serve.
+    fn node_avail(&self, name: &str, input: &InputView) -> i64 {
+        match self.net.nodes.get(name) {
+            None | Some(Node::Input) => input.limit,
+            Some(Node::DimRange { src, .. }) => self.node_avail(src, input),
+            _ => self.rows.get(name).map(|(f, r)| f + r.len() as i64).unwrap_or(self.node_first(name, input)),
+        }
+    }
+
+    fn desc_avail(&self, d: &Desc, input: &InputView) -> i64 {
+        match d {
+            Desc::Ref(n) => self.node_avail(n, input),
+            Desc::Offset(a, n) => self.desc_avail(a, input) - *n as i64,
+            Desc::Scale(_, a) => self.desc_avail(a, input),
+            Desc::ReplaceIndex(_) => i64::MAX / 4,
+            Desc::Sum(a, b) => self.desc_avail(a, input).min(self.desc_avail(b, input)),
+            Desc::Append(v) => v.iter().map(|p| self.desc_avail(p, input)).min().unwrap_or(input.limit),
+        }
+    }
+
+    fn node_rows(&self, name: &str, a: i64, b: i64, input: &InputView) -> Mat {
+        match self.net.nodes.get(name) {
+            None | Some(Node::Input) => {
+                let dim = self.net.input_dim;
+                let mut m = Mat::new((b - a) as usize, dim);
+                for (i, t) in (a..b).enumerate() {
+                    let src = t.clamp(0, input.ready as i64 - 1) as usize;
+                    m.d[i * dim..(i + 1) * dim].copy_from_slice(&input.frames[src]);
+                }
+                m
+            }
+            Some(Node::DimRange { src, off, dim }) => {
+                let s = self.node_rows(src, a, b, input);
+                let mut m = Mat::new(s.r, *dim);
+                for i in 0..s.r {
+                    m.d[i * dim..(i + 1) * dim].copy_from_slice(&s.row(i)[*off..off + dim]);
+                }
+                m
+            }
+            _ => {
+                let (first, rows) = self.rows.get(name).expect("node rows");
+                let dim = rows.front().map(|r| r.len()).unwrap_or(0);
+                let mut m = Mat::new((b - a) as usize, dim);
+                for (i, t) in (a..b).enumerate() {
+                    let idx = t - first;
+                    assert!(idx >= 0 && (idx as usize) < rows.len(), "row {t} of {name} not available");
+                    m.d[i * dim..(i + 1) * dim].copy_from_slice(&rows[idx as usize]);
+                }
+                m
+            }
+        }
+    }
+
+    fn eval_desc(&self, d: &Desc, a: i64, b: i64, input: &InputView) -> Mat {
+        match d {
+            Desc::Ref(n) => self.node_rows(n, a, b, input),
+            Desc::Offset(x, n) => self.eval_desc(x, a + *n as i64, b + *n as i64, input),
+            Desc::Scale(s, x) => {
+                let mut m = self.eval_desc(x, a, b, input);
+                m.d.iter_mut().for_each(|v| *v *= *s);
+                m
+            }
+            Desc::Sum(x, y) => {
+                let mut m = self.eval_desc(x, a, b, input);
+                let n = self.eval_desc(y, a, b, input);
+                m.d.iter_mut().zip(&n.d).for_each(|(p, q)| *p += *q);
+                m
+            }
+            Desc::Append(parts) => {
+                let mats: Vec<Mat> = parts.iter().map(|p| self.eval_desc(p, a, b, input)).collect();
+                let rows = (b - a) as usize;
+                let cols: usize = mats.iter().map(|m| m.c).sum();
+                let mut out = Mat::new(rows, cols);
+                for i in 0..rows {
+                    let mut off = 0;
+                    for m in &mats {
+                        out.d[i * cols + off..i * cols + off + m.c].copy_from_slice(m.row(i));
+                        off += m.c;
+                    }
+                }
+                out
+            }
+            Desc::ReplaceIndex(_) => {
+                let rows = (b - a) as usize;
+                let dim = self.ivector.len();
+                let mut out = Mat::new(rows, dim);
+                for i in 0..rows {
+                    out.d[i * dim..(i + 1) * dim].copy_from_slice(&self.ivector);
+                }
+                out
+            }
+        }
+    }
+
+    /// Compute every row every node can now compute; the output node's new rows are returned
+    /// with the frame index of the first.
+    pub fn advance(&mut self, input: &InputView, ivector: &[f32]) -> (i64, Vec<Vec<f32>>) {
+        let n = self.ivector.len();
+        self.ivector.copy_from_slice(&ivector[..n]);
+        let mut new_output: Vec<Vec<f32>> = Vec::new();
+        let mut output_first = 0i64;
+        for name in self.order.clone() {
+            let node = &self.net.nodes[&name];
+            let (desc, comp) = match node {
+                Node::Component { comp, desc } => (desc, Some(comp.as_str())),
+                Node::Output { desc } => (desc, None),
+                _ => continue,
+            };
+            let first = self.node_first(&name, input);
+            let (lo, hi) = comp.map(|c| self.comp_offsets(c)).unwrap_or((0, 0));
+            let avail = self.desc_avail(desc, input) - hi;
+            let next = self.rows.get(&name).map(|(f, r)| f + r.len() as i64).unwrap_or(first);
+            if avail <= next {
+                continue;
+            }
+            let x = self.eval_desc(desc, next + lo, avail + hi, input);
+            let y = match comp {
+                Some(c) => match self.net.comps.get(c) {
+                    Some(Comp::Tdnn { offsets, w, b }) => {
+                        // splice exactly: output row i reads input rows i + (offset - lo)
+                        let n = (avail - next) as usize;
+                        let inn = x.c;
+                        let sp = offsets.len();
+                        let mut spliced = Mat::new(n, inn * sp);
+                        for i in 0..n {
+                            for (k, &o) in offsets.iter().enumerate() {
+                                let src = i + (o as i64 - lo) as usize;
+                                spliced.d[i * inn * sp + k * inn..i * inn * sp + (k + 1) * inn].copy_from_slice(x.row(src));
+                            }
+                        }
+                        spliced.affine(w, if b.is_empty() { None } else { Some(b) })
+                    }
+                    _ => self.net.apply(c, x),
+                },
+                None => x,
+            };
+            let entry = self.rows.entry(name.clone()).or_insert_with(|| (first, std::collections::VecDeque::new()));
+            if matches!(node, Node::Output { .. }) {
+                output_first = next;
+                for i in 0..y.r {
+                    new_output.push(y.row(i).to_vec());
+                }
+                // the output is consumed by the caller; keep nothing
+                entry.0 = avail;
+            } else {
+                for i in 0..y.r {
+                    entry.1.push_back(y.row(i).to_vec());
+                }
+                while entry.1.len() > self.history + y.r.max(64) {
+                    entry.1.pop_front();
+                    entry.0 += 1;
+                }
+            }
+        }
+        (output_first, new_output)
+    }
+}
