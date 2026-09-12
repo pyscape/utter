@@ -1,0 +1,6 @@
+yes.wav, no.wav and seven.wav are three clips from the Speech Commands
+dataset version 2 (Pete Warden, Google), licensed under the Creative
+Commons Attribution 4.0 International licence,
+https://creativecommons.org/licenses/by/4.0/. Each is one second of
+16 kHz mono 16-bit PCM of a single spoken word, used here to exercise the
+decoder against the stock English model in tests.
