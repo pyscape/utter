@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, pre-alpha]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The crate has no dependencies
+        shell: bash
+        run: |
+          test "$(grep -c '^name = ' Cargo.lock)" = "1"
+      - run: cargo build --release --all-targets
+      - run: cargo test --release
+      - run: cargo build --release --lib
+      - name: Shared library and header exist
+        shell: bash
+        run: |
+          ls target/release/ | grep -i -E "utter\.(so|dll|dylib)"
+          test -f include/utter.h
