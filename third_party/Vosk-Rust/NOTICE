@@ -1,0 +1,9 @@
+utter vendors source from Vosk-Rust, https://github.com/Reza2kn/Vosk-Rust,
+version 0.0.1 (July 2026), licensed under the Apache License, Version 2.0
+(LICENSE in this directory). The files below started from that project
+and have been modified in this repository:
+
+  src/kaldi_io.rs          from src/kaldi_io.rs
+  src/transition_model.rs  from src/transition_model.rs
+  src/mfcc.rs              from src/mfcc.rs
+  src/nnet3.rs             from src/nnet3.rs

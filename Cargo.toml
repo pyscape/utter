@@ -1,0 +1,16 @@
+[package]
+name = "utter"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "Pure-Rust streaming decoder for Vosk models: partials, alternatives, word intervals, endpointing"
+repository = "https://github.com/pyscape/utter"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+debug = 1
