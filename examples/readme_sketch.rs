@@ -1,10 +1,9 @@
-//! The sketch in README.md, compiled. CI builds every target, so the README cannot drift
-//! from the interface the way it had: it offered `rec.alternatives()` and
-//! `step.end_of_speech`, neither of which the recognizer has ever had.
+//! The sketch in `[[rr:README.md#Interface]]`, compiled: CI builds every target, so the README cannot
+//! drift from the interface.
 use std::path::Path;
 struct Capture;
 impl Capture {
-    /// 40 ms of mono PCM, until the stream ends.
+    /// 40 ms of mono PCM.
     fn next_block(&mut self) -> Option<&'static [i16]> {
         None
     }

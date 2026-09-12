@@ -20,6 +20,11 @@ two runs can be diffed to the clip rather than compared as totals. A
 page opens with the revision, engine versions and machine it was run
 on, without which the compute figures say nothing.
 
+The page itself is overwritten by every run, so what a run *means* is
+written in `<page>.reading.md` and the report appends it to itself. The
+prose is kept under version control beside the figures and survives
+being regenerated.
+
 Where the two engines are compared, the comparison is paired: the same
 clips through both, and the split reported with an exact McNemar test,
 because a difference of a handful of clips in ten thousand is otherwise

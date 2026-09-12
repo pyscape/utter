@@ -59,8 +59,8 @@ pub struct RecognizerOptions {
     /// Add the model's unknown-word symbol to the grammar with this cost on its arcs.
     pub unknown_cost: Option<f32>,
     pub max_graph_states: usize,
-    /// Weight for frames the decoder's best path calls silence; 1.0 turns the weighting off,
-    /// which is the shape Kaldi's `ivector-extract-online2` can be compared against.
+    /// Weight for frames the decoder's best path calls silence; 1.0 turns it off.
+    /// `[[rr:i-vector: no oracle on this machine]]`
     pub silence_weight: f32,
 }
 

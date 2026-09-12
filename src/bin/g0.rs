@@ -1,6 +1,6 @@
 //! Gate G0: batch-decode a corpus of WAV takes through the vendored acoustic and graph code with
 //! the grammar composed offline, in zero and faithful i-vector modes, emitting one JSON line per
-//! take for scripts/g0.py to score against libvosk's finals.
+//! take for `[[rr:scripts/g0.py#score]]` to score against libvosk's finals.
 // [[rr:TD-2#Verification and acceptance]]
 
 use std::path::{Path, PathBuf};

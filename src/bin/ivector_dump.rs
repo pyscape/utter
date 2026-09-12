@@ -1,11 +1,8 @@
 //! Gate G1, i-vector half: stream a WAV through the online feature pipeline and write the
-//! i-vector estimate every `--period` frames as raw little-endian f32 (a 2 x i32 header of rows
-//! and columns first), the shape `ivector-extract-online2 --ivector-period` writes, for
-//! scripts/g1.py to compare.
-//!
-//! No decoder runs here, so no traceback weights the silence frames; that is the comparison
-//! Kaldi's tool admits.
+//! i-vector estimate every `--period` frames in the shape `[[rr:read_matrix_dump]]` reads and
+//! `ivector-extract-online2 --ivector-period` writes, for `[[rr:ivector_half]]` to compare.
 // [[rr:TD-2#Verification and acceptance]]
+// [[rr:i-vector: no oracle on this machine]]
 
 use std::io::Write;
 use utter::frontend::FeaturePipeline;

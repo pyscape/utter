@@ -193,7 +193,6 @@ fn one_grammar_is_composed_once_and_the_cache_has_a_bound() {
         std::ptr::eq(first.graph(), second.graph()),
         "a second recognizer on the same grammar composed its own graph"
     );
-    // A different grammar is a different graph, and enough of them evict the first.
     for word in g.iter().take(utter::model::CACHED_GRAPHS) {
         let r = Recognizer::new(&model, 16000.0, std::slice::from_ref(word)).unwrap();
         assert!(!std::ptr::eq(first.graph(), r.graph()));

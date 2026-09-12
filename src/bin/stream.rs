@@ -1,6 +1,6 @@
 //! Gates G2, G3 and G5: stream WAV takes through the recognizer in fixed blocks, recording the
 //! partial after every block, every final with its words and end sample, and compute time per
-//! block, as JSON lines for scripts/g2.py to compare with the stock wheel.
+//! block, as JSON lines for `[[rr:scripts/g2.py#score]]` to compare with the stock wheel.
 // [[rr:TD-2#Verification and acceptance]]
 
 use std::path::PathBuf;
@@ -8,7 +8,6 @@ use std::time::Instant;
 use utter::wav::read_wav;
 use utter::{Model, Recognizer};
 
-/// What every take in a run is streamed with.
 struct Run {
     block_ms: usize,
     alternatives: usize,

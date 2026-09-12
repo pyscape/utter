@@ -210,8 +210,6 @@ pub fn compose(
                     Some(&l) => l,
                     None => {
                         let set = &reach[a1.nextstate as usize];
-                        // Lookahead over G's arcs from s2: which are reachable, their log-sum
-                        // weight, and the single reachable arc when there is exactly one.
                         let mut first: Option<usize> = None;
                         let mut last: usize = 0;
                         let mut lsum = f64::INFINITY;

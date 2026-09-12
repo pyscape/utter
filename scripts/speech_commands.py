@@ -107,9 +107,8 @@ NATO = [
 COLOURS = ["red", "yellow", "blue", "black", "white"]
 DATASET_WORDS = COMMANDS + DIGITS + FILLERS
 
-# Filler entries for the grammar-size sweep, in the order they are added. Words a command host
-# might plausibly carry; any the model's table lacks are dropped, so the sizes reached are
-# reported rather than assumed.
+# Filler for the grammar-size sweep, in the order added. Any word the model's table lacks is
+# dropped, so the sweep reports the sizes it reached rather than the ones asked for.
 SWEEP_EXTRA = [
     "north",
     "south",
@@ -807,7 +806,7 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
         cells = " | ".join(f"{row[level]} ({pct(row[level], len(chosen)):.1f}%)" for level in levels)
         lines.append(f"| {name} | {cells} | {clean} ({pct(clean, len(chosen)):.1f}%) |")
     lines.append("")
-    # The same mixed samples went to both engines, so each level is a paired comparison too.
+    # [[rr:Benchmarks]]
     paired = {}
     names = list(modules)
     if len(names) == 2:
@@ -1001,8 +1000,7 @@ def main():
         grammar_size_pass(modules, args.model, clips, args.block_ms, lines, report, sizes, args.grammar_clips)
     twelve_class_pass(modules, args.model, clips, noise, args.block_ms, lines, report)
     noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report)
-    # The reading of a run is written by hand and would not survive the next run; keep it in
-    # a sidecar the report folds back in.
+    # [[rr:Benchmarks]]
     reading = Path(args.out + ".reading.md")
     if reading.exists():
         lines.append(reading.read_text().strip())

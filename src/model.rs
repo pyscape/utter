@@ -141,9 +141,8 @@ pub enum WordBoundary {
 }
 
 /// How many compiled grammars a model keeps. Composition here is eager, by
-/// `[[rr:TD-2#The graph: composition]]`, where libvosk's is lazy and its recognizers are
-/// therefore cheap to build; without a cache a host that builds one per utterance would
-/// compose the whole graph every time.
+/// `[[rr:TD-2#The graph: composition]]`, so without a cache a host that builds a recognizer
+/// per utterance composes the whole graph every time.
 pub const CACHED_GRAPHS: usize = 4;
 
 #[derive(PartialEq, Eq, Hash)]
@@ -244,8 +243,7 @@ impl Model {
         })
     }
 
-    /// The decoding graph for a grammar, composed on first use and kept for reuse. The
-    /// `CACHED_GRAPHS` least recently used grammars are held.
+    /// The decoding graph for a grammar; the `CACHED_GRAPHS` least recently used are kept.
     pub fn grammar_graph(
         &self,
         grammar: &[String],

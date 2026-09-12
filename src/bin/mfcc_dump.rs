@@ -1,5 +1,6 @@
 //! Gate G1: stream a WAV through the online MFCC front end and write the frames as raw
-//! little-endian f32 (a 2 x i32 header of rows and columns first) for scripts/g1.py.
+//! little-endian f32, the shape `[[rr:read_matrix_dump]]` reads: a 2 x i32 header of rows and
+//! columns, then the frames.
 // [[rr:TD-2#Verification and acceptance]]
 
 use std::io::Write;
