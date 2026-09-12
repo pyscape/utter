@@ -620,6 +620,41 @@ def significance_table(clips, results, lines, report):
         "column is the Holm-Bonferroni adjustment for that. "
         + ("Surviving it: " + ", ".join(sorted(survivors)) + "." if survivors else "No word survives it.")
     )
+
+    # A directional win is either the loser reading a different word or reading nothing; only the
+    # second is a silence divergence, and the two engines' silence behaviour is the contract.
+    # [[rr:TD-8#The decoder reads silence as libvosk does]]
+    split = {a: dict(word=0, silence=0), b: dict(word=0, silence=0)}
+    for _, path in clips:
+        wa = oa.get(str(path), {}).get("words")
+        wb = ob.get(str(path), {}).get("words")
+        ca = oa.get(str(path), {}).get("correct")
+        cb = ob.get(str(path), {}).get("correct")
+        if ca and not cb:
+            split[a]["silence" if not wb else "word"] += 1
+        elif cb and not ca:
+            split[b]["silence" if not wa else "word"] += 1
+    empty = report["agreement"]["empty"]
+    lines.append("")
+    lines.append(
+        "When one engine reads a clip the other misses, the miss is almost always a different "
+        "word, not silence. The same paired wins, split by what the losing engine returned:"
+    )
+    lines.append("")
+    lines.append("| direction | other read a different word | other read silence |")
+    lines.append("|---|---|---|")
+    lines.append(f"| {a} only | {split[a]['word']} | {split[a]['silence']} |")
+    lines.append(f"| {b} only | {split[b]['word']} | {split[b]['silence']} |")
+    lines.append("")
+    lines.append(
+        f"Silence is {split[a]['silence']} clips one way and {split[b]['silence']} the other, so "
+        "neither engine falls silent where the other reads a word more than the reverse; the "
+        f"difference is word against word, the near ties `[[rr:TD-6]]` leaves in the acoustics. "
+        f"Over the whole corpus the two read almost the same number of clips as silence, "
+        f"{empty[a]} and {empty[b]}."
+    )
+    for name in (a, b):
+        out["all words"][name + "_split"] = split[name]
     report["significance"] = out
 
 

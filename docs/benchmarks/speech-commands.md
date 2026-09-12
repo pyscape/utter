@@ -104,6 +104,15 @@ Paired over the same clips: `vosk only` counts clips vosk got right and utterpy 
 
 35 words were tested, so about two would fall below 0.05 by chance; the last column is the Holm-Bonferroni adjustment for that. No word survives it.
 
+When one engine reads a clip the other misses, the miss is almost always a different word, not silence. The same paired wins, split by what the losing engine returned:
+
+| direction | other read a different word | other read silence |
+|---|---|---|
+| vosk only | 14 | 3 |
+| utterpy only | 47 | 3 |
+
+Silence is 3 clips one way and 3 the other, so neither engine falls silent where the other reads a word more than the reverse; the difference is word against word, the near ties `[[rr:TD-6]]` leaves in the acoustics. Over the whole corpus the two read almost the same number of clips as silence, 411 and 412.
+
 ## Determinism
 
 200 clips decoded twice in this process and once in a process started for the purpose, comparing the whole partial trace and the final. The fresh process is the half that matters: a hash seed drawn once per process gives a map the same iteration order for every repeat within a run, so a reading that depends on it is perfectly stable until the next run. Any clip that moves is named in the JSON.
