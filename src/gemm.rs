@@ -1,8 +1,8 @@
 //! Single-precision matrix products for the network: `C[m x n] = A[m x k] * B[n x k]^T`, both
 //! operands contiguous along k, which is how Kaldi stores affine parameters (rows are outputs).
 //!
-//! Own kernel: an 8-wide FMA tile over four B rows at a time, with an explicit AVX2+FMA path
-//! behind runtime detection and a portable path the compiler vectorizes for the rest.
+//! Own kernel: an 8-wide FMA tile of four A rows by three B rows, with an explicit AVX2+FMA
+//! path behind runtime detection and a portable path the compiler vectorizes for the rest.
 // [[rr:TD-2#Dependency policy]]
 
 #[inline(always)]
@@ -84,34 +84,34 @@ mod avx2 {
         out
     }
 
-    /// Three rows of A against four rows of B: twelve accumulators, seven loads per step.
+    /// Four rows of A against three rows of B: twelve accumulators, seven loads per step.
+    /// Twelve accumulators, three B registers and one A register are the sixteen the
+    /// instruction set has; a wider tile spills one every step and loses more than it gains.
     #[target_feature(enable = "avx2,fma")]
-    pub unsafe fn dot3x4(a: [&[f32]; 3], b: [&[f32]; 4], out: &mut [[f32; 4]; 3]) {
+    pub unsafe fn dot4x3(a: [&[f32]; 4], b: [&[f32]; 3], out: &mut [[f32; 3]; 4]) {
         let k = a[0].len();
-        let mut acc = [[_mm256_setzero_ps(); 4]; 3];
+        let mut acc = [[_mm256_setzero_ps(); 3]; 4];
         let mut i = 0;
         while i + 8 <= k {
             let b0 = _mm256_loadu_ps(b[0].as_ptr().add(i));
             let b1 = _mm256_loadu_ps(b[1].as_ptr().add(i));
             let b2 = _mm256_loadu_ps(b[2].as_ptr().add(i));
-            let b3 = _mm256_loadu_ps(b[3].as_ptr().add(i));
-            for r in 0..3 {
+            for r in 0..4 {
                 let x = _mm256_loadu_ps(a[r].as_ptr().add(i));
                 acc[r][0] = _mm256_fmadd_ps(x, b0, acc[r][0]);
                 acc[r][1] = _mm256_fmadd_ps(x, b1, acc[r][1]);
                 acc[r][2] = _mm256_fmadd_ps(x, b2, acc[r][2]);
-                acc[r][3] = _mm256_fmadd_ps(x, b3, acc[r][3]);
             }
             i += 8;
         }
-        for r in 0..3 {
-            for c in 0..4 {
+        for r in 0..4 {
+            for c in 0..3 {
                 out[r][c] = hsum(acc[r][c]);
             }
         }
         while i < k {
-            for r in 0..3 {
-                for c in 0..4 {
+            for r in 0..4 {
+                for c in 0..3 {
                     out[r][c] += a[r][i] * b[c][i];
                 }
             }
@@ -178,44 +178,45 @@ pub fn gemm_abt(
     assert_eq!(b.len(), n * k);
     assert_eq!(c.len(), m * n);
     let avx = have_avx2();
-    // B rows in blocks that stay in L2 while every A row streams past.
-    let block_rows = (256 * 1024 / (k.max(1) * 4)).clamp(4, 512) & !3;
+    // B rows in blocks that stay in L2 while every A row streams past, a whole number of tiles.
+    let block_rows = (256 * 1024 / (k.max(1) * 4)).clamp(3, 510);
+    let block_rows = block_rows - block_rows % 3;
     let mut j0 = 0;
     while j0 < n {
         let j1 = (j0 + block_rows).min(n);
         let mut i = 0;
         #[cfg(target_arch = "x86_64")]
         if avx {
-            // row triples of A against row quads of B
-            while i + 3 <= m {
+            // row quads of A against row triples of B
+            while i + 4 <= m {
                 let ra = [
                     &a[i * k..(i + 1) * k],
                     &a[(i + 1) * k..(i + 2) * k],
                     &a[(i + 2) * k..(i + 3) * k],
+                    &a[(i + 3) * k..(i + 4) * k],
                 ];
                 let mut j = j0;
-                while j + 4 <= j1 {
+                while j + 3 <= j1 {
                     let rb = [
                         &b[j * k..(j + 1) * k],
                         &b[(j + 1) * k..(j + 2) * k],
                         &b[(j + 2) * k..(j + 3) * k],
-                        &b[(j + 3) * k..(j + 4) * k],
                     ];
-                    let mut out = [[0.0f32; 4]; 3];
-                    unsafe { avx2::dot3x4(ra, rb, &mut out) };
-                    for r in 0..3 {
-                        c[(i + r) * n + j..(i + r) * n + j + 4].copy_from_slice(&out[r]);
+                    let mut out = [[0.0f32; 3]; 4];
+                    unsafe { avx2::dot4x3(ra, rb, &mut out) };
+                    for r in 0..4 {
+                        c[(i + r) * n + j..(i + r) * n + j + 3].copy_from_slice(&out[r]);
                     }
-                    j += 4;
+                    j += 3;
                 }
                 while j < j1 {
                     let br = &b[j * k..(j + 1) * k];
-                    for r in 0..3 {
+                    for r in 0..4 {
                         c[(i + r) * n + j] = unsafe { avx2::dot1(ra[r], br) };
                     }
                     j += 1;
                 }
-                i += 3;
+                i += 4;
             }
         }
         while i < m {
