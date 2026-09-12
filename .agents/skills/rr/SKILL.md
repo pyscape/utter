@@ -65,6 +65,22 @@ rr search '<anchor>'      # who cites it; --markers all, --mentions bare paths
 rr verify                 # the gate: 0 findings
 ```
 
+## Choosing a verb
+
+Stop at the first case that resolves the reference; a marker already
+returned by one command is not re-confirmed with another.
+
+1. Marker or anchor already in hand -> `rrcat` it directly.
+2. Only a `file:line` is known -> `rr at`, then `rrcat` the result.
+3. Only the subject's words are known -> `rr search`, take the
+   narrowest matching marker, then `rrcat` it.
+4. Diagnosing why a marker won't resolve -> `rr read` (locations and
+   ambiguity; `rrcat` is what prints the content).
+
+Cite the narrowest anchor whose span holds the fact - a record's
+section over the whole record, a symbol over the file that defines
+it. Never invent a marker from a title or ID; resolve it first.
+
 ## Following a marker
 
 `rrcat '[[rr:TD-3#Decision outcome]]' '[[rr:TD-4]]'` prints each
@@ -72,11 +88,13 @@ definition's text in argument order, `--` between them: one call for
 every marker you hold, instead of `rr read` plus a Read per marker.
 Bare ids (`TD-3`) work too. A stale index is rebuilt once (`rrcat:
 rebuilt the index` on stderr) and the read retried. Exit is the worst
-`rr read` gave (1 dangling, still printing the rest; 3 still stale
-after the rebuild);
+`rr read` gave (1 dangling, still printing the rest; 2 a usage or
+read failure; 3 still stale after the rebuild);
 an ambiguous anchor prints every definition, `--` separated. Use it
 whenever markers are the input and the content is what you need: a
-cited rule, a spec section, a finding's source.
+cited rule, a spec section, a finding's source. Handing off, send the
+marker plus only the case-specific status beyond it; the recipient
+runs `rrcat` for the body rather than being handed a paste of it.
 
 ## Minting
 
@@ -88,6 +106,15 @@ cited rule, a spec section, a finding's source.
 4. If the title is unique only for now (every record has a "Decision
    outcome"), qualify by record yourself and `rr read` it.
 5. `rr index && rr verify` before handing over.
+
+## Verifying
+
+`rr index -q` first - the gate only sees what got indexed. Scope to
+what changed (`rr verify <path>...`) or run repo-wide (`rr verify`,
+no path) when a record moved or the question is whether the whole
+tree complies. `0 findings` is clean; anything else is a failure to
+fix or report - name each finding's marker and location, do not wave
+a nonzero count through.
 
 ## Form
 
