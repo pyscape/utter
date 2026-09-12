@@ -6,9 +6,16 @@ word latency, utter (through utterpy) against the stock vosk wheel, same blocks,
 
 DIR holds the extracted dataset (one directory per word, testing_list.txt, _background_noise_).
 The grammar is the dataset's 35 words plus distractors that a command host is likely to carry:
-the letters a to z, the NATO alphabet, and red, yellow, blue, black and white. Three runs:
+the letters a to z, the NATO alphabet, and red, yellow, blue, black and white. The passes:
 
-- full grammar: every test clip must decode to its word;
+- full grammar: every test clip must decode to its word, with a paired exact McNemar test on
+  the clips the two engines disagree about, overall and per word;
+- compute: recognizer construction split into the first and every later one, decode-only RTF,
+  and per-block compute over the clips joined into one continuous stream;
+- noise: the dataset's own background recordings mixed under the clips at each --snr-db, the
+  same mixed samples fed to both engines;
+- grammar size: the 35 dataset words plus filler up to each --grammar-sizes entry, which is
+  the dial a host turns, against accuracy, construction and RTF;
 - twelve-class: the ten command words plus the unknown-word symbol, where the other 25 words
   must decode to [unk] and background noise to nothing;
 - background noise under the full grammar, with and without the unknown-word symbol: phantom
@@ -19,12 +26,19 @@ Latency is the fed-audio time at which the label first appears in a partial, min
 end from the clip's own energy envelope (the last 10 ms frame within 20 dB of the clip's peak),
 a reference that owes nothing to either engine. Also reported: how often the first word shown is
 later changed.
+
+Writes `<out>.md`, `<out>.json`, and `<out>.clips.jsonl`, a line per clip with each engine's
+reading so two runs can be diffed rather than only compared in aggregate. The header of the
+report records the utter revision, the engine versions and the machine, without which the
+compute figures mean nothing.
 """
 
 import argparse
 import array
 import json
 import math
+import platform
+import subprocess
 import time
 import wave
 from collections import Counter, defaultdict
@@ -81,6 +95,187 @@ NATO = [
 COLOURS = ["red", "yellow", "blue", "black", "white"]
 DATASET_WORDS = COMMANDS + DIGITS + FILLERS
 
+# Filler entries for the grammar-size sweep, in the order they are added. Words a command host
+# might plausibly carry; any the model's table lacks are dropped, so the sizes reached are
+# reported rather than assumed.
+SWEEP_EXTRA = [
+    "north",
+    "south",
+    "east",
+    "west",
+    "up",
+    "down",
+    "open",
+    "close",
+    "start",
+    "stop",
+    "pause",
+    "resume",
+    "next",
+    "previous",
+    "first",
+    "second",
+    "third",
+    "fourth",
+    "fifth",
+    "last",
+    "begin",
+    "end",
+    "enter",
+    "exit",
+    "select",
+    "cancel",
+    "confirm",
+    "accept",
+    "reject",
+    "yes",
+    "no",
+    "maybe",
+    "please",
+    "repeat",
+    "louder",
+    "quieter",
+    "faster",
+    "slower",
+    "bigger",
+    "smaller",
+    "lighter",
+    "darker",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "today",
+    "tomorrow",
+    "yesterday",
+    "morning",
+    "evening",
+    "night",
+    "noon",
+    "midnight",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "spring",
+    "summer",
+    "autumn",
+    "winter",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+    "hundred",
+    "thousand",
+    "million",
+    "quarter",
+    "half",
+    "double",
+    "triple",
+    "add",
+    "remove",
+    "insert",
+    "delete",
+    "copy",
+    "paste",
+    "undo",
+    "redo",
+    "save",
+    "load",
+    "new",
+    "clear",
+    "reset",
+    "apply",
+    "play",
+    "record",
+    "mute",
+    "unmute",
+    "volume",
+    "channel",
+    "screen",
+    "window",
+    "menu",
+    "button",
+    "switch",
+    "toggle",
+    "left",
+    "right",
+    "centre",
+    "middle",
+    "top",
+    "bottom",
+    "front",
+    "back",
+    "inside",
+    "outside",
+    "above",
+    "below",
+    "near",
+    "far",
+    "red",
+    "orange",
+    "yellow",
+    "green",
+    "blue",
+    "purple",
+    "brown",
+    "grey",
+    "silver",
+    "gold",
+    "phone",
+    "table",
+    "chair",
+    "door",
+    "floor",
+    "wall",
+    "light",
+    "lamp",
+    "clock",
+    "radio",
+    "camera",
+    "mouse",
+    "keyboard",
+    "water",
+    "coffee",
+    "music",
+    "movie",
+    "picture",
+    "message",
+    "number",
+    "letter",
+    "word",
+    "line",
+    "page",
+    "file",
+    "folder",
+]
+
 
 def words_of(text):
     return [w for w in text.split() if not (w.startswith("[") and w.endswith("]"))]
@@ -95,6 +290,68 @@ def quantile(v, q):
         return float("nan")
     s = sorted(v)
     return s[min(len(s) - 1, int(q * len(s)))]
+
+
+def mcnemar(b, c):
+    """Two-sided exact McNemar on the discordant counts: the chance of a split at least this
+    lopsided if each engine were equally likely to win one. Returns 1.0 when neither differs."""
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    tail = sum(math.comb(n, i) for i in range(k + 1)) / (2.0**n)
+    return min(1.0, 2.0 * tail)
+
+
+def provenance(args, modules):
+    """What a reader needs to judge the figures: the build, the engines, the machine."""
+
+    def run(cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.strip()
+        except Exception:
+            return None
+
+    here = Path(__file__).resolve().parent
+    rev = run(["git", "-C", str(here), "rev-parse", "--short", "HEAD"])
+    dirty = run(["git", "-C", str(here), "status", "--porcelain"])
+    cpu = None
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                cpu = line.split(":", 1)[1].strip()
+                break
+    except OSError:
+        pass
+    versions = {}
+    for name in modules:
+        try:
+            import importlib.metadata as md
+
+            versions[name] = md.version(name)
+        except Exception:
+            versions[name] = "?"
+    return dict(
+        date=time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime()),
+        utter_revision=(rev + ("+dirty" if dirty else "")) if rev else "?",
+        engines=versions,
+        model=Path(args.model).name,
+        cpu=cpu or platform.processor() or platform.machine(),
+        python=platform.python_version(),
+        block_ms=args.block_ms,
+    )
+
+
+def write_clip_records(path, clips, results):
+    """One line per clip with every engine's reading, so two runs can be diffed."""
+    with open(path, "w") as f:
+        for label, clip in clips:
+            row = {"clip": str(clip), "label": label}
+            for name, r in results.items():
+                o = r["outcome"].get(str(clip))
+                if o is not None:
+                    row[name] = o
+            f.write(json.dumps(row) + "\n")
 
 
 def read_pcm(path):
@@ -127,8 +384,12 @@ class Engine:
         self.model = module.Model(str(model_dir))
         self.grammar = json.dumps(grammar)
         self.unknown_cost = unknown_cost
-        find = getattr(self.model, "FindWord", None) or getattr(self.model, "vosk_model_find_word", None)
-        self.missing = [w for e in grammar for w in e.split() if find is not None and find(w) < 0]
+        # The wheel and the binding spell the vocabulary lookup differently.
+        self.find = getattr(self.model, "FindWord", None) or getattr(self.model, "vosk_model_find_word", None)
+        self.missing = [w for e in grammar for w in e.split() if not self.knows(w)]
+
+    def knows(self, word):
+        return self.find is None or all(self.find(t) >= 0 for t in word.split())
 
     def new(self, alternatives=0):
         if self.unknown_cost is not None:
@@ -162,7 +423,8 @@ def final_words(finals):
 
 
 def run_clip(engine, pcm, block_ms, label):
-    """Returns (final words, first-appearance second of the label or None, first word shown or None, wall seconds)."""
+    """Returns (final words, first-appearance second of the label or None, first word shown or
+    None, (construction seconds, decode seconds))."""
     state = {"first": None, "first_word": None}
 
     def on_partial(fed, p):
@@ -173,9 +435,57 @@ def run_clip(engine, pcm, block_ms, label):
             state["first"] = fed / RATE
 
     t0 = time.perf_counter()
-    finals = feed(engine.new(), pcm, block_ms, on_partial)
-    wall = time.perf_counter() - t0
-    return final_words(finals), state["first"], state["first_word"], wall
+    rec = engine.new()
+    t1 = time.perf_counter()
+    finals = feed(rec, pcm, block_ms, on_partial)
+    t2 = time.perf_counter()
+    return final_words(finals), state["first"], state["first_word"], (t1 - t0, t2 - t1)
+
+
+def significance_table(clips, results, lines, report):
+    """The engines decode the same clips, so the comparison is paired: only the clips they
+    disagree on carry information. Aggregate counts alone cannot say whether a gap is real."""
+    names = list(results)
+    if len(names) != 2:
+        return
+    a, b = names
+    oa, ob = results[a]["outcome"], results[b]["outcome"]
+    out = {}
+    lines.append("")
+    lines.append("## Where the engines differ")
+    lines.append("")
+    lines.append(
+        f"Paired over the same clips: `{a} only` counts clips {a} got right and {b} did not, "
+        f"`{b} only` the reverse. The p-value is a two-sided exact McNemar test on those two "
+        "counts; a large one means the split is what chance would produce."
+    )
+    lines.append("")
+    lines.append(f"| scope | {a} only | {b} only | p |")
+    lines.append("|---|---|---|---|")
+    rows = [("all words", [c for _, c in clips])]
+    by_word = defaultdict(list)
+    for label, clip in clips:
+        by_word[label].append(clip)
+    for w in DATASET_WORDS:
+        rows.append((w, by_word[w]))
+    for scope, paths in rows:
+        only_a = only_b = 0
+        for path in paths:
+            ca = oa.get(str(path), {}).get("correct")
+            cb = ob.get(str(path), {}).get("correct")
+            if ca and not cb:
+                only_a += 1
+            elif cb and not ca:
+                only_b += 1
+        p = mcnemar(only_a, only_b)
+        out[scope] = dict(only_a=only_a, only_b=only_b, p=p)
+        # Per word, only rows a reader would look twice at.
+        if scope == "all words" or p < 0.05:
+            lines.append(f"| {scope} | {only_a} | {only_b} | {p:.3f} |")
+    if all(v["p"] >= 0.05 for k, v in out.items() if k != "all words"):
+        lines.append("")
+        lines.append("No single word's difference reaches p < 0.05.")
+    report["significance"] = out
 
 
 def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
@@ -190,14 +500,18 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
         per_word = Counter()
         per_word_ok = Counter()
         lat = []
-        wall = audio = 0.0
+        outcome = {}
+        ctors = []
+        ctor = decode = audio = 0.0
         for label, path in clips:
             pcm = read_pcm(path)
             audio += len(pcm) / 2 / RATE
             if path not in ref_end:
                 ref_end[path] = energy_end(pcm)
-            words, first, first_word, t = run_clip(eng, pcm, block_ms, label)
-            wall += t
+            words, first, first_word, (t_new, t_decode) = run_clip(eng, pcm, block_ms, label)
+            ctor += t_new
+            ctors.append(t_new)
+            decode += t_decode
             per_word[label] += 1
             if words == [label]:
                 correct += 1
@@ -211,7 +525,14 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
                 never += 1
             elif ref_end[path] is not None:
                 lat.append((first - ref_end[path]) * 1000.0)
+            outcome[str(path)] = dict(
+                words=words,
+                correct=words == [label],
+                first=first,
+                first_word=first_word,
+            )
         results[name] = dict(
+            outcome=outcome,
             correct=correct,
             total=len(clips),
             confusions=conf.most_common(15),
@@ -222,19 +543,35 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
             never_in_partial=never,
             first_shown=shown,
             first_changed=changed,
-            rtf=wall / audio if audio else None,
+            rtf=(ctor + decode) / audio if audio else None,
+            decode_rtf=decode / audio if audio else None,
+            ctor_ms=1000.0 * ctor / len(clips) if clips else None,
+            ctor_first_ms=1000.0 * ctors[0] if ctors else None,
+            ctor_rest_ms=1000.0 * sum(ctors[1:]) / max(1, len(ctors) - 1) if ctors else None,
         )
     lines.append("## Full grammar: accuracy")
     lines.append("")
     lines.append(
-        "| engine | correct | accuracy | never in a partial | first appearance after the clip's energy end p50 / p90 | first word shown later changed | RTF |"
+        "| engine | correct | accuracy | never in a partial | first appearance after the clip's energy end p50 / p90 | first word shown later changed |"
     )
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|")
     for name, r in results.items():
         lines.append(
             f"| {name} | {r['correct']} / {r['total']} | {pct(r['correct'], r['total']):.2f}% | {r['never_in_partial']} | "
             f"{r['latency_ms_p50']:.0f} / {r['latency_ms_p90']:.0f} ms over {r['latency_n']} | "
-            f"{r['first_changed']} / {r['first_shown']} ({pct(r['first_changed'], r['first_shown']):.1f}%) | {r['rtf']:.4f} |"
+            f"{r['first_changed']} / {r['first_shown']} ({pct(r['first_changed'], r['first_shown']):.1f}%) |"
+        )
+    lines.append("")
+    lines.append("Compute, one recognizer per clip:")
+    lines.append("")
+    lines.append(
+        "| engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |"
+    )
+    lines.append("|---|---|---|---|---|---|")
+    for name, r in results.items():
+        lines.append(
+            f"| {name} | {r['ctor_first_ms']:.2f} | {r['ctor_rest_ms']:.3f} | {r['ctor_ms']:.3f} | "
+            f"{r['decode_rtf']:.4f} | {r['rtf']:.4f} |"
         )
     lines.append("")
     lines.append("| word | " + " | ".join(results) + " |")
@@ -248,6 +585,7 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
         lines.append(
             f"Most frequent confusions, {name}: " + "; ".join(f"{a} -> {b} ({n})" for (a, b), n in r["confusions"][:10])
         )
+    significance_table(clips, results, lines, report)
     lines.append("")
     report["full"] = results
 
@@ -345,6 +683,175 @@ def noise_pass(modules, model, noise, block_ms, grammar, lines, report):
     report["noise"] = out
 
 
+def mix_at_snr(pcm, noise, offset, snr_db):
+    """The clip with `noise` laid under it at `snr_db`, scaling the noise to the clip's own
+    speech level. Saturates rather than wraps, as an ADC would."""
+    a = array.array("h")
+    a.frombytes(pcm)
+    n = array.array("h")
+    n.frombytes(noise)
+    if not a or not n:
+        return pcm
+    sig = math.sqrt(sum(float(v) * v for v in a) / len(a))
+    seg = [n[(offset + i) % len(n)] for i in range(len(a))]
+    nse = math.sqrt(sum(float(v) * v for v in seg) / len(seg))
+    if sig == 0 or nse == 0:
+        return pcm
+    gain = (sig / nse) / (10.0 ** (snr_db / 20.0))
+    out = array.array("h", [0]) * len(a)
+    for i in range(len(a)):
+        v = int(a[i] + gain * seg[i])
+        out[i] = -32768 if v < -32768 else (32767 if v > 32767 else v)
+    return out.tobytes()
+
+
+def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, report, levels, count):
+    """Accuracy against noise. Clean one-second clips are the most forgiving regime there is;
+    a front-end difference shows itself here first. Both engines are fed the same mixed bytes."""
+    step = max(1, len(clips) // count)
+    chosen = clips[::step][:count]
+    noise = b"".join(read_pcm(p) for p in noise_paths)
+    mixed = {}
+    for level in levels:
+        mixed[level] = [
+            (label, mix_at_snr(read_pcm(path), noise, (i * 7919) % max(1, len(noise) // 2), level))
+            for i, (label, path) in enumerate(chosen)
+        ]
+    out = {}
+    lines.append("## Accuracy against noise")
+    lines.append("")
+    lines.append(
+        f"{len(chosen)} clips of the testing split, the dataset's own background recordings laid "
+        "under each at the stated signal-to-noise ratio, the same mixed samples to both engines."
+    )
+    lines.append("")
+    lines.append("| engine | " + " | ".join(f"{level} dB" for level in levels) + " | clean |")
+    lines.append("|---|" + "---|" * (len(levels) + 1))
+    for name, mod in modules.items():
+        eng = Engine(name, mod, model, grammar)
+        row = {}
+        for level in levels:
+            ok = 0
+            for label, pcm in mixed[level]:
+                words, _, _, _ = run_clip(eng, pcm, block_ms, label)
+                ok += words == [label]
+            row[level] = ok
+        clean = 0
+        for label, path in chosen:
+            words, _, _, _ = run_clip(eng, read_pcm(path), block_ms, label)
+            clean += words == [label]
+        row["clean"] = clean
+        out[name] = {str(k): v for k, v in row.items()}
+        cells = " | ".join(f"{row[level]} ({pct(row[level], len(chosen)):.1f}%)" for level in levels)
+        lines.append(f"| {name} | {cells} | {clean} ({pct(clean, len(chosen)):.1f}%) |")
+    lines.append("")
+    report["snr"] = dict(clips=len(chosen), levels=levels, results=out)
+
+
+def grammar_size_pass(modules, model, clips, block_ms, lines, report, sizes, count):
+    """How the figures move with the grammar, the one dial a host turns. The dataset's own 35
+    words are always in, so every clip stays decidable; the rest is filler."""
+    step = max(1, len(clips) // count)
+    chosen = clips[::step][:count]
+    pcms = [(label, read_pcm(path)) for label, path in chosen]
+    audio = sum(len(p) / 2 / RATE for _, p in pcms)
+    probe = Engine("probe", next(iter(modules.values())), model, DATASET_WORDS)
+    pool = []
+    for w in LETTERS + NATO + COLOURS + SWEEP_EXTRA:
+        if w in DATASET_WORDS or w in pool:
+            continue
+        if probe.knows(w):
+            pool.append(w)
+    out = {}
+    lines.append("## Grammar size")
+    lines.append("")
+    lines.append(
+        f"{len(chosen)} clips, the 35 dataset words plus filler up to each size, so every clip "
+        f"stays decidable at every size. The runtime refuses 300 distinct words or more; the "
+        f"sweep stops at {len(DATASET_WORDS) + len(pool)}, the filler this model's table knows."
+    )
+    lines.append("")
+    lines.append(
+        "| entries | " + " | ".join(f"{n} accuracy | {n} first ms | {n} later ms | {n} RTF" for n in modules) + " |"
+    )
+    lines.append("|---|" + "---|" * (4 * len(modules)))
+    done = set()
+    for size in sizes:
+        extra = pool[: max(0, size - len(DATASET_WORDS))]
+        grammar = DATASET_WORDS + extra
+        if len(grammar) in done:
+            continue
+        done.add(len(grammar))
+        cells = []
+        row = {}
+        for name, mod in modules.items():
+            eng = Engine(name, mod, model, grammar)
+            ok = 0
+            ctors = []
+            decode = 0.0
+            for label, pcm in pcms:
+                words, _, _, (t_new, t_dec) = run_clip(eng, pcm, block_ms, label)
+                ok += words == [label]
+                ctors.append(t_new)
+                decode += t_dec
+            row[name] = dict(
+                correct=ok,
+                accuracy=pct(ok, len(pcms)),
+                ctor_first_ms=1000.0 * ctors[0],
+                ctor_rest_ms=1000.0 * sum(ctors[1:]) / max(1, len(ctors) - 1),
+                decode_rtf=decode / audio,
+            )
+            r = row[name]
+            cells += [
+                f"{r['accuracy']:.1f}%",
+                f"{r['ctor_first_ms']:.2f}",
+                f"{r['ctor_rest_ms']:.3f}",
+                f"{r['decode_rtf']:.4f}",
+            ]
+        out[len(grammar)] = row
+        lines.append(f"| {len(grammar)} | " + " | ".join(cells) + " |")
+    lines.append("")
+    report["grammar_size"] = dict(clips=len(chosen), sizes=out)
+
+
+def steady_state_pass(modules, model, clips, block_ms, grammar, lines, report, seconds):
+    """Compute on continuous audio: one recognizer over the clips joined end to end, which is
+    how a host runs, rather than the fixed cost of a clip at a time."""
+    step = max(1, len(clips) // seconds)
+    joined = b"".join(read_pcm(p) for _, p in clips[::step][:seconds])
+    audio = len(joined) / 2 / RATE
+    block = RATE * block_ms // 1000 * 2
+    out = {}
+    lines.append("## Compute on continuous audio")
+    lines.append("")
+    lines.append(f"One recognizer over {audio:.0f} s of the clips joined end to end.")
+    lines.append("")
+    lines.append("| engine | RTF | per-block compute ms p50 / p95 / p99 |")
+    lines.append("|---|---|---|")
+    for name, mod in modules.items():
+        eng = Engine(name, mod, model, grammar)
+        feed(eng.new(), joined[: block * 50], block_ms)  # warm the code paths
+        rec = eng.new()
+        per = []
+        for i in range(0, len(joined), block):
+            t = time.perf_counter()
+            rec.AcceptWaveform(joined[i : i + block])
+            per.append((time.perf_counter() - t) * 1000.0)
+        rec.FinalResult()
+        total = sum(per) / 1000.0
+        out[name] = dict(
+            rtf=total / audio,
+            ms_p50=quantile(per, 0.5),
+            ms_p95=quantile(per, 0.95),
+            ms_p99=quantile(per, 0.99),
+            seconds=audio,
+        )
+        r = out[name]
+        lines.append(f"| {name} | {r['rtf']:.4f} | {r['ms_p50']:.3f} / {r['ms_p95']:.2f} / {r['ms_p99']:.2f} |")
+    lines.append("")
+    report["steady_state"] = out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
@@ -354,6 +861,11 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="clips per word, 0 for all")
     ap.add_argument("--block-ms", type=int, default=40)
     ap.add_argument("--engines", default="vosk,utterpy")
+    ap.add_argument("--steady-state-clips", type=int, default=300, help="clips joined for the compute pass")
+    ap.add_argument("--snr-db", default="20,10,5,0", help="signal-to-noise ratios to mix, empty to skip")
+    ap.add_argument("--snr-clips", type=int, default=800, help="clips per noise level")
+    ap.add_argument("--grammar-sizes", default="35,60,92,150,200,246", help="grammar sweep, empty to skip")
+    ap.add_argument("--grammar-clips", type=int, default=400, help="clips per grammar size")
     args = ap.parse_args()
     data = Path(args.data)
     listed = [line.strip() for line in (data / f"{args.split}_list.txt").read_text().splitlines() if line.strip()]
@@ -375,13 +887,36 @@ def main():
             modules[name].SetLogLevel(-1)
 
     full_grammar = DATASET_WORDS + LETTERS + NATO + COLOURS
-    report = {"split": args.split, "clips": len(clips), "block_ms": args.block_ms, "grammar_size": len(full_grammar)}
+    prov = provenance(args, modules)
+    report = {
+        "split": args.split,
+        "clips": len(clips),
+        "block_ms": args.block_ms,
+        "grammar_size": len(full_grammar),
+        "provenance": prov,
+    }
     lines = [f"# Speech Commands v2, {args.split} split, {len(clips)} clips, {args.block_ms} ms blocks", ""]
     lines.append(
         f"Grammar: the dataset's 35 words plus {len(LETTERS)} letters, {len(NATO)} NATO words and {len(COLOURS)} colours, {len(full_grammar)} entries."
     )
     lines.append("")
+    lines.append(
+        f"Run {prov['date']}, utter {prov['utter_revision']}, "
+        + ", ".join(f"{k} {v}" for k, v in prov["engines"].items())
+        + f", model {prov['model']}, {prov['cpu']}, Python {prov['python']}."
+    )
+    lines.append("")
     full_grammar_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report)
+    write_clip_records(args.out + ".clips.jsonl", clips, report["full"])
+    for r in report["full"].values():
+        del r["outcome"]
+    steady_state_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report, args.steady_state_clips)
+    levels = [int(v) for v in args.snr_db.split(",") if v.strip()]
+    if levels:
+        snr_pass(modules, args.model, clips, noise, args.block_ms, full_grammar, lines, report, levels, args.snr_clips)
+    sizes = [int(v) for v in args.grammar_sizes.split(",") if v.strip()]
+    if sizes:
+        grammar_size_pass(modules, args.model, clips, args.block_ms, lines, report, sizes, args.grammar_clips)
     twelve_class_pass(modules, args.model, clips, noise, args.block_ms, lines, report)
     noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report)
     text = "\n".join(lines) + "\n"
