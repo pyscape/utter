@@ -755,7 +755,8 @@ impl<'m> Recognizer<'m> {
                 if j > 0 {
                     out.push_str(", ");
                 }
-                self.write_word(&mut out, span, true, false, now);
+                // [[rr:TD-8#A final word carries its energy]]
+                self.write_word(&mut out, span, true, true, now);
             }
             out.push_str("], ");
         }

@@ -112,6 +112,58 @@ fn text_of_key(json: &str, key: &str) -> String {
     rest[..rest.find('"').unwrap()].to_string()
 }
 
+fn num_of_key(json: &str, key: &str) -> f64 {
+    let i = json.find(key).unwrap() + key.len();
+    let rest = &json[i..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '-' || c == '.'))
+        .unwrap_or(rest.len());
+    rest[..end].parse().unwrap()
+}
+
+fn rms_dbfs(samples: &[i16]) -> f64 {
+    if samples.is_empty() {
+        return -999.0;
+    }
+    let acc: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
+    let rms = (acc / samples.len() as f64).sqrt();
+    if rms <= 0.0 {
+        -999.0
+    } else {
+        20.0 * (rms / 32768.0).log10()
+    }
+}
+
+#[test]
+fn a_final_word_carries_the_energy_under_its_span() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    rec.set_words(true);
+    let samples = clip("seven");
+    let (_, finals) = decode(&mut rec, &samples);
+    let mut words = 0;
+    for f in &finals {
+        let Some((_, rest)) = f.split_once("\"result\": [") else {
+            continue;
+        };
+        let array = &rest[..rest.find(']').unwrap()];
+        for w in array.split("}, {") {
+            if !w.contains("\"start_sample\": ") {
+                continue;
+            }
+            let start = num_of_key(w, "\"start_sample\": ") as usize;
+            // a final flushes the pipeline, so the last frame can end past the audio fed
+            let end = (num_of_key(w, "\"end_sample\": ") as usize).min(samples.len());
+            let want = rms_dbfs(&samples[start.min(end)..end]);
+            let got = num_of_key(w, "\"energy_dbfs\": ");
+            assert!((got - want).abs() < 1e-3, "{w}: {got} against {want}");
+            words += 1;
+        }
+    }
+    assert!(words > 0, "no final word: {finals:?}");
+}
+
 #[test]
 fn silence_reads_as_sil_and_the_stream_is_deterministic() {
     let Some(dir) = model_dir() else { return };

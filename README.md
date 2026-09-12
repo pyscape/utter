@@ -125,8 +125,9 @@ keep the key layout of libvosk's `PartialResult` and `Result`, so a host
 that already parses Vosk output keeps parsing, and add what a
 partials-first host asks for: `partial_alternatives` ranked by
 confidence, `start_sample` and `end_sample` beside Kaldi's seconds,
-`energy_dbfs` under each word, `stable_ms` for how long a partial word
-has held, and `[sil]` where the reading carries no word.
+`energy_dbfs` under each word of a partial and of a final, `stable_ms`
+for how long a partial word has held, and `[sil]` where the reading
+carries no word.
 
 ## Model compatibility
 
