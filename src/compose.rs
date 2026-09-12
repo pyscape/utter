@@ -46,8 +46,8 @@ struct Key {
 }
 
 /// What the lookahead over G's arcs from a state finds, through the reachability set of one
-/// HCLr state. A function of that pair alone, and the pair recurs across the composed states
-/// that share it, so it is worth keeping.
+/// HCLr state.
+/// `[[rr:TD-5#Decision outcome]]`
 #[derive(Clone, Copy)]
 struct Look {
     reachable: bool,

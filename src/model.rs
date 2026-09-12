@@ -140,9 +140,8 @@ pub enum WordBoundary {
     Nonword,
 }
 
-/// How many compiled grammars a model keeps. Composition here is eager, by
-/// `[[rr:TD-2#The graph: composition]]`, so without a cache a host that builds a recognizer
-/// per utterance composes the whole graph every time.
+/// How many compiled grammars a model keeps.
+/// `[[rr:TD-4#Decision outcome]]`
 pub const CACHED_GRAPHS: usize = 4;
 
 #[derive(PartialEq, Eq, Hash)]
@@ -243,7 +242,8 @@ impl Model {
         })
     }
 
-    /// The decoding graph for a grammar; the `CACHED_GRAPHS` least recently used are kept.
+    /// The decoding graph for a grammar.
+    /// `[[rr:TD-4#Decision outcome]]`
     pub fn grammar_graph(
         &self,
         grammar: &[String],
@@ -256,7 +256,7 @@ impl Model {
             unknown_cost: unknown_cost.map(f32::to_bits),
             max_states,
         };
-        // Held across the composition so that concurrent streams on one grammar compose once.
+        // [[rr:TD-4#Decision outcome]]
         let mut cache = self.graphs.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(i) = cache.iter().position(|(k, _)| *k == key) {
             let hit = cache.remove(i);

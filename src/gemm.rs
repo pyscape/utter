@@ -84,8 +84,7 @@ mod avx2 {
         out
     }
 
-    /// Twelve accumulators, three B registers and one A register are the sixteen YMM the
-    /// instruction set has; a wider tile spills one every step and loses more than it gains.
+    /// `[[rr:TD-3#Decision outcome]]`
     #[target_feature(enable = "avx2,fma")]
     pub unsafe fn dot4x3(a: [&[f32]; 4], b: [&[f32]; 3], out: &mut [[f32; 3]; 4]) {
         let k = a[0].len();
