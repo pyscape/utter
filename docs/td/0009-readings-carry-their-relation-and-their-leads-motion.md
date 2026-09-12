@@ -97,9 +97,10 @@ margin between the leading readings is moving.
   rank-AUC against revision beside the gap's 0.88 and 0.59 to 0.69
   within every bucket of the gap; the README gives it beside the
   sigmoid.
-- **An age on a reading.** Measured with the motion and worth nothing
-  beyond the hold and the motion (0.54 to 0.56 within the gap's
-  buckets); not a key.
+- **An age on a reading.** Rejected: how long a reading has stood is
+  worth nothing beyond the hold and the motion (0.54 to 0.56 within the
+  gap's buckets, against the gap's own 0.88), and the benchmark carries
+  no age for it.
 - **A rate in nats per second.** Rejected: the readings change only at
   an advance, so the advance is the series' clock and a delta per
   advance is what a rate would be computed from.
@@ -269,14 +270,17 @@ figure is kept in machine form beside the page.
   presence supplies it is not established. Spliced isolated words; to be
   measured on continuous recordings.
 - Whether motion foretells a word is unproven. On the built stream an
-  `extends` reading gaining called 40% of onsets a median 521 ms early,
-  but 736 of those 890 calls came before any sample of the coming
-  word's clip had been fed, so they carry no acoustic evidence of it,
-  and merely having an extending reading scored higher on the same
-  crossing metric (F1 0.54 against 0.46). Exploratory, on spliced
-  isolated words; the read is not recommended until motion is compared
-  with candidate presence, lead and elapsed silence at equal alarm
-  rates on continuous recordings. Kept silence is the empty reading
+  `extends` reading gaining called 71% of the words, but 58% of those
+  calls came before any sample of the coming word's clip had been fed
+  and carry no acoustic evidence of it, so the lead they are made by is
+  a read on the silence and not a warning of the word. Against the
+  cheaper reads at the same false alarm rate, with each call matched to
+  at most one word, the motion is the best of them (F1 0.60 against
+  0.49 for the same candidate merely existing, 0.51 for its lead, 0.50
+  for the trailing silence span and 0.54 for a clock the host keeps),
+  and the figures move with the pause lengths the stream was built
+  from. Exploratory, on spliced isolated words; the read is not
+  recommended until it is measured on continuous recordings. Kept silence is the empty reading
   leading with a lead that hovers, 4 to 5 nats, at a velocity near
   zero. As an end-of-speech signal the motion trades rather than wins,
   so `[[rr:TD-8#Decision outcome]]` stands.
