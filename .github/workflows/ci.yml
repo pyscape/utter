@@ -37,6 +37,10 @@ jobs:
         shell: bash
         run: |
           test "$(grep -c '^name = ' Cargo.lock)" = "1"
+      - name: No build artefacts are tracked
+        shell: bash
+        run: |
+          ! git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|(^|/)target/'
       - run: cargo build --release --all-targets
       - run: cargo test --release
       - run: cargo build --release --lib
