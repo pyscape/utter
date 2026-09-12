@@ -309,10 +309,10 @@ impl Nnet3 {
                 let sp = offsets.len();
                 let mut spliced = Mat::new(x.r, inn * sp);
                 for (k, &o) in offsets.iter().enumerate() {
-                    let shifted = clamp_offset(&x, o);
                     for i in 0..x.r {
-                        spliced.d[i * inn * sp + k * inn..i * inn * sp + k * inn + inn]
-                            .copy_from_slice(shifted.row(i));
+                        let src = (i as i32 + o).clamp(0, x.r as i32 - 1) as usize;
+                        let at = i * inn * sp + k * inn;
+                        spliced.d[at..at + inn].copy_from_slice(x.row(src));
                     }
                 }
                 spliced.affine(w, if b.is_empty() { None } else { Some(b) })
