@@ -25,7 +25,7 @@ outputs are not. What is needed is a runtime that reads a stock Vosk
 model directory, reproduces Kaldi's partial behaviour, exposes the
 beam, and builds with `cargo build` alone.
 
-Two facts bound the design. Vosk-Rust (Apache-2.0, July 2026) already
+Two facts bound the design. Vosk-Rust (Apache-2.0) already
 reads the Kaldi model, runs the chain network verified at 7e-6 against a
 numpy reference, does Kaldi-exact MFCC, and decodes best path over a
 graph, but only on whole utterances. And a Vosk small model's graph is
@@ -37,7 +37,9 @@ relabeling the grammar side must be transformed with.
 - Partials as fast as libvosk's: the same median and tail on the same
   recordings.
 - Alternatives current to the last decoded frame, distinct by word
-  sequence, the empty reading preserved when it leads.
+  sequence, the silent reading preserved when it leads and announced as
+  silence rather than delivered as an empty string or a forced
+  vocabulary word.
 - Word intervals, energy and the silence state from the one loop that
   decodes; no second detector on a second clock.
 - One decode: the stream is the answer, and end of speech is an event
@@ -135,9 +137,9 @@ every frame; libvosk sets max count 100.
 A list of strings. libvosk tokenizes each on spaces, drops words absent
 from the word table with a warning, and treats each string as one
 sentence for the bigram estimator. The runtime does the same, including the
-warning. A grammar may include the model's unknown-word symbol, and the
-runtime additionally offers absence as a reading (see Partial
-alternatives).
+warning. A grammar may include the model's unknown-word symbol, and
+silence is always a reading that names itself (see "Silence and unknown
+speech announce themselves").
 
 ### Interface
 
@@ -161,19 +163,25 @@ JSON, partial, keys in this order:
    {"text": "alpha seven", "confidence": -1234.5,
     "result": [{"word": "alpha", "start": 12.30, "end": 12.63,
                 "start_sample": 196800, "end_sample": 202080}, ...]},
-   {"text": "", "confidence": -1239.1, "result": []}],
+   {"text": "[sil]", "confidence": -1239.1,
+    "result": [{"word": "[sil]", "start": 11.90, "end": 12.98,
+                "start_sample": 190400, "end_sample": 207680}]}],
  "partial_result": [{"word": "alpha", "start": 12.30, "end": 12.63,
                      "start_sample": 196800, "end_sample": 202080,
-                     "energy_dbfs": -31.2, "stable_ms": 120}, ...]}
+                     "energy_dbfs": -31.2, "stable_ms": 120},
+                    {"word": "[sil]", "start": 12.63, "end": 12.98,
+                     "start_sample": 202080, "end_sample": 207680,
+                     "energy_dbfs": -58.4, "stable_ms": 350}, ...]}
 ```
 
 `partial_alternatives` is present when alternatives were requested; rank
 0 is always the best path and its text equals `partial`.
-`partial_result` is present when partial words are on. An empty best
-path yields `"partial": ""` and, when alternatives are on, an entry with
-empty text at rank 0. Final and `alternatives` shapes keep libvosk's key
-layout; `conf` on final words is emitted as 1.0 and documented as a
-constant, since no lattice posterior exists.
+`partial_result` is present when partial words are on. A reading is
+never an empty string: a best path with no word on it reads `[sil]`
+(see "Silence and unknown speech announce themselves"). Final and
+`alternatives` shapes keep libvosk's key layout; `conf` on final words
+is emitted as 1.0 and documented as a constant, since no lattice
+posterior exists.
 
 Time base: `start` and `end` in seconds are `samples_round_start /
 sample_rate + (frame_offset + output_frame) * 0.03`, libvosk's formula;
@@ -215,10 +223,10 @@ Vosk-Rust implements the batch extractor at 0.999 correlation to Kaldi's
 `ivector-extract` and reports that Kaldi's online tool has an
 extraction-order behaviour it did not reproduce. The runtime carries a
 mode switch: `faithful` (the above) and `zero` (a zero vector of the
-extractor's dimension). Gate G0 ran on 2026-09-11
-(`docs/gates/2026-09-11-g0.md`): faithful beat zero by 2.34 word error
-points against libvosk's finals on the consumer's corpus, so faithful
-ships and zero remains a measurement mode.
+extractor's dimension). Gate G0 (`docs/gates/2026-09-11-g0.md`)
+decides it: faithful beats zero by 2.34 word error points against
+libvosk's finals on the consumer's corpus, so faithful ships and zero
+remains a measurement mode.
 
 ### The network
 
@@ -392,6 +400,42 @@ lattice: hypotheses pruned before the current frame are gone. The
 consumer's census scripts are rerun on the runtime to state how many
 partials carry a one-word contest.
 
+### Silence and unknown speech announce themselves
+
+The runtime may emit during silence provided what it emits says it is
+silence. Two facts the decoder already holds make that exact. Kaldi's graph carries silence
+as phones of the silence set (`endpoint.silence-phones`, 1 to 10 in
+the reference model) that belong to no word, and the model's word table
+carries an unknown-word symbol, `[unk]` in Vosk models, that a grammar
+may include so out-of-vocabulary speech decodes to it instead of to the
+closest word. They are different things and are reported differently.
+
+- **`[sil]` is the reading of a best path that carries no word.** The
+  `partial` text is then `[sil]`, never the empty string and never a
+  vocabulary word the beam happened to prefer. In the alternatives, the
+  group whose word sequence is empty is labelled `[sil]` and ranked on
+  its cost like any other group, so on silence rank 0 reads `[sil]` and
+  the rivals stand behind it.
+- **Every run of silence phones on the best path that lies between
+  words or after the last word is an entry in `partial_result`** with
+  the token `[sil]`, its interval in samples and seconds, its energy in
+  dBFS and its `stable_ms`, so a pause has a duration the host can
+  read. The `partial` text lists words only, plus `[sil]` when there is
+  no word; silence entries between words appear in the word list, not
+  in the text, so a host that parses the text as words sees exactly the
+  words.
+- **`[unk]` is a word.** When the grammar includes the model's
+  unknown-word symbol it decodes, ranks, aligns and reports like any
+  other word, with its interval and energy; a reading that is only
+  `[unk]` reads `[unk]`, not `[sil]`. `Recognizer::new` offers an
+  option to add the symbol to the grammar with a cost offset; it is off
+  by default so that the parity gates run on grammars identical to
+  libvosk's, and the host decides whether to turn it on.
+- **Bracketed tokens are never words to the host.** A host that acts on
+  words treats `[sil]` as nothing offered and `[unk]` as a sound that
+  was not a command. The parity gates G2 and G4 compare texts with
+  bracketed tokens removed, since libvosk emits none.
+
 ### The decoder: endpointing
 
 Kaldi's `EndpointDetected` over the best-path traceback without final
@@ -486,8 +530,11 @@ built:
 - G3, latency: the consumer's benchmark with the runtime added as an
   engine reports the same p50 and p90 first-appearance latency as the
   stock wheel within one block, inside the compute budget.
-- G4, alternatives: rank 0 equals the partial on every block; the empty
-  primary is offered as empty; the contest census is rerun and recorded.
+- G4, alternatives: rank 0 equals the partial on every block; a silent
+  primary is offered as `[sil]` and never as a vocabulary word; on the
+  consumer's silence census takes, no block whose libvosk raw partial
+  was empty yields a vocabulary word at rank 0; the contest census is
+  rerun and recorded.
 - G5, endpointing: endpoint times equal libvosk's within one step
   (0.2 s) on 95% of segments.
 

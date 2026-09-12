@@ -173,7 +173,10 @@ requirement stands; the implementation is this library's.
   "that was a sound, not a command". A hypothesis for silence and a
   hypothesis for unknown speech must both be available in every
   reading list, with their own scores, so absence is a reading the
-  application can rank rather than an accident of filtering.
+  application can rank rather than an accident of filtering. Emitting
+  during silence is acceptable as long as what is emitted says it is
+  silence, with a bracketed token such as `[unk]` or `[sil]`, never an
+  empty string and never a vocabulary word.
 - **Partials and finals disagree.** On one session, the words acted on
   from the stream contradicted the utterance's own final on 53 of 59
   takes. The application had to reconcile two decodes of the same
@@ -195,9 +198,10 @@ Per 40 ms block, after `accept`:
    integer samples of the fed audio, and therefore a duration.
    Samples, not seconds, and never the wall clock.
 2. **Readings**: the distinct word sequences alive in the beam, ranked
-   by cost, rank 0 equal to the partial, the empty sequence and the
-   unknown-word sequence included whenever they are contenders, each
-   with its raw score. Current to the last decoded frame.
+   by cost, rank 0 equal to the partial, each with its raw score,
+   current to the last decoded frame. A silent reading announces
+   itself with a bracketed token and is never an empty string; the
+   unknown-word sequence is a reading whenever it is a contender.
 3. **Per-word evidence** from the same loop: the energy in dBFS under
    the word's interval, the speech probability under it, how long the
    word has stood unchanged, and, in enforce mode, whether it is ready
