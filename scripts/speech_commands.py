@@ -41,12 +41,22 @@ import json
 import math
 import platform
 import subprocess
+import sys
 import time
 import wave
 from collections import Counter, defaultdict
 from pathlib import Path
 
 RATE = 16000
+START = time.monotonic()
+
+
+def note(msg):
+    """Progress to stderr, so a twenty-minute run is distinguishable from a hung one. The
+    report itself goes to stdout and the files, and is not disturbed by this."""
+    print(f"[{time.monotonic() - START:6.1f}s] {msg}", file=sys.stderr, flush=True)
+
+
 COMMANDS = ["yes", "no", "up", "down", "left", "right", "on", "off", "stop", "go"]
 DIGITS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
 FILLERS = [
@@ -493,8 +503,10 @@ def significance_table(clips, results, lines, report):
 def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
     results = {}
     ref_end = {}
+    note(f"full grammar: {len(clips)} clips x {len(modules)} engines")
     for name, mod in modules.items():
         eng = Engine(name, mod, model, grammar)
+        note(f"  {name}")
         if eng.missing:
             lines.append(f"- {name}: words absent from the model's table: {eng.missing}")
         correct = never = shown = changed = 0
@@ -505,7 +517,9 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
         outcome = {}
         ctors = []
         ctor = decode = audio = 0.0
-        for label, path in clips:
+        for done, (label, path) in enumerate(clips):
+            if done and done % 2500 == 0:
+                note(f"    {done} / {len(clips)}")
             pcm = read_pcm(path)
             audio += len(pcm) / 2 / RATE
             if path not in ref_end:
@@ -600,10 +614,14 @@ def twelve_class_pass(modules, model, clips, noise, block_ms, lines, report):
     )
     lines.append("|---|---|---|---|---|---|")
     twelve = {}
+    note(f"twelve-class: {len(clips)} clips x {len(modules)} engines")
     for name, mod in modules.items():
+        note(f"  {name}")
         eng = Engine(name, mod, model, COMMANDS + ["[unk]"])
         cmd_total = cmd_ok = other_total = other_unk = other_cmd = 0
-        for label, path in clips:
+        for done, (label, path) in enumerate(clips):
+            if done and done % 2500 == 0:
+                note(f"    {done} / {len(clips)}")
             finals = feed(eng.new(), read_pcm(path), block_ms)
             raw = [w for f in finals for w in f.get("text", "").split()]
             words = words_of(" ".join(raw))
@@ -649,8 +667,10 @@ def noise_pass(modules, model, noise, block_ms, grammar, lines, report):
     )
     lines.append("|---|---|---|---|---|---|---|")
     out = {}
+    note(f"background noise: {len(modules)} engines x 2 grammars over the noise recordings")
     for name, mod in modules.items():
         for variant, g in [("full", grammar), ("full + [unk]", grammar + ["[unk]"])]:
+            note(f"  {name}, {variant}")
             eng = Engine(name, mod, model, g)
             blocks = word_blocks = sil_rival = finals_words = seconds = 0
             for path in noise:
@@ -720,6 +740,7 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
             for i, (label, path) in enumerate(chosen)
         ]
     out = {}
+    note(f"noise: {len(chosen)} clips x {len(levels)} levels + clean x {len(modules)} engines")
     lines.append("## Accuracy against noise")
     lines.append("")
     lines.append(
@@ -765,6 +786,7 @@ def grammar_size_pass(modules, model, clips, block_ms, lines, report, sizes, cou
         if probe.knows(w):
             pool.append(w)
     out = {}
+    note(f"grammar size: {len(sizes)} sizes x {len(chosen)} clips x {len(modules)} engines")
     lines.append("## Grammar size")
     lines.append("")
     lines.append(
@@ -824,6 +846,7 @@ def steady_state_pass(modules, model, clips, block_ms, grammar, lines, report, s
     audio = len(joined) / 2 / RATE
     block = RATE * block_ms // 1000 * 2
     out = {}
+    note(f"continuous audio: {audio:.0f} s x {len(modules)} engines")
     lines.append("## Compute on continuous audio")
     lines.append("")
     lines.append(f"One recognizer over {audio:.0f} s of the clips joined end to end.")
@@ -930,6 +953,7 @@ def main():
     text = "\n".join(lines) + "\n"
     Path(args.out + ".md").write_text(text)
     Path(args.out + ".json").write_text(json.dumps(report, indent=1))
+    note(f"written: {args.out}.md, .json, .clips.jsonl")
     print(text)
 
 
