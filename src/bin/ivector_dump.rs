@@ -2,7 +2,7 @@
 //! i-vector estimate every `--period` frames in the shape `[[rr:read_matrix_dump]]` reads and
 //! `ivector-extract-online2 --ivector-period` writes, for `[[rr:ivector_half]]` to compare.
 // [[rr:TD-2#Verification and acceptance]]
-// [[rr:i-vector: no oracle on this machine]]
+// [[rr:i-vector: against the wheel's Kaldi, passed once its quiet-frame rule was matched]]
 
 use std::io::Write;
 use utter::frontend::FeaturePipeline;

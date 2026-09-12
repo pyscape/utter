@@ -1,0 +1,2341 @@
+#!/usr/bin/env python3
+"""Silence direction and word transitions, read off the partial's readings, on a built stream.
+
+    python scripts/partial_states.py --data DIR --model DIR [--out FILE] [--words N]
+
+A Speech Commands clip carries one word, so it carries no transition and no finish. This script
+builds a stream instead: utterances of one to five clips, pauses of 100-800 ms between the words
+of an utterance, finishes of 2-3 s between utterances, every gap cut in rotation from the
+dataset's own six background recordings and scaled to about -50 dBFS RMS rather than to digital
+zeros, which the floor tracker treats apart (`[[rr:TD-8#The runtime reports the floor]]`). The
+stream is built, so every word's position and every gap's length are exact, and each word's
+onset and offset come from the clip's own energy envelope, owing nothing to either engine.
+
+Two questions, both about what the readings say before rank 0 moves:
+
+A. Silence direction. At every block the ground truth says whether the next W ms cross into
+   silence, out of it, or neither. R0 is TD-8's reading of the fields, the trailing `[sil]`
+   span past a bound and a word arriving at rank 0
+   (`[[rr:TD-8#End of speech is the endpoint, and the trailing silence entry is its clock]]`);
+   R1 is R0 plus the readings' motion, the empty reading's `lead_delta` at an utterance's start
+   and an extending reading's mid-utterance
+   (`[[rr:TD-9#Every reading carries its lead's motion]]`). Scored per state at each W, by lead
+   time per true transition, by false alarms per minute on the recordings and on finishes, and
+   by the end-of-speech confusion curve TD-8's private figures give the shape of.
+B. Word transitions. Per ground-truth transition, whether a reading extending rank 0 by one
+   word appears before that word reaches rank 0, by how many advances and milliseconds, how
+   often its extra word is the right one, and what the `[sil]` entries measure meanwhile.
+
+Held out as `[[rr:TD-9#The benchmark is paired, held out, and charged in milliseconds]]` asks:
+every threshold is fitted on streams built from the validation split and every reported figure
+comes from streams built from the testing split, with the same seed so the streams are
+reproducible. Writes `<out>.md`, `<out>.json` (every figure) and `<out>.streams.jsonl` (per
+stream the ground truth, the finals and the whole advance series, so a rule can be rescored
+without decoding again).
+"""
+
+import argparse
+import array
+import bisect
+import json
+import math
+import random
+import sys
+import time
+from collections import Counter, defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import speech_commands as sc  # noqa: E402
+
+RATE = sc.RATE
+SAMPLES_PER_MS = RATE // 1000
+
+GAP_FLOOR_DBFS = -50.0
+PAUSE_MS = (100, 800)
+FINISH_MS = (2000, 3000)
+WORDS_PER_UTTERANCE = (1, 5)
+UTTERANCES_PER_STREAM = 10
+
+HORIZONS = (240, 500)
+STATES = ("away", "toward", "maintaining silence", "maintaining speech")
+
+BOUND_GRID = (200, 300, 400, 500, 600, 700, 800, 1000)
+SIL_DELTA_GRID = (0.0, -0.25, -0.5, -1.0, -2.0, -4.0, -8.0)
+EXT_DELTA_GRID = (0.0, 0.25, 0.5, 1.0, 2.0, 4.0)
+TD8_BOUND_MS = 300  # the bound TD-8 quotes its private figures at
+
+EOS_GRID = (100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1500)
+STABLE_BOUND_MS = 200
+BOOTSTRAPS = 1000
+
+
+# --- ground truth -----------------------------------------------------------------------------
+
+
+def energy_start(pcm, frame_ms=10, drop_db=20.0):
+    """Start, in seconds, of the first frame within `drop_db` of the clip's loudest frame: the
+    mirror of sc.energy_end, which gives the last."""
+    a = array.array("h")
+    a.frombytes(pcm)
+    n = RATE * frame_ms // 1000
+    levels = []
+    for i in range(0, len(a) - n + 1, n):
+        acc = 0
+        for v in a[i : i + n]:
+            acc += v * v
+        levels.append(10 * math.log10(acc / n + 1e-9))
+    if not levels:
+        return None
+    peak = max(levels)
+    first = min(i for i, level in enumerate(levels) if level >= peak - drop_db)
+    return first * n / RATE
+
+
+class GapSource:
+    """Background audio for the gaps, taken from the recordings in rotation and scaled to a fixed
+    floor. Each recording keeps its own cursor, so no two gaps cut from one recording overlap
+    until it wraps."""
+
+    def __init__(self, paths, floor_dbfs=GAP_FLOOR_DBFS):
+        self.names = [p.name for p in paths]
+        self.audio = []
+        for p in paths:
+            a = array.array("h")
+            a.frombytes(sc.read_pcm(p))
+            self.audio.append(a)
+        self.cursor = [0] * len(paths)
+        self.turn = 0
+        self.target = 32768.0 * 10.0 ** (floor_dbfs / 20.0)
+
+    def take(self, n):
+        i = self.turn % len(self.audio)
+        self.turn += 1
+        a = self.audio[i]
+        c = self.cursor[i]
+        seg = [a[(c + k) % len(a)] for k in range(n)]
+        self.cursor[i] = (c + n) % len(a)
+        rms = math.sqrt(sum(float(v) * v for v in seg) / len(seg)) if seg else 0.0
+        gain = self.target / rms if rms > 0 else 0.0
+        out = array.array("h", [0]) * n
+        for k in range(n):
+            v = int(round(gain * seg[k]))
+            out[k] = -32768 if v < -32768 else (32767 if v > 32767 else v)
+        return out.tobytes(), self.names[i]
+
+
+def build_stream(rng, clips, gaps, utterances):
+    """One stream and its truth: the PCM, each word with its position and energy span, each gap
+    with its kind and length. The stream ends with a finish gap so the last word has one."""
+    parts = []
+    words = []
+    gap_rows = []
+    pos = 0
+    for u in range(utterances):
+        n = rng.randint(*WORDS_PER_UTTERANCE)
+        for k in range(n):
+            label, path = clips.pop()
+            pcm = sc.read_pcm(path)
+            start = energy_start(pcm)
+            end = sc.energy_end(pcm)
+            n_samples = len(pcm) // 2
+            words.append(
+                dict(
+                    label=label,
+                    clip=f"{path.parent.name}/{path.name}",
+                    utt=u,
+                    index=k,
+                    pos=pos,
+                    samples=n_samples,
+                    onset=pos + (int(start * RATE) if start is not None else 0),
+                    offset=pos + (int(end * RATE) if end is not None else n_samples),
+                )
+            )
+            parts.append(pcm)
+            pos += n_samples
+            last = k == n - 1
+            ms = rng.uniform(*(FINISH_MS if last else PAUSE_MS))
+            g = int(ms * SAMPLES_PER_MS)
+            audio, src = gaps.take(g)
+            parts.append(audio)
+            gap_rows.append(
+                dict(kind="finish" if last else "pause", after=len(words) - 1, pos=pos, samples=g, source=src)
+            )
+            pos += g
+    return b"".join(parts), words, gap_rows
+
+
+class Truth:
+    """Speech is the union of the words' energy spans; everything else, the gaps and the quiet
+    heads and tails of the clips themselves, is silence."""
+
+    def __init__(self, words):
+        self.iv = [(w["onset"], w["offset"]) for w in words]
+        self.starts = [a for a, _ in self.iv]
+
+    def speech_at(self, s):
+        i = bisect.bisect_right(self.starts, s) - 1
+        return i >= 0 and s < self.iv[i][1]
+
+    def any_speech(self, a, b):
+        i = bisect.bisect_right(self.starts, b) - 1
+        return i >= 0 and self.iv[i][1] > a
+
+    def any_silence(self, a, b):
+        i = bisect.bisect_right(self.starts, a) - 1
+        return not (i >= 0 and self.iv[i][0] <= a and self.iv[i][1] >= b)
+
+    def forecast(self, fed, window):
+        """The state of the next `window` samples after the audio fed, from the truth alone."""
+        a = fed - 1
+        b = a + window
+        if self.speech_at(a):
+            return "toward" if self.any_silence(a, b) else "maintaining speech"
+        return "away" if self.any_speech(a, b) else "maintaining silence"
+
+
+# --- the readings -----------------------------------------------------------------------------
+
+
+def beam_readings(p):
+    return tuple((e["text"], e["confidence"]) for e in (p.get("partial_alternatives") or []))
+
+
+def word_list(text):
+    return [w for w in text.split() if w != "[sil]"]
+
+
+def reading_leads(readings):
+    """Each reading's confidence less the best among the others: the gap for rank 0, a deficit
+    for the rest, undefined where a reading stands alone."""
+    if len(readings) < 2:
+        return {t: None for t, _ in readings}
+    return {t: c - max(d for u, d in readings if u != t) for t, c in readings}
+
+
+def relation(w0, w):
+    if w == w0:
+        return "same"
+    if len(w) < len(w0) and w0[: len(w)] == w:
+        return "prefix"
+    if len(w) > len(w0) and w[: len(w0)] == w0:
+        return "extends"
+    return "differs"
+
+
+def trailing_sil(p):
+    e = p.get("partial_result") or []
+    if e and e[-1]["word"] == "[sil]":
+        return (e[-1]["end_sample"] - e[-1]["start_sample"]) / SAMPLES_PER_MS, e[-1]["start_sample"]
+    return None, None
+
+
+def last_word_entry(p):
+    for e in reversed(p.get("partial_result") or []):
+        if e["word"] != "[sil]":
+            return e
+    return None
+
+
+def inner_sil_spans(p):
+    """The `[sil]` entries with a word on both sides, by the index of the word before them: the
+    pause the decoder measured between two words."""
+    e = p.get("partial_result") or []
+    out = {}
+    seen = 0
+    for k, entry in enumerate(e):
+        if entry["word"] != "[sil]":
+            seen += 1
+        elif 0 < k < len(e) - 1 and e[k + 1]["word"] != "[sil]" and seen:
+            out[seen - 1] = (entry["end_sample"] - entry["start_sample"]) / SAMPLES_PER_MS
+    return out
+
+
+def build_state(fed, seg, p, readings, prev, first_seen):
+    texts = [t for t, _ in readings]
+    for t in texts:
+        first_seen.setdefault(t, fed)
+    lead = reading_leads(readings)
+    delta = {}
+    if prev is not None:
+        for t in texts:
+            before = prev["lead"].get(t)
+            if before is not None and lead[t] is not None:
+                delta[t] = lead[t] - before
+    words = {t: word_list(t) for t in texts}
+    w0 = words[texts[0]]
+    rel = {t: relation(w0, words[t]) for t in texts}
+    extends = [
+        dict(rank=i, text=t, extra=words[t][len(w0) :], lead=lead[t], lead_delta=delta.get(t))
+        for i, t in enumerate(texts)
+        if rel[t] == "extends"
+    ]
+    span, sil_start = trailing_sil(p)
+    entry = last_word_entry(p)
+    return dict(
+        fed=fed,
+        seg=seg,
+        readings=readings,
+        words0=w0,
+        lead=lead,
+        delta=delta,
+        age={t: (fed - first_seen[t]) / SAMPLES_PER_MS for t in texts},
+        relation=rel,
+        extends=extends,
+        sil_span=span,
+        sil_start=sil_start,
+        last_word=entry["word"] if entry else None,
+        last_word_end=entry["end_sample"] if entry else None,
+        inner_sil=inner_sil_spans(p),
+        grew=False,
+    )
+
+
+def run_stream(eng, pcm, block_ms, alternatives, words_on=True):
+    """Feed one stream in blocks, keeping every partial's readings with the position fed and
+    every final with its own. A final clears the decoder's history, so the series is cut there:
+    ages and lead deltas start again in the next segment."""
+    rec = eng.new(alternatives=alternatives)
+    if words_on and hasattr(rec, "SetPartialWords"):
+        rec.SetPartialWords(True)
+    block = RATE * block_ms // 1000 * 2
+    states, blocks, finals = [], [], []
+    fed = 0
+    seg = 0
+    prev = None
+    prev_readings = None
+    first_seen = {}
+    prev_words0 = []
+    for i in range(0, len(pcm), block):
+        chunk = pcm[i : i + block]
+        fed += len(chunk) // 2
+        if rec.AcceptWaveform(chunk):
+            f = json.loads(rec.Result())
+            finals.append(dict(fed=fed, seg=seg, text=f.get("text", ""), result=f.get("result") or []))
+            blocks.append(dict(fed=fed, adv=None, final=True, stable=None, word=None))
+            seg += 1
+            prev, prev_readings, first_seen, prev_words0 = None, None, {}, []
+            continue
+        p = json.loads(rec.PartialResult())
+        readings = beam_readings(p)
+        adv = None
+        if readings and readings != prev_readings:
+            st = build_state(fed, seg, p, readings, prev, first_seen)
+            st["i"] = len(states)
+            st["grew"] = len(st["words0"]) > len(prev_words0)
+            prev_words0 = st["words0"]
+            states.append(st)
+            prev = st
+            adv = len(states) - 1
+        elif readings and states:
+            adv = len(states) - 1
+        prev_readings = readings
+        entry = last_word_entry(p)
+        blocks.append(
+            dict(
+                fed=fed,
+                adv=adv,
+                final=False,
+                stable=entry["stable_ms"] if entry and "stable_ms" in entry else None,
+                word=entry["word"] if entry else None,
+            )
+        )
+    f = json.loads(rec.FinalResult())
+    finals.append(dict(fed=fed, seg=seg, text=f.get("text", ""), result=f.get("result") or []))
+    return states, blocks, finals
+
+
+def run_stream_text(eng, pcm, block_ms, words_on=False):
+    """The stock wheel's half: rank-0 text per block and the finals, no readings to move."""
+    rec = eng.new()
+    if words_on and hasattr(rec, "SetPartialWords"):
+        rec.SetPartialWords(True)
+    block = RATE * block_ms // 1000 * 2
+    blocks, finals = [], []
+    fed = 0
+    for i in range(0, len(pcm), block):
+        chunk = pcm[i : i + block]
+        fed += len(chunk) // 2
+        if rec.AcceptWaveform(chunk):
+            finals.append(dict(fed=fed, text=json.loads(rec.Result()).get("text", "")))
+            blocks.append(dict(fed=fed, words=[], final=True))
+        else:
+            p = json.loads(rec.PartialResult())
+            blocks.append(dict(fed=fed, words=word_list(p.get("partial", "")), final=False))
+    finals.append(dict(fed=fed, text=json.loads(rec.FinalResult()).get("text", "")))
+    return blocks, finals
+
+
+# --- the rules --------------------------------------------------------------------------------
+
+
+def gaining_extender(st, ext_delta):
+    """A reading that is rank 0 plus exactly one word and is gaining on the field."""
+    return any(
+        len(e["extra"]) == 1 and e["lead_delta"] is not None and e["lead_delta"] >= ext_delta
+        for e in st["extends"]
+    )
+
+
+def gaining_extras(st, ext_delta):
+    """The extra words of the readings that are rank 0 plus one word and gaining, in rank order."""
+    return [
+        e["extra"][0]
+        for e in st["extends"]
+        if len(e["extra"]) == 1 and e["lead_delta"] is not None and e["lead_delta"] >= ext_delta
+    ]
+
+
+def calls(states, bound_ms, sil_delta=None, ext_delta=None):
+    """One forecast per advance. R0 is sil_delta being None: a word arriving at rank 0 is speech
+    beginning, the trailing span crossing the bound is speech ending, and a span that goes on
+    growing is silence being kept. R1 reads the motion first: at an utterance's start the empty
+    reading losing its lead means a word is coming, and mid-utterance an extending reading
+    gaining on the field means the next word is forming."""
+    out = []
+    crossed = False
+    seg = None
+    for st in states:
+        if st["seg"] != seg:
+            seg, crossed = st["seg"], False
+        w0 = st["words0"]
+        span = st["sil_span"]
+        call = None
+        if sil_delta is not None and not st["grew"]:
+            if not w0:
+                d = st["delta"].get("[sil]")
+                if d is not None and d <= sil_delta:
+                    call = "away"
+            elif gaining_extender(st, ext_delta):
+                call = "away"
+        if call is None:
+            if st["grew"]:
+                call, crossed = "away", False
+            elif span is not None and span >= bound_ms:
+                call = "maintaining silence" if crossed else "toward"
+                crossed = True
+            elif w0:
+                call = "maintaining speech"
+            else:
+                call = "maintaining silence"
+        out.append(call)
+    return out
+
+
+def block_calls(blocks, per_advance):
+    """The call a host reads at every block: between advances the partial repeats, so the call
+    does."""
+    return [None if b["adv"] is None else per_advance[b["adv"]] for b in blocks]
+
+
+def tally(counts, truth, call):
+    if call == truth:
+        counts[truth]["tp"] += 1
+    else:
+        counts[call]["fp"] += 1
+        counts[truth]["fn"] += 1
+
+
+def prf(c):
+    p = c["tp"] / (c["tp"] + c["fp"]) if c["tp"] + c["fp"] else float("nan")
+    r = c["tp"] / (c["tp"] + c["fn"]) if c["tp"] + c["fn"] else float("nan")
+    f = 2 * p * r / (p + r) if p == p and r == r and p + r else 0.0
+    return p, r, f
+
+
+def add_counts(a, b):
+    for s in STATES:
+        for k in ("tp", "fp", "fn"):
+            a[s][k] += b[s][k]
+    return a
+
+
+def empty_counts():
+    return {s: dict(tp=0, fp=0, fn=0) for s in STATES}
+
+
+# --- benchmark A ------------------------------------------------------------------------------
+
+
+def label_blocks(stream):
+    """The ground-truth forecast at every block, and the utterance each block belongs to, both
+    fixed once so a grid of thresholds is scored against the same labels."""
+    truth, words = stream["truth"], stream["words"]
+    pos = [w["pos"] for w in words]
+    stream["labels"] = {
+        w_ms: [truth.forecast(b["fed"], w_ms * SAMPLES_PER_MS) for b in stream["blocks"]] for w_ms in HORIZONS
+    }
+    stream["utt"] = [
+        words[max(0, bisect.bisect_right(pos, b["fed"]) - 1)]["utt"] if words else 0 for b in stream["blocks"]
+    ]
+
+
+def group_counts(stream, per_advance, w_ms):
+    """Per-utterance confusion counts, so a bootstrap can resample utterances."""
+    labels = stream["labels"][w_ms]
+    out = defaultdict(empty_counts)
+    for utt, label, call in zip(stream["utt"], labels, block_calls(stream["blocks"], per_advance)):
+        if call is not None:
+            tally(out[utt], label, call)
+    return out
+
+
+def transitions_of(stream, lookback_ms):
+    """Every ground-truth transition with the window a rule may call it in. The window reaches
+    back lookback_ms and no further: a stream's gaps run to three seconds, and a call that
+    early is not a forecast of the word that eventually arrives."""
+    words = stream["words"]
+    back = lookback_ms * SAMPLES_PER_MS
+    rows = []
+    for i, w in enumerate(words):
+        prev_end = words[i - 1]["offset"] if i else 0
+        nxt = words[i + 1]["onset"] if i + 1 < len(words) else stream["samples"]
+        rows.append(
+            dict(
+                kind="away",
+                at=w["onset"],
+                lo=max(prev_end, w["onset"] - back),
+                hi=min(w["offset"], w["onset"] + back),
+                word=i,
+                label=w["label"],
+            )
+        )
+        rows.append(
+            dict(
+                kind="toward",
+                at=w["offset"],
+                lo=max(w["onset"], w["offset"] - back),
+                hi=min(nxt, w["offset"] + back),
+                word=i,
+                label=w["label"],
+            )
+        )
+    return rows
+
+
+def lead_times(streams, per_advance_by_stream, tolerance):
+    """Per true transition, the milliseconds from the first block a rule calls that state to the
+    transition itself, negative before it. A transition is 'handled' when the call falls inside
+    the tolerance window around the truth, which is the paired unit for McNemar."""
+    out = {"away": [], "toward": []}
+    handled = {"away": [], "toward": []}
+    for s in streams:
+        cb = block_calls(s["blocks"], per_advance_by_stream[s["key"]])
+        feds = [b["fed"] for b in s["blocks"]]
+        for tr in s["transitions"]:
+            lo = bisect.bisect_left(feds, tr["lo"])
+            hi = bisect.bisect_right(feds, tr["hi"])
+            first = None
+            for k in range(lo, hi):
+                if cb[k] == tr["kind"]:
+                    first = feds[k]
+                    break
+            ms = None if first is None else (first - tr["at"]) / SAMPLES_PER_MS
+            out[tr["kind"]].append(ms)
+            ok = ms is not None and -tolerance <= ms <= tolerance
+            handled[tr["kind"]].append(bool(ok))
+    return out, handled
+
+
+def alarms(streams, per_advance_by_stream, kind, block_ms):
+    """False calls where the truth cannot be that state: `away` inside a finish gap after the
+    word has ended, or anywhere on the recordings. Counted as blocks and as distinct runs."""
+    blocks = runs = total_blocks = 0
+    for s in streams:
+        cb = block_calls(s["blocks"], per_advance_by_stream[s["key"]])
+        spans = (
+            [(g["pos"], g["pos"] + g["samples"]) for g in s["gaps"] if g["kind"] == "finish"]
+            if kind == "finish"
+            else [(0, s["samples"])]
+        )
+        prev = None
+        for b, call in zip(s["blocks"], cb):
+            if not any(lo <= b["fed"] < hi for lo, hi in spans):
+                prev = None
+                continue
+            total_blocks += 1
+            if call == "away":
+                blocks += 1
+                if prev != "away":
+                    runs += 1
+            prev = call
+    minutes = total_blocks * block_ms / 1000 / 60.0 if total_blocks else float("nan")
+    return dict(blocks=blocks, runs=runs, minutes=minutes, per_min_blocks=blocks / minutes, per_min=runs / minutes)
+
+
+def eos_curve(streams, bound_grid, ext_delta):
+    """Among the silent stretches, at each millisecond of trailing silence: the share of pauses
+    whose span reaches it before the next word (a pause taken for a finish) and the share of
+    finishes whose span reaches it at all. The motion variant refuses the call at an advance
+    where an extending reading is gaining."""
+    rows = {x: dict(pause=0, pause_motion=0, finish=0, finish_motion=0) for x in bound_grid}
+    totals = Counter()
+    early = {x: [] for x in bound_grid}
+    for s in streams:
+        by_seg = defaultdict(list)
+        for st in s["states"]:
+            by_seg[st["seg"]].append(st)
+        finals = sorted(f["fed"] for f in s["finals"])
+        for g in s["gaps"]:
+            w = s["words"][g["after"]]
+            lo = w["offset"]
+            hi = g["pos"] + g["samples"]
+            if g["kind"] == "pause":
+                nxt = g["after"] + 1
+                hi = s["words"][nxt]["onset"] if nxt < len(s["words"]) else hi
+            totals[g["kind"]] += 1
+            spans = [st for st in s["states"] if lo <= st["fed"] < hi and st["sil_span"] is not None]
+            endpoint = next((f for f in finals if lo <= f < hi), None)
+            for x in bound_grid:
+                hit = next((st for st in spans if st["sil_span"] >= x), None)
+                if hit is not None:
+                    rows[x][g["kind"]] += 1
+                    if g["kind"] == "finish" and endpoint is not None and hit["fed"] <= endpoint:
+                        early[x].append((endpoint - hit["fed"]) / SAMPLES_PER_MS)
+                quiet = next((st for st in spans if st["sil_span"] >= x and not gaining_extender(st, ext_delta)), None)
+                if quiet is not None:
+                    rows[x][g["kind"] + "_motion"] += 1
+    return rows, totals, early
+
+
+# --- benchmark B ------------------------------------------------------------------------------
+
+
+def eos_by_gap_length(streams, bound_ms, ext_delta, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
+    """At one bound, the share of pauses taken for a finish by the length of the pause that was
+    built, since the headline share is a function of that distribution and nothing else."""
+    rows = {}
+    for lo, hi in zip(edges, edges[1:]):
+        rows[f"{lo}-{hi}"] = dict(n=0, mistaken=0, mistaken_motion=0)
+    for s_ in streams:
+        for g in s_["gaps"]:
+            if g["kind"] != "pause":
+                continue
+            ms = g["samples"] / SAMPLES_PER_MS
+            key = next((f"{lo}-{hi}" for lo, hi in zip(edges, edges[1:]) if lo <= ms < hi), None)
+            if key is None:
+                continue
+            w = s_["words"][g["after"]]
+            nxt = g["after"] + 1
+            lo_s = w["offset"]
+            hi_s = s_["words"][nxt]["onset"] if nxt < len(s_["words"]) else g["pos"] + g["samples"]
+            spans = [st for st in s_["states"] if lo_s <= st["fed"] < hi_s and st["sil_span"] is not None]
+            rows[key]["n"] += 1
+            if any(st["sil_span"] >= bound_ms for st in spans):
+                rows[key]["mistaken"] += 1
+            if any(st["sil_span"] >= bound_ms and not gaining_extender(st, ext_delta) for st in spans):
+                rows[key]["mistaken_motion"] += 1
+    return rows
+
+
+def transition_records(streams, ext_delta, lookback_ms, forward_ms=1500):
+    """Per ground-truth transition into a word, inside a bounded window around its onset: when
+    the rank-0 word list grew (the detection a host has today), when the word itself led, when a
+    reading first extended rank 0 and what its extra word was, the decoder's own measure of the
+    pause, and the latency from the onset. Also every advance in the window that carried an
+    extending reading, so preview accuracy can be read against the lead still to run."""
+    rows = []
+    previews = []
+    back = lookback_ms * SAMPLES_PER_MS
+    fwd = forward_ms * SAMPLES_PER_MS
+    for s_ in streams:
+        feds = [b["fed"] for b in s_["blocks"]]
+        for i, w in enumerate(s_["words"]):
+            prev = s_["words"][i - 1] if i and s_["words"][i - 1]["utt"] == w["utt"] else None
+            prev_end = s_["words"][i - 1]["offset"] if i else 0
+            nxt = s_["words"][i + 1]["onset"] if i + 1 < len(s_["words"]) else s_["samples"]
+            lo = max(prev_end, w["onset"] - back)
+            hi = min(nxt, w["onset"] + fwd)
+            inside = [st for st in s_["states"] if lo <= st["fed"] < hi]
+            arrive = next((st for st in inside if st["grew"]), None)
+            leads = next((st for st in inside if st["words0"] and st["words0"][-1] == w["label"]), None)
+            ext = next((st for st in inside if st["extends"]), None)
+            gext = next((st for st in inside if gaining_extender(st, ext_delta)), None)
+            correct_ext = next(
+                (st for st in inside if any(e["extra"] and e["extra"][0] == w["label"] for e in st["extends"])),
+                None,
+            )
+            gap = next((g for g in s_["gaps"] if prev is not None and g["after"] == i - 1), None)
+            row = dict(
+                stream=s_["key"],
+                word=i,
+                utt=w["utt"],
+                label=w["label"],
+                first_in_utterance=prev is None,
+                onset_ms=w["onset"] / SAMPLES_PER_MS,
+                arrive_ms=None if arrive is None else arrive["fed"] / SAMPLES_PER_MS,
+                arrive_word=None if arrive is None else (arrive["words0"][-1] if arrive["words0"] else None),
+                arrive_index=None if arrive is None else arrive["i"],
+                leads_ms=None if leads is None else leads["fed"] / SAMPLES_PER_MS,
+                ext_ms=None if ext is None else ext["fed"] / SAMPLES_PER_MS,
+                ext_index=None if ext is None else ext["i"],
+                ext_top=None if ext is None else (ext["extends"][0]["extra"][0] if ext["extends"][0]["extra"] else None),
+                ext_top3=None if ext is None else [e["extra"][0] for e in ext["extends"][:3] if e["extra"]],
+                ext_rank0_empty=None if ext is None else not ext["words0"],
+                ext_gaining=None if ext is None else gaining_extender(ext, ext_delta),
+                gext_ms=None if gext is None else gext["fed"] / SAMPLES_PER_MS,
+                gext_index=None if gext is None else gext["i"],
+                gext_top=None if gext is None else gaining_extras(gext, ext_delta)[0],
+                gext_top3=None if gext is None else gaining_extras(gext, ext_delta)[:3],
+                correct_ext_ms=None if correct_ext is None else correct_ext["fed"] / SAMPLES_PER_MS,
+                gap_ms=None if gap is None else gap["samples"] / SAMPLES_PER_MS,
+                gap_kind=None if gap is None else gap["kind"],
+                elapsed_ms=None if prev is None else (w["onset"] - prev["offset"]) / SAMPLES_PER_MS,
+                inner_sil_ms=None,
+                latency_ms=None,
+                stable_ms_from_onset=None,
+                preview_advances=None,
+                preview_ms=None,
+                preview_correct_ms=None,
+                gaining_preview_ms=None,
+                final_between=None if prev is None else any(prev["offset"] <= f["fed"] < w["onset"] for f in s_["finals"]),
+            )
+            if arrive is not None and ext is not None:
+                row["preview_advances"] = row["arrive_index"] - row["ext_index"]
+                row["preview_ms"] = row["arrive_ms"] - row["ext_ms"]
+                if correct_ext is not None:
+                    row["preview_correct_ms"] = row["arrive_ms"] - row["correct_ext_ms"]
+            if arrive is not None and gext is not None:
+                row["gaining_preview_ms"] = row["arrive_ms"] - row["gext_ms"]
+            if leads is not None:
+                row["latency_ms"] = (leads["fed"] - w["onset"]) / SAMPLES_PER_MS
+                if prev is not None and len(leads["words0"]) >= 2:
+                    # the [sil] entry before the word that has just led, which is the last one
+                    row["inner_sil_ms"] = leads["inner_sil"].get(len(leads["words0"]) - 2)
+                k = bisect.bisect_left(feds, leads["fed"])
+                stable = next(
+                    (
+                        b["fed"]
+                        for b in s_["blocks"][k:]
+                        if not b["final"] and b["word"] == w["label"] and (b["stable"] or 0) >= STABLE_BOUND_MS
+                    ),
+                    None,
+                )
+                row["stable_ms_from_onset"] = None if stable is None else (stable - w["onset"]) / SAMPLES_PER_MS
+            rows.append(row)
+            if arrive is None:
+                continue
+            for st in inside:
+                if st["fed"] >= arrive["fed"] or not st["extends"]:
+                    continue
+                extra = [e["extra"][0] for e in st["extends"] if e["extra"]]
+                gain = gaining_extras(st, ext_delta)
+                previews.append(
+                    dict(
+                        stream=s_["key"],
+                        word=i,
+                        label=w["label"],
+                        utt=w["utt"],
+                        lead_ms=(arrive["fed"] - st["fed"]) / SAMPLES_PER_MS,
+                        rank0_empty=not st["words0"],
+                        top1=bool(extra and extra[0] == w["label"]),
+                        top3=w["label"] in extra[:3],
+                        gaining=bool(gain),
+                        gain_top1=bool(gain and gain[0] == w["label"]),
+                        gain_top3=w["label"] in gain[:3],
+                    )
+                )
+    return rows, previews
+
+
+def span_errors(streams):
+    """The trailing `[sil]` span, per advance inside a gap, against two clocks: the silence that
+    has elapsed since the word's energy offset, and the silence since the decoder's own end of
+    that word. The second isolates the span's own lag from the difference between the two
+    alignments."""
+    out = defaultdict(list)
+    decoded = defaultdict(list)
+    for s_ in streams:
+        for g in s_["gaps"]:
+            w = s_["words"][g["after"]]
+            lo, hi = w["offset"], g["pos"] + g["samples"]
+            if g["kind"] == "pause":
+                nxt = g["after"] + 1
+                hi = s_["words"][nxt]["onset"] if nxt < len(s_["words"]) else hi
+            for st in s_["states"]:
+                if lo <= st["fed"] < hi and st["sil_span"] is not None:
+                    out[g["kind"]].append(st["sil_span"] - (st["fed"] - lo) / SAMPLES_PER_MS)
+                    if st["last_word_end"] is not None:
+                        decoded[g["kind"]].append(
+                            st["sil_span"] - (st["fed"] - st["last_word_end"]) / SAMPLES_PER_MS
+                        )
+    return out, decoded
+
+
+def dying_extenders(streams, spans, one_word_only=True):
+    """Extending readings that appear where no word follows and never reach rank 0: the beam
+    guessing at a word that is not coming. Counted per minute of the audio in spans, and
+    split by whether rank 0 held words: over an empty rank 0 every word-carrying reading
+    extends it, so those are a word being guessed at from silence, not a continuation."""
+    out = {True: 0, False: 0}
+    total = 0
+    for s_ in streams:
+        for lo, hi in spans(s_):
+            total += hi - lo
+            seen = {True: set(), False: set()}
+            reached = set()
+            for st in s_["states"]:
+                if not (lo <= st["fed"] < hi):
+                    continue
+                for e in st["extends"]:
+                    if e["extra"] and (len(e["extra"]) == 1 or not one_word_only):
+                        seen[bool(st["words0"])].add(tuple(word_list(e["text"])))
+                if st["words0"]:
+                    reached.add(tuple(st["words0"]))
+            for k in (True, False):
+                out[k] += len([t for t in seen[k] if t not in reached])
+    minutes = total / RATE / 60.0 if total else float("nan")
+    def per(c):
+        return c / minutes if minutes == minutes and minutes else float("nan")
+
+    return dict(
+        over_words=out[True],
+        over_silence=out[False],
+        minutes=minutes,
+        per_min_over_words=per(out[True]),
+        per_min_over_silence=per(out[False]),
+    )
+
+
+# --- the readings' momentum -------------------------------------------------------------------
+
+BANDS = (("<1", 0.0, 1.0), ("1-4", 1.0, 4.0), (">=4", 4.0, float("inf")))
+MOMENTUM_SUBSETS = ("all", "[sil]", "extends", "differs")
+ALIGN_OFFSETS = (-3, -2, -1, 0, 1, 2)
+SIL_CROSS_GRID = (0.0, -0.25, -0.5, -1.0, -2.0, -4.0)
+EXT_CROSS_GRID = (0.0, 0.25, 0.5, 1.0, 2.0, 4.0)
+
+
+def band_of(lead):
+    a = abs(lead)
+    return next(name for name, lo, hi in BANDS if lo <= a < hi)
+
+
+def rank_auc(pairs):
+    """Rank-AUC of a score against a boolean label, ties at the mid-rank; 0.5 is no information
+    and below 0.5 the signal is inverted."""
+    xs = [(v, y) for v, y in pairs if v is not None]
+    pos = sum(1 for _, y in xs if y)
+    neg = len(xs) - pos
+    if not pos or not neg:
+        return None
+    xs.sort(key=lambda t: t[0])
+    ranks = [0.0] * len(xs)
+    i = 0
+    while i < len(xs):
+        j = i
+        while j < len(xs) and xs[j][0] == xs[i][0]:
+            j += 1
+        for k in range(i, j):
+            ranks[k] = (i + j - 1) / 2 + 1
+        i = j
+    rank_sum = sum(rk for rk, (_, y) in zip(ranks, xs) if y)
+    return (rank_sum - pos * (pos + 1) / 2) / (pos * neg)
+
+
+class Corr:
+    """Pearson r and sign agreement accumulated in sums, since the pairs run to six figures."""
+
+    def __init__(self):
+        self.n = self.sx = self.sy = self.sxx = self.syy = self.sxy = 0.0
+        self.signed = self.agree = 0
+
+    def add(self, x, y):
+        self.n += 1
+        self.sx += x
+        self.sy += y
+        self.sxx += x * x
+        self.syy += y * y
+        self.sxy += x * y
+        if x and y:
+            self.signed += 1
+            self.agree += (x > 0) == (y > 0)
+
+    def read(self):
+        n = self.n
+        if n < 2:
+            return dict(n=int(n), r=None, sign_agreement=None, signed=self.signed)
+        cov = self.sxy / n - (self.sx / n) * (self.sy / n)
+        vx = self.sxx / n - (self.sx / n) ** 2
+        vy = self.syy / n - (self.sy / n) ** 2
+        r = cov / math.sqrt(vx * vy) if vx > 0 and vy > 0 else None
+        return dict(
+            n=int(n),
+            r=r,
+            sign_agreement=self.agree / self.signed if self.signed else None,
+            signed=self.signed,
+        )
+
+
+def momentum(streams):
+    """Does a lead's motion carry from one advance to the next: the correlation between a
+    reading's lead_delta now and at the next advance, by the band its lead sits in and by what
+    the reading is to rank 0. Three advances are needed for one pair, since each delta is itself
+    a difference."""
+    acc = defaultdict(Corr)
+    for s_ in streams:
+        states = s_["states"]
+        for k in range(len(states) - 1):
+            a, b = states[k], states[k + 1]
+            if a["seg"] != b["seg"]:
+                continue
+            for t, lead in a["lead"].items():
+                da, db = a["delta"].get(t), b["delta"].get(t)
+                if lead is None or da is None or db is None:
+                    continue
+                band = band_of(lead)
+                subsets = ["all", "[sil]"] if t == "[sil]" else ["all", a["relation"][t]]
+                for subset in subsets:
+                    if subset not in MOMENTUM_SUBSETS:
+                        continue
+                    acc[(subset, band)].add(da, db)
+                    acc[(subset, "all")].add(da, db)
+    return {f"{subset}|{band}": c.read() for (subset, band), c in acc.items()}
+
+
+def spread(values):
+    v = [x for x in values if x is not None]
+    if not v:
+        return dict(n=0, mean=None, sd=None, p10=None, p50=None, p90=None)
+    mean = sum(v) / len(v)
+    var = sum((x - mean) ** 2 for x in v) / len(v)
+    return dict(
+        n=len(v),
+        mean=mean,
+        sd=math.sqrt(var),
+        p10=sc.quantile(v, 0.1),
+        p50=sc.quantile(v, 0.5),
+        p90=sc.quantile(v, 0.9),
+    )
+
+
+def kept_silence_spans(stream, after_ms=1000, before_ms=500):
+    """The interior of each finish gap: long after the word has ended and well before anything
+    begins, which is silence being kept rather than a transition."""
+    out = []
+    for g in stream["gaps"]:
+        if g["kind"] != "finish":
+            continue
+        w = stream["words"][g["after"]]
+        lo = w["offset"] + after_ms * SAMPLES_PER_MS
+        hi = g["pos"] + g["samples"] - before_ms * SAMPLES_PER_MS
+        if hi > lo:
+            out.append((lo, hi))
+    return out
+
+
+def whole_stream_spans(stream, after_ms=1000):
+    return [(after_ms * SAMPLES_PER_MS, stream["samples"])]
+
+
+def silence_signature(streams, spans):
+    """In steady silence: the leading reading's lead over its best rival, that lead's motion, and
+    how old the rival is. A lead that hovers while the rival stays young is a bound set by word
+    hypotheses that are started and pruned, not a lead that is being won."""
+    leads, deltas, ages, rank1_ages = [], [], [], []
+    sil_leads = advances = fresh = 0
+    for s_ in streams:
+        windows = spans(s_)
+        for st in s_["states"]:
+            if not any(lo <= st["fed"] < hi for lo, hi in windows):
+                continue
+            advances += 1
+            top = st["readings"][0][0]
+            sil_leads += top == "[sil]"
+            leads.append(st["lead"].get(top))
+            deltas.append(st["delta"].get(top))
+            ages.append(st["age"][top])
+            if len(st["readings"]) >= 2:
+                rival = st["readings"][1][0]
+                rank1_ages.append(st["age"][rival])
+                fresh += st["age"][rival] <= 240
+    return dict(
+        advances=advances,
+        sil_at_rank0=sil_leads,
+        lead=spread(leads),
+        velocity=spread(deltas),
+        leader_age_ms=spread(ages),
+        rival_age_ms=spread(rank1_ages),
+        rival_fresh=fresh,
+        rival_n=len(rank1_ages),
+    )
+
+
+def best_extends_delta(st):
+    for e in st["extends"]:
+        if len(e["extra"]) == 1:
+            return e["lead_delta"]
+    return None
+
+
+def aligned_velocity(streams):
+    """Every ground-truth onset and offset aligned at the advance that first covers it, with the
+    motion of three readings at the advances around it."""
+    series = defaultdict(lambda: defaultdict(list))
+    for s_ in streams:
+        states = s_["states"]
+        feds = [st["fed"] for st in states]
+        for tr in s_["transitions"]:
+            i0 = bisect.bisect_left(feds, tr["at"])
+            if i0 >= len(states):
+                continue
+            for off in ALIGN_OFFSETS:
+                k = i0 + off
+                if not (0 <= k < len(states)) or states[k]["seg"] != states[i0]["seg"]:
+                    continue
+                st = states[k]
+                kind = tr["kind"]
+                series[(kind, off)]["leader"].append(st["delta"].get(st["readings"][0][0]))
+                if not st["words0"]:
+                    series[(kind, off)]["sil"].append(st["delta"].get("[sil]"))
+                else:
+                    series[(kind, off)]["extends"].append(best_extends_delta(st))
+    return {
+        f"{kind}|{off}": {name: spread(v) for name, v in d.items()} for (kind, off), d in series.items()
+    }
+
+
+def crossings(stream, signal, theta):
+    """The advances where one reading's motion crosses a threshold: the empty reading's lead
+    falling, or a one-word extending reading's lead rising."""
+    out = []
+    for st in stream["states"]:
+        if signal == "sil":
+            if st["words0"]:
+                continue
+            d = st["delta"].get("[sil]")
+            if d is not None and d <= theta:
+                out.append(st["fed"])
+        else:
+            if not st["words0"]:
+                continue
+            d = best_extends_delta(st)
+            if d is not None and d >= theta:
+                out.append(st["fed"])
+    return out
+
+
+def crossing_scores(streams, signal, theta, lookback_ms, block_ms):
+    """A crossing counts as a hit when a word's onset follows it within the lookback; recall is
+    over the onsets. False alarms are crossings in kept silence and, on the recordings, anywhere.
+    """
+    back = lookback_ms * SAMPLES_PER_MS
+    hits = total = 0
+    onsets = called = 0
+    leads = []
+    alarm_events = 0
+    alarm_samples = 0
+    for s_ in streams:
+        fires = crossings(s_, signal, theta)
+        starts = [w["onset"] for w in s_["words"]]
+        total += len(fires)
+        for f in fires:
+            j = bisect.bisect_left(starts, f)
+            hits += j < len(starts) and starts[j] - f <= back
+        for w in s_["words"]:
+            onsets += 1
+            before = [f for f in fires if w["onset"] - back <= f < w["onset"]]
+            if before:
+                called += 1
+                leads.append((before[0] - w["onset"]) / SAMPLES_PER_MS)
+        windows = kept_silence_spans(s_) if s_["words"] else whole_stream_spans(s_)
+        for lo, hi in windows:
+            alarm_samples += hi - lo
+            alarm_events += sum(1 for f in fires if lo <= f < hi)
+    precision = hits / total if total else float("nan")
+    recall = called / onsets if onsets else float("nan")
+    minutes = alarm_samples / RATE / 60.0
+    return dict(
+        theta=theta,
+        crossings=total,
+        hits=hits,
+        precision=precision,
+        recall=recall,
+        f1=2 * precision * recall / (precision + recall) if total and called else 0.0,
+        onsets=onsets,
+        called=called,
+        lead_p10=sc.quantile(leads, 0.1),
+        lead_p50=sc.quantile(leads, 0.5),
+        lead_p90=sc.quantile(leads, 0.9),
+        alarms_per_min=alarm_events / minutes if minutes else float("nan"),
+        alarm_minutes=minutes,
+    )
+
+
+def reversal(streams):
+    """The leading reading leading but losing: its lead is positive and its motion negative.
+    Scored against rank 0 changing at the next advance and against rank 0's words differing from
+    the final that closes the segment."""
+    rows = []
+    for s_ in streams:
+        finals = {f["seg"]: sc.words_of(f["text"]) for f in s_["finals"]}
+        states = s_["states"]
+        for k in range(len(states) - 1):
+            st, nxt = states[k], states[k + 1]
+            if st["seg"] != nxt["seg"]:
+                continue
+            top = st["readings"][0][0]
+            lead, d = st["lead"].get(top), st["delta"].get(top)
+            if lead is None or d is None:
+                continue
+            rows.append(
+                dict(
+                    band=band_of(lead),
+                    lead=lead,
+                    delta=d,
+                    reversing=d < 0,
+                    changes=nxt["readings"][0][0] != top,
+                    unlike_final=st["words0"] != finals.get(st["seg"], []),
+                )
+            )
+    out = {}
+    for band in ("all",) + tuple(name for name, _, _ in BANDS):
+        b = rows if band == "all" else [x for x in rows if x["band"] == band]
+        if not b:
+            continue
+        for target in ("changes", "unlike_final"):
+            tp = sum(1 for x in b if x["reversing"] and x[target])
+            fp = sum(1 for x in b if x["reversing"] and not x[target])
+            fn = sum(1 for x in b if not x["reversing"] and x[target])
+            out[f"{band}|{target}"] = dict(
+                advances=len(b),
+                positives=tp + fn,
+                precision=tp / (tp + fp) if tp + fp else float("nan"),
+                recall=tp / (tp + fn) if tp + fn else float("nan"),
+                auc_lead=rank_auc([(x["lead"], x[target]) for x in b]),
+                auc_delta=rank_auc([(x["delta"], x[target]) for x in b]),
+            )
+    return out
+
+
+# --- statistics -------------------------------------------------------------------------------
+
+
+def bootstrap_diff(groups, metric, reps=BOOTSTRAPS, seed=7):
+    """Paired bootstrap over the groups (utterances, or transitions) of metric(b) - metric(a).
+    Each group carries whatever the metric needs for both rules, so the pairing is kept."""
+    if not groups:
+        return None
+    rng = random.Random(seed)
+    base = metric(groups)
+    draws = []
+    n = len(groups)
+    for _ in range(reps):
+        sample = [groups[rng.randrange(n)] for _ in range(n)]
+        draws.append(metric(sample))
+    draws.sort()
+    lo = draws[int(0.025 * reps)]
+    hi = draws[min(reps - 1, int(0.975 * reps))]
+    return dict(diff=base, lo=lo, hi=hi)
+
+
+def f1_metric(state):
+    def m(groups):
+        a, b = empty_counts(), empty_counts()
+        for ga, gb in groups:
+            add_counts(a, ga)
+            add_counts(b, gb)
+        return prf(b[state])[2] - prf(a[state])[2]
+
+    return m
+
+
+def mean_metric(index):
+    def m(groups):
+        vals = [g[index] for g in groups if g[index] is not None]
+        return sum(vals) / len(vals) if vals else float("nan")
+
+    return m
+
+
+def exact_mcnemar(b, c):
+    """The same two-sided exact test as sc.mcnemar, summed in log space. Its 2**n divisor
+    overflows a float past 1023 discordant pairs, which a stream of a thousand transitions
+    reaches; below that this delegates to it so the figures stay the repo's."""
+    n = b + c
+    if n == 0:
+        return 1.0
+    if n <= 1000:
+        return sc.mcnemar(b, c)
+    k = min(b, c)
+    ln = math.lgamma(n + 1)
+    tail = math.fsum(
+        math.exp(ln - math.lgamma(i + 1) - math.lgamma(n - i + 1) - n * math.log(2.0)) for i in range(k + 1)
+    )
+    return min(1.0, 2.0 * tail)
+
+
+def mcnemar_pair(a, b):
+    """Discordant counts and the exact two-sided p: only_b is where the second rule alone is
+    right."""
+    only_a = sum(1 for x, y in zip(a, b) if x and not y)
+    only_b = sum(1 for x, y in zip(a, b) if y and not x)
+    return dict(
+        both=sum(1 for x, y in zip(a, b) if x and y),
+        only_a=only_a,
+        only_b=only_b,
+        neither=sum(1 for x, y in zip(a, b) if not x and not y),
+        p=exact_mcnemar(only_a, only_b),
+    )
+
+
+def pval(x):
+    """An exact p over a thousand discordant pairs underflows a float, where 0 would read as a
+    measurement rather than as the bottom of the type."""
+    return "< 1e-308" if x == 0 else f"{x:.3g}"
+
+
+def num(x, places=1):
+    if x is None:
+        return "-"
+    if isinstance(x, float) and x != x:
+        return "-"
+    return f"{x:.{places}f}"
+
+
+def share(a, b):
+    return f"{a} / {b} ({100.0 * a / b:.1f}%)" if b else "-"
+
+
+# --- the run ----------------------------------------------------------------------------------
+
+
+def split_clips(data, name, rng):
+    listed = [x.strip() for x in (data / f"{name}_list.txt").read_text().splitlines() if x.strip()]
+    keep = set(sc.DATASET_WORDS)
+    rows = [(rel.split("/")[0], data / rel) for rel in listed if rel.split("/")[0] in keep]
+    rng.shuffle(rows)
+    return rows
+
+
+def decode_split(eng, data, split, args, gaps_paths, vosk_eng=None):
+    """Build and decode this split's streams, one at a time, keeping the truth and the series but
+    not the audio."""
+    rng = random.Random(args.seed + (0 if split == "validation" else 1))
+    clips = split_clips(data, split, rng)
+    gaps = GapSource(gaps_paths)
+    streams = []
+    n_words = 0
+    vosk = dict(rows=[], partial_words=None)
+    while n_words < args.words and len(clips) > UTTERANCES_PER_STREAM * WORDS_PER_UTTERANCE[1]:
+        pcm, words, gap_rows = build_stream(rng, clips, gaps, args.utterances)
+        states, blocks, finals = run_stream(eng, pcm, args.block_ms, args.alternatives)
+        s = dict(
+            key=f"{split}/{len(streams)}",
+            split=split,
+            words=words,
+            gaps=gap_rows,
+            samples=len(pcm) // 2,
+            states=states,
+            blocks=blocks,
+            finals=finals,
+            truth=Truth(words),
+        )
+        s["transitions"] = transitions_of(s, args.lookback_ms)
+        label_blocks(s)
+        streams.append(s)
+        n_words += len(words)
+        if vosk_eng is not None:
+            vb, vf = run_stream_text(vosk_eng, pcm, args.block_ms)
+            vosk["rows"].append(dict(key=s["key"], blocks=vb, finals=vf))
+            if vosk["partial_words"] is None:
+                vosk["partial_words"] = dict(
+                    vosk=partial_words_check(vosk_eng, pcm, args.block_ms),
+                    utter=partial_words_check(eng, pcm, args.block_ms),
+                )
+        sc.note(f"{split}: stream {len(streams)}, {n_words} words, {s['samples'] / RATE:.0f} s")
+    return streams, vosk
+
+
+def advance_intervals(streams):
+    out = []
+    for s in streams:
+        for a, b in zip(s["states"], s["states"][1:]):
+            if a["seg"] == b["seg"]:
+                out.append((b["fed"] - a["fed"]) / SAMPLES_PER_MS)
+    return out
+
+
+def fit_thresholds(streams, args):
+    """The bound first, on the state it decides; then the two motion thresholds, on theirs.
+    Fitted on the validation streams only, at the shorter horizon, by the macro F1 over the four
+    states, which a rule that calls one state everywhere cannot win; the per-state figures and
+    the false alarms each choice costs are measured on the same streams and reported beside
+    it."""
+
+    w = HORIZONS[0]
+
+    def scores_of(per_advance):
+        c = empty_counts()
+        for s_ in streams:
+            for g in group_counts(s_, per_advance[s_["key"]], w).values():
+                add_counts(c, g)
+        f1 = {state: prf(c[state])[2] for state in STATES}
+        return dict(
+            f1_away=f1["away"],
+            f1_toward=f1["toward"],
+            macro_f1=sum(f1.values()) / len(STATES),
+            finish_alarms_per_min=alarms(streams, per_advance, "finish", args.block_ms)["per_min"],
+        )
+
+    bound_scores = {}
+    for b in BOUND_GRID:
+        bound_scores[b] = scores_of({s_["key"]: calls(s_["states"], b) for s_ in streams})
+    bound = max(bound_scores, key=lambda k: bound_scores[k]["macro_f1"])
+    motion = {}
+    for d in SIL_DELTA_GRID:
+        for e in EXT_DELTA_GRID:
+            motion[(d, e)] = scores_of({s_["key"]: calls(s_["states"], bound, d, e) for s_ in streams})
+    sil_delta, ext_delta = max(motion, key=lambda k: motion[k]["macro_f1"])
+    return dict(
+        bound_ms=bound,
+        sil_delta=sil_delta,
+        ext_delta=ext_delta,
+        bound_scores={str(k): v for k, v in bound_scores.items()},
+        motion_scores={f"{k[0]},{k[1]}": v for k, v in motion.items()},
+    )
+
+
+def stream_sizes(streams):
+    words = sum(len(s["words"]) for s in streams)
+    pauses = sum(1 for s in streams for g in s["gaps"] if g["kind"] == "pause")
+    finishes = sum(1 for s in streams for g in s["gaps"] if g["kind"] == "finish")
+    return dict(
+        streams=len(streams),
+        words=words,
+        utterances=sum(len({w["utt"] for w in s["words"]}) for s in streams),
+        pauses=pauses,
+        finishes=finishes,
+        transitions=sum(len(s["words"]) for s in streams),
+        blocks=sum(len(s["blocks"]) for s in streams),
+        advances=sum(len(s["states"]) for s in streams),
+        finals=sum(len(s["finals"]) for s in streams),
+        minutes=sum(s["samples"] for s in streams) / RATE / 60.0,
+    )
+
+
+def recordings_pass(eng, paths, args, bound, sil_delta, ext_delta):
+    """The recordings alone, fed continuously through one recognizer as the benchmark's noise
+    pass does: every away call here is a false alarm."""
+    out = []
+    for p in paths:
+        pcm = sc.read_pcm(p)
+        states, blocks, finals = run_stream(eng, pcm, args.block_ms, args.alternatives)
+        s = dict(
+            key=f"noise/{p.name}",
+            words=[],
+            gaps=[],
+            samples=len(pcm) // 2,
+            states=states,
+            blocks=blocks,
+            finals=finals,
+        )
+        out.append(s)
+        sc.note(f"noise: {p.name}, {s['samples'] / RATE:.0f} s, {len(states)} advances, {len(finals)} finals")
+    pa0 = {s["key"]: calls(s["states"], bound) for s in out}
+    pa1 = {s["key"]: calls(s["states"], bound, sil_delta, ext_delta) for s in out}
+    return out, pa0, pa1
+
+
+def write_streams(path, streams):
+    with open(path, "w") as fh:
+        for s in streams:
+            row = dict(
+                key=s["key"],
+                split=s.get("split"),
+                samples=s["samples"],
+                words=s["words"],
+                gaps=s["gaps"],
+                finals=[dict(fed=f["fed"], text=f["text"]) for f in s["finals"]],
+                advances=[
+                    dict(
+                        fed=st["fed"],
+                        seg=st["seg"],
+                        sil_span=st["sil_span"],
+                        words0=st["words0"],
+                        grew=st["grew"],
+                        readings=[
+                            [t, c, st["delta"].get(t), st["age"][t], st["relation"][t]] for t, c in st["readings"]
+                        ],
+                    )
+                    for st in s["states"]
+                ],
+                stable=[[b["fed"], b["word"], b["stable"]] for b in s["blocks"] if b["stable"]],
+            )
+            fh.write(json.dumps(row) + "\n")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", required=True)
+    ap.add_argument("--model", required=True)
+    ap.add_argument("--engine", default="utterpy", help="utterpy, or utterpy@MS for a host endpoint rule at MS of trailing silence")
+    ap.add_argument("--out", default="docs/benchmarks/partial-states")
+    ap.add_argument("--words", type=int, default=2000, help="words per split, at least")
+    ap.add_argument("--utterances", type=int, default=UTTERANCES_PER_STREAM)
+    ap.add_argument("--block-ms", type=int, default=40)
+    ap.add_argument("--alternatives", type=int, default=8)
+    ap.add_argument("--seed", type=int, default=20260912)
+    ap.add_argument(
+        "--lookback-ms",
+        type=int,
+        default=1000,
+        help="how far before a transition a rule's call still counts as forecasting it",
+    )
+    ap.add_argument("--with-vosk", action="store_true", help="run the stock wheel over the same streams")
+    ap.add_argument("--no-streams", action="store_true", help="skip the per-stream JSON lines")
+    a = ap.parse_args()
+
+    import utterpy
+
+    data = Path(a.data)
+    gaps_paths = sorted((data / "_background_noise_").glob("*.wav"))
+    grammar = sc.DATASET_WORDS + sc.LETTERS + sc.NATO + sc.COLOURS
+    eng = sc.Engine(a.engine, utterpy, a.model, grammar)
+    if eng.missing:
+        sc.note(f"grammar words the model lacks: {eng.missing}")
+    vosk_eng = None
+    if a.with_vosk:
+        import vosk
+
+        vosk.SetLogLevel(-1)
+        vosk_eng = sc.Engine("vosk", vosk, a.model, grammar)
+
+    report = dict(
+        provenance=sc.provenance(a, ["utterpy", "vosk"] if a.with_vosk else ["utterpy"]),
+        wheel=utterpy.__file__,
+        grammar_size=len(grammar),
+        seed=a.seed,
+        alternatives=a.alternatives,
+        build=dict(
+            pause_ms=PAUSE_MS,
+            finish_ms=FINISH_MS,
+            words_per_utterance=WORDS_PER_UTTERANCE,
+            gap_floor_dbfs=GAP_FLOOR_DBFS,
+            gap_sources=[p.name for p in gaps_paths],
+            utterances_per_stream=a.utterances,
+        ),
+    )
+
+    t0 = time.monotonic()
+    sc.note("validation streams (thresholds are fitted here)")
+    val, _ = decode_split(eng, data, "validation", a, gaps_paths)
+    sc.note("testing streams (every reported figure comes from here)")
+    test, vosk = decode_split(eng, data, "testing", a, gaps_paths, vosk_eng)
+    report["sizes"] = dict(validation=stream_sizes(val), testing=stream_sizes(test))
+    report["decode_seconds"] = time.monotonic() - t0
+
+    sc.note("fitting on validation")
+    chosen = fit_thresholds(val, a)
+    report["fit"] = chosen
+    bound, sil_delta, ext_delta = chosen["bound_ms"], chosen["sil_delta"], chosen["ext_delta"]
+
+    intervals = advance_intervals(test)
+    report["advance_ms"] = dict(
+        n=len(intervals),
+        p50=sc.quantile(intervals, 0.5),
+        p90=sc.quantile(intervals, 0.9),
+        mean=sum(intervals) / len(intervals) if intervals else float("nan"),
+        histogram={str(k): v for k, v in sorted(Counter(round(x) for x in intervals).items())},
+    )
+
+    pa = {
+        "R0": {s["key"]: calls(s["states"], bound) for s in test},
+        "R1": {s["key"]: calls(s["states"], bound, sil_delta, ext_delta) for s in test},
+        "R0@300": {s["key"]: calls(s["states"], TD8_BOUND_MS) for s in test},
+    }
+
+    # A1: per state precision and recall at each horizon.
+    a1 = {}
+    groups = {}
+    for w_ms in HORIZONS:
+        per_rule = {}
+        for rule in ("R0", "R1"):
+            total = empty_counts()
+            g = {}
+            for s in test:
+                for utt, c in group_counts(s, pa[rule][s["key"]], w_ms).items():
+                    add_counts(total, c)
+                    g[(s["key"], utt)] = c
+            per_rule[rule] = total
+            groups[(rule, w_ms)] = g
+        a1[str(w_ms)] = {}
+        for rule, counts in per_rule.items():
+            a1[str(w_ms)][rule] = {}
+            for state in STATES:
+                p_, r_, f_ = prf(counts[state])
+                a1[str(w_ms)][rule][state] = dict(counts[state], precision=p_, recall=r_, f1=f_)
+    report["A1"] = a1
+
+    # A1 paired bootstrap on the F1 of the two transition states.
+    boot = {}
+    for w_ms in HORIZONS:
+        keys = sorted(set(groups[("R0", w_ms)]) & set(groups[("R1", w_ms)]))
+        pairs = [(groups[("R0", w_ms)][k], groups[("R1", w_ms)][k]) for k in keys]
+        for state in ("away", "toward"):
+            boot[f"{state}@{w_ms}"] = bootstrap_diff(pairs, f1_metric(state))
+    report["A1_bootstrap"] = boot
+
+    # A2: lead time per true transition, and McNemar at the horizon's tolerance.
+    a2 = {}
+    handled = {}
+    for rule in ("R0", "R1"):
+        lt, hd = lead_times(test, pa[rule], HORIZONS[0] * SAMPLES_PER_MS)
+        handled[rule] = hd
+        a2[rule] = {
+            kind: dict(
+                n=len(v),
+                called=sum(1 for x in v if x is not None),
+                before=sum(1 for x in v if x is not None and x < 0),
+                p10=sc.quantile([x for x in v if x is not None], 0.1),
+                p50=sc.quantile([x for x in v if x is not None], 0.5),
+                p90=sc.quantile([x for x in v if x is not None], 0.9),
+            )
+            for kind, v in lt.items()
+        }
+        a2[rule]["_lead"] = {k: [x for x in v] for k, v in lt.items()}
+    report["A2"] = {rule: {k: v for k, v in d.items() if k != "_lead"} for rule, d in a2.items()}
+    report["A2_lead_ms"] = {rule: d["_lead"] for rule, d in a2.items()}
+    report["A2_mcnemar"] = {
+        kind: mcnemar_pair(handled["R0"][kind], handled["R1"][kind]) for kind in ("away", "toward")
+    }
+
+    # A3: false alarms.
+    report["A3"] = dict(
+        finish={r: alarms(test, pa[r], "finish", a.block_ms) for r in ("R0", "R1")},
+    )
+    sc.note("noise recordings")
+    noise_streams, npa0, npa1 = recordings_pass(eng, gaps_paths, a, bound, sil_delta, ext_delta)
+    report["A3"]["noise"] = dict(
+        R0=alarms(noise_streams, npa0, "all", a.block_ms),
+        R1=alarms(noise_streams, npa1, "all", a.block_ms),
+        finals=sum(len(s_["finals"]) for s_ in noise_streams),
+        finals_with_a_word=sum(1 for s_ in noise_streams for f in s_["finals"] if sc.words_of(f["text"])),
+        minutes=sum(s["samples"] for s in noise_streams) / RATE / 60.0,
+    )
+
+    # A4: the end-of-speech confusion curve.
+    rows, totals, early = eos_curve(test, EOS_GRID, ext_delta)
+    report["A4"] = dict(
+        totals=dict(totals),
+        curve={
+            str(x): dict(
+                pauses_mistaken=rows[x]["pause"],
+                pauses_mistaken_motion=rows[x]["pause_motion"],
+                finishes_called=rows[x]["finish"],
+                finishes_called_motion=rows[x]["finish_motion"],
+                early_n=len(early[x]),
+                early_ms_p50=sc.quantile(early[x], 0.5),
+            )
+            for x in EOS_GRID
+        },
+    )
+
+    report["A4_by_pause"] = dict(
+        bound_ms=bound,
+        td8_bound=eos_by_gap_length(test, TD8_BOUND_MS, ext_delta),
+        chosen=eos_by_gap_length(test, bound, ext_delta),
+    )
+
+    # B: the transitions.
+    rec, previews = transition_records(test, ext_delta, a.lookback_ms)
+    mid = [r for r in rec if not r["first_in_utterance"]]
+    arrived = [r for r in rec if r["arrive_ms"] is not None]
+    led = [r for r in rec if r["leads_ms"] is not None]
+    with_ext = [r for r in arrived if r["preview_ms"] is not None]
+    report["B1"] = dict(
+        transitions=len(rec),
+        mid_utterance=len(mid),
+        arrived=len(arrived),
+        led=len(led),
+        with_extender=len(with_ext),
+        zero_lead=sum(1 for r in with_ext if r["preview_advances"] == 0),
+        advances_p50=sc.quantile([r["preview_advances"] for r in with_ext], 0.5),
+        advances_p90=sc.quantile([r["preview_advances"] for r in with_ext], 0.9),
+        ms_p50=sc.quantile([r["preview_ms"] for r in with_ext], 0.5),
+        ms_p90=sc.quantile([r["preview_ms"] for r in with_ext], 0.9),
+        rank0_empty=sum(1 for r in with_ext if r["ext_rank0_empty"]),
+        correct_lead_n=sum(1 for r in arrived if r["preview_correct_ms"] is not None),
+        correct_lead_ms_p50=sc.quantile(
+            [r["preview_correct_ms"] for r in arrived if r["preview_correct_ms"] is not None], 0.5
+        ),
+        correct_lead_ms_p90=sc.quantile(
+            [r["preview_correct_ms"] for r in arrived if r["preview_correct_ms"] is not None], 0.9
+        ),
+    )
+    by_position = {}
+    for name, rows_ in (("first in utterance", [r for r in rec if r["first_in_utterance"]]), ("mid utterance", mid)):
+        w = [r for r in rows_ if r["preview_ms"] is not None]
+        by_position[name] = dict(
+            n=len(rows_),
+            arrived=sum(1 for r in rows_ if r["arrive_ms"] is not None),
+            with_extender=len(w),
+            zero_lead=sum(1 for r in w if r["preview_advances"] == 0),
+            ms_p50=sc.quantile([r["preview_ms"] for r in w], 0.5),
+            top1=sum(1 for r in w if r["ext_top"] == r["label"]),
+            top3=sum(1 for r in w if r["label"] in (r["ext_top3"] or [])),
+            arrive_correct=sum(1 for r in rows_ if r["arrive_word"] == r["label"]),
+        )
+    report["B2"] = by_position
+    report["B2_advances"] = len(previews)
+    report["B2_by_lead"] = {}
+    subsets = (
+        ("all", previews, "top1", "top3"),
+        ("over a word", [q for q in previews if not q["rank0_empty"]], "top1", "top3"),
+        ("gaining", [q for q in previews if q["gaining"]], "gain_top1", "gain_top3"),
+    )
+    for lo, hi in ((0, 240), (240, 480), (480, 720), (720, 1000), (1000, float("inf"))):
+        for where, rows_, k1, k3 in subsets:
+            b = [q for q in rows_ if lo <= q["lead_ms"] < hi]
+            report["B2_by_lead"].setdefault(f"{lo:g}-{hi:g}", {})[where] = dict(
+                n=len(b),
+                top1=sum(1 for q in b if q[k1]),
+                top3=sum(1 for q in b if q[k3]),
+            )
+    report["B3"] = dict(
+        finish=dying_extenders(
+            test, lambda s_: [(g["pos"], g["pos"] + g["samples"]) for g in s_["gaps"] if g["kind"] == "finish"]
+        ),
+        noise=dying_extenders(noise_streams, lambda s_: [(0, s_["samples"])]),
+    )
+    inner = [(r["inner_sil_ms"], r["elapsed_ms"]) for r in mid if r["inner_sil_ms"] is not None]
+    err = [x - y for x, y in inner]
+    span, decoded = span_errors(test)
+    report["B4"] = dict(
+        inner_n=len(inner),
+        inner_mean_err=sum(err) / len(err) if err else float("nan"),
+        inner_p50_err=sc.quantile(err, 0.5),
+        inner_p90_abs_err=sc.quantile([abs(e) for e in err], 0.9),
+        trailing={
+            k: dict(
+                n=len(v),
+                mean_err=sum(v) / len(v) if v else float("nan"),
+                p50_err=sc.quantile(v, 0.5),
+                p90_abs_err=sc.quantile([abs(x) for x in v], 0.9),
+                decoded_mean_err=sum(decoded[k]) / len(decoded[k]) if decoded[k] else float("nan"),
+                decoded_p50_err=sc.quantile(decoded[k], 0.5),
+                decoded_p10_err=sc.quantile(decoded[k], 0.1),
+                decoded_p90_err=sc.quantile(decoded[k], 0.9),
+            )
+            for k, v in span.items()
+        },
+    )
+    lat = [r["latency_ms"] for r in led]
+    stab = [r["stable_ms_from_onset"] for r in led if r["stable_ms_from_onset"] is not None]
+    report["B5"] = dict(
+        n=len(lat),
+        transitions=len(rec),
+        rank0_p50=sc.quantile(lat, 0.5),
+        rank0_p90=sc.quantile(lat, 0.9),
+        stable_n=len(stab),
+        stable_p50=sc.quantile(stab, 0.5),
+        stable_p90=sc.quantile(stab, 0.9),
+        mid_rank0_p50=sc.quantile([r["latency_ms"] for r in mid if r["latency_ms"] is not None], 0.5),
+        mid_n=len(mid),
+        finals_in_pause=sum(1 for r in mid if r["final_between"]),
+    )
+    # B before and after: R0 reads the transition when rank 0 changes, R1 reads the extending
+    # reading's extra word where there is one, and falls back to R0 where there is not.
+    unit = [r for r in rec if r["arrive_ms"] is not None]
+    ok0 = [r["arrive_word"] == r["label"] for r in unit]
+    ok1 = [(r["ext_top"] == r["label"]) if r["preview_ms"] is not None else (r["arrive_word"] == r["label"]) for r in unit]
+    okg = [
+        (r["gext_top"] == r["label"]) if r["gaining_preview_ms"] is not None else (r["arrive_word"] == r["label"])
+        for r in unit
+    ]
+    report["B_mcnemar"] = mcnemar_pair(ok0, ok1)
+    report["B_mcnemar_gaining"] = mcnemar_pair(ok0, okg)
+    call0 = [r["arrive_ms"] - r["onset_ms"] for r in unit]
+    call1 = [(r["ext_ms"] - r["onset_ms"]) if r["preview_ms"] is not None else c for r, c in zip(unit, call0)]
+    callg = [
+        (r["gext_ms"] - r["onset_ms"]) if r["gaining_preview_ms"] is not None else c for r, c in zip(unit, call0)
+    ]
+    report["B_bootstrap_call_ms"] = bootstrap_diff(
+        list(zip(call0, call1)), lambda g: mean_metric(1)(g) - mean_metric(0)(g)
+    )
+    report["B_bootstrap_call_ms_gaining"] = bootstrap_diff(
+        list(zip(call0, callg)), lambda g: mean_metric(1)(g) - mean_metric(0)(g)
+    )
+    report["B_gaining"] = dict(
+        with_gaining=sum(1 for r in unit if r["gaining_preview_ms"] is not None),
+        ms_p50=sc.quantile([r["gaining_preview_ms"] for r in unit if r["gaining_preview_ms"] is not None], 0.5),
+        ms_p90=sc.quantile([r["gaining_preview_ms"] for r in unit if r["gaining_preview_ms"] is not None], 0.9),
+    )
+    report["B_call_ms"] = dict(
+        n=len(unit),
+        R0_p50=sc.quantile(call0, 0.5),
+        R1_p50=sc.quantile(call1, 0.5),
+        Rg_p50=sc.quantile(callg, 0.5),
+        R0_p90=sc.quantile(call0, 0.9),
+        R1_p90=sc.quantile(call1, 0.9),
+        Rg_p90=sc.quantile(callg, 0.9),
+    )
+
+    # C: the readings' momentum, all of it off the series already recorded.
+    report["C1_momentum"] = momentum(test)
+    report["C2_silence"] = dict(
+        finish_interiors=silence_signature(test, kept_silence_spans),
+        recordings=silence_signature(noise_streams, whole_stream_spans),
+    )
+    report["C3_aligned"] = aligned_velocity(test)
+    cross = {}
+    for signal, grid in (("sil", SIL_CROSS_GRID), ("extends", EXT_CROSS_GRID)):
+        fitted = {t: crossing_scores(val, signal, t, a.lookback_ms, a.block_ms) for t in grid}
+        theta = max(fitted, key=lambda t: fitted[t]["f1"])
+        cross[signal] = dict(
+            grid={str(t): v for t, v in fitted.items()},
+            theta=theta,
+            testing=crossing_scores(test, signal, theta, a.lookback_ms, a.block_ms),
+            recordings=crossing_scores(noise_streams, signal, theta, a.lookback_ms, a.block_ms),
+        )
+    report["C3_crossing"] = cross
+    report["C4_reversal"] = reversal(test)
+
+    if vosk["rows"]:
+        report["vosk"] = vosk_baseline(test, vosk["rows"], a.lookback_ms)
+        report["vosk"]["partial_words"] = vosk["partial_words"]
+
+    out = Path(a.out)
+    if not a.no_streams:
+        write_streams(out.with_suffix(".streams.jsonl"), test + noise_streams)
+    lines = page(report, a, chosen)
+    reading = out.with_suffix(".reading.md")
+    if reading.exists():
+        lines += [reading.read_text().strip(), ""]
+    out.with_suffix(".md").write_text("\n".join(lines) + "\n")
+    out.with_suffix(".json").write_text(json.dumps(report, indent=1, default=str) + "\n")
+    sc.note(f"wrote {out.with_suffix('.md')}, {out.with_suffix('.json')}")
+
+
+def vosk_baseline(streams, vosk_rows, lookback_ms, forward_ms=1500):
+    """The stock wheel over the same streams: when a word first leads its partial, whether it is
+    the right one, and how many finals the same audio produces. It has no readings, so it has no
+    motion, and the same window bounds the search."""
+    by_key = {r["key"]: r for r in vosk_rows}
+    back = lookback_ms * SAMPLES_PER_MS
+    fwd = forward_ms * SAMPLES_PER_MS
+    lat = []
+    label_lat = []
+    correct = 0
+    n = 0
+    for s_ in streams:
+        r = by_key.get(s_["key"])
+        if r is None:
+            continue
+        grew = []
+        led = []
+        prev = 0
+        for b in r["blocks"]:
+            if b["final"]:
+                prev = 0
+                continue
+            if len(b["words"]) > prev:
+                grew.append((b["fed"], b["words"][-1]))
+            if b["words"]:
+                led.append((b["fed"], b["words"][-1]))
+            prev = len(b["words"])
+        for i, w in enumerate(s_["words"]):
+            prev_end = s_["words"][i - 1]["offset"] if i else 0
+            nxt = s_["words"][i + 1]["onset"] if i + 1 < len(s_["words"]) else s_["samples"]
+            lo = max(prev_end, w["onset"] - back)
+            hi = min(nxt, w["onset"] + fwd)
+            n += 1
+            hit = next((g for g in grew if lo <= g[0] < hi), None)
+            if hit is not None:
+                lat.append((hit[0] - w["onset"]) / SAMPLES_PER_MS)
+                correct += hit[1] == w["label"]
+            right = next((g for g in led if lo <= g[0] < hi and g[1] == w["label"]), None)
+            if right is not None:
+                label_lat.append((right[0] - w["onset"]) / SAMPLES_PER_MS)
+    return dict(
+        transitions=n,
+        arrived=len(lat),
+        correct=correct,
+        rank0_p50=sc.quantile(lat, 0.5),
+        rank0_p90=sc.quantile(lat, 0.9),
+        led=len(label_lat),
+        label_p50=sc.quantile(label_lat, 0.5),
+        label_p90=sc.quantile(label_lat, 0.9),
+        finals=sum(len(by_key[s_["key"]]["finals"]) for s_ in streams if s_["key"] in by_key),
+    )
+
+
+def partial_words_check(eng, pcm, block_ms):
+    """How many blocks carry partial text with partial words on and off. The stock wheel drops
+    the in-progress word from its partial when words are requested, so its word times cannot be
+    read on this audio at all; utter's partial is unchanged either way."""
+    out = {}
+    for words_on in (False, True):
+        blocks, _ = run_stream_text(eng, pcm, block_ms, words_on)
+        out["on" if words_on else "off"] = dict(
+            blocks=len(blocks), with_text=sum(1 for b in blocks if b["words"])
+        )
+    return out
+
+
+# --- the page ---------------------------------------------------------------------------------
+
+
+def momentum_section(r, chosen):
+    """What a reading's motion does over many advances, which a one-second clip cannot show."""
+    L = [
+        "## C. The readings' motion over many advances",
+        "",
+        "A clip of one word holds three or four advances, so a reading's motion can be read once "
+        "there and not followed. On a stream a reading lives through a pause and a finish, and "
+        "these are the questions that needs.",
+        "",
+        "### Does a lead's motion carry to the next advance",
+        "",
+        "Pearson r and sign agreement between a reading's `lead_delta` at one advance and at the "
+        "next, by the band its lead sits in (the absolute value, so a rival's deficit and a "
+        "leader's gap fall in the same bands) and by what the reading is to rank 0. Each pair "
+        "needs three advances, since a delta is itself a difference.",
+        "",
+        "| readings | band (nats) | pairs | r | sign agreement |",
+        "|---|---|---|---|---|",
+    ]
+    for subset in MOMENTUM_SUBSETS:
+        for band in ("all",) + tuple(name for name, _, _ in BANDS):
+            d = r["C1_momentum"].get(f"{subset}|{band}")
+            if not d or not d["n"]:
+                continue
+            L.append(
+                f"| {subset} | {band} | {d['n']} | {num(d['r'], 3) if d['r'] is not None else '-'} | "
+                f"{num(100 * d['sign_agreement']) + '%' if d['sign_agreement'] is not None else '-'} |"
+            )
+    sig = r["C2_silence"]
+    L += [
+        "",
+        "### What the readings do in silence that is being kept",
+        "",
+        "Inside a finish gap, a second after the word has ended and half a second before "
+        "anything begins, and on the recordings from one second in: the leading reading's lead "
+        "over its best rival, that lead's motion, and how old the rival is. A lead that hovers "
+        "while the rival stays young is a bound set by word hypotheses that keep being started "
+        "and pruned, not a lead that is being won.",
+        "",
+        "| audio | advances | `[sil]` at rank 0 | lead mean / sd | lead p10 / p50 / p90 | velocity mean / sd | velocity p10 / p50 / p90 | rival age ms p50 / p90 | rival one advance old |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for name, key in (("finish gaps, interior", "finish_interiors"), ("recordings alone", "recordings")):
+        d = sig[key]
+        lead, vel, age = d["lead"], d["velocity"], d["rival_age_ms"]
+        L.append(
+            f"| {name} | {d['advances']} | {share(d['sil_at_rank0'], d['advances'])} | "
+            f"{num(lead['mean'], 2)} / {num(lead['sd'], 2)} | "
+            f"{num(lead['p10'], 2)} / {num(lead['p50'], 2)} / {num(lead['p90'], 2)} | "
+            f"{num(vel['mean'], 3)} / {num(vel['sd'], 3)} | "
+            f"{num(vel['p10'], 2)} / {num(vel['p50'], 2)} / {num(vel['p90'], 2)} | "
+            f"{num(age['p50'])} / {num(age['p90'])} | {share(d['rival_fresh'], d['rival_n'])} |"
+        )
+    L += [
+        "",
+        "### The motion around a true transition",
+        "",
+        "Every ground-truth onset and offset aligned at the advance that first covers it, with "
+        "the median `lead_delta` at the advances around it: the empty reading's where rank 0 "
+        "carries no word, the leading reading's, and the best one-word extending reading's where "
+        "rank 0 carries a word. An advance is 240 ms.",
+        "",
+        "| transition | advance | `[sil]` velocity (n) | leader velocity (n) | extending velocity (n) |",
+        "|---|---|---|---|---|",
+    ]
+    for kind in ("away", "toward"):
+        for off in ALIGN_OFFSETS:
+            d = r["C3_aligned"].get(f"{kind}|{off}")
+            if not d:
+                continue
+            cells = []
+            for name in ("sil", "leader", "extends"):
+                x = d.get(name)
+                cells.append(f"{num(x['p50'], 2)} ({x['n']})" if x and x["n"] else "-")
+            L.append(f"| {kind} | {off:+d} | " + " | ".join(cells) + " |")
+    L += [
+        "",
+        "### The motion as a detector of its own",
+        "",
+        "A crossing is one advance where the empty reading's lead falls past a threshold, or a "
+        "one-word extending reading's lead rises past one. A crossing is a hit when a word's "
+        "onset follows it inside the lookback; recall is over every onset, including the ones "
+        "where the signal cannot fire, since the `[sil]` signal needs rank 0 to carry no word and "
+        "the extending signal needs it to carry one. That is also why the extending signal's "
+        "alarm rate in kept silence is zero by construction and not by merit: rank 0 there is the "
+        "empty reading. The threshold is fitted on the validation streams by the F1 of the hit "
+        "rate against the onsets called; everything in the table is the testing streams and the "
+        "recordings.",
+        "",
+        "| signal | threshold (nats) | crossings | precision | onsets called | lead p10 / p50 / p90 ms | alarms/min in kept silence | alarms/min on the recordings |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for signal, label in (("sil", "`[sil]` lead falling past"), ("extends", "extending lead rising past")):
+        c = r["C3_crossing"][signal]
+        t, rec = c["testing"], c["recordings"]
+        L.append(
+            f"| {label} | {float(c['theta']):+.2f} | {t['crossings']} | {num(100 * t['precision'])}% | "
+            f"{share(t['called'], t['onsets'])} | {num(t['lead_p10'])} / {num(t['lead_p50'])} / "
+            f"{num(t['lead_p90'])} | {num(t['alarms_per_min'])} | {num(rec['alarms_per_min'])} |"
+        )
+    L += [
+        "",
+        "### Leading but losing",
+        "",
+        "Rank 0's lead is never negative, so the reversal `[[rr:TD-9#Every reading carries its "
+        "lead's motion]]` describes, a reading whose lead and whose motion disagree in sign, is "
+        "rank 0 with a negative `lead_delta`. Scored against rank 0 changing at the next advance, "
+        "and against rank 0's words already differing from the final that closes the segment, "
+        "beside the rank-AUC of the level and of the motion on the same advances. 0.5 is no "
+        "information and below 0.5 the signal is inverted, as on the trust page: a lead that is "
+        "small, or a motion that is negative, goes with the change.",
+        "",
+        "| band (nats) | target | advances | positives | precision | recall | AUC of the lead | AUC of `lead_delta` |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    names = {"changes": "rank 0 changes next", "unlike_final": "rank 0 unlike the final"}
+    for band in ("all",) + tuple(name for name, _, _ in BANDS):
+        for target, label in names.items():
+            d = r["C4_reversal"].get(f"{band}|{target}")
+            if not d:
+                continue
+            L.append(
+                f"| {band} | {label} | {d['advances']} | {d['positives']} | "
+                f"{num(100 * d['precision'])}% | {num(100 * d['recall'])}% | "
+                f"{num(d['auc_lead'], 3) if d['auc_lead'] is not None else '-'} | "
+                f"{num(d['auc_delta'], 3) if d['auc_delta'] is not None else '-'} |"
+            )
+    L.append("")
+    return L
+
+
+def page(r, a, chosen):
+    p = r["provenance"]
+    sz = r["sizes"]["testing"]
+    vz = r["sizes"]["validation"]
+    adv = r["advance_ms"]
+    L = [
+        "# Silence direction and word transitions on a built stream",
+        "",
+        f"Run {p['date']}, utter {p['utter_revision']}, "
+        + ", ".join(f"{k} {v}" for k, v in p["engines"].items())
+        + f", model {p['model']}, {p['cpu']}, Python {p['python']}.",
+        "",
+        f"Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, "
+        f"{r['grammar_size']} entries. {p['block_ms']} ms blocks, {r['alternatives']} partial "
+        f"alternatives, partial words on, seed {r['seed']}. Measured by "
+        "`scripts/partial_states.py`.",
+        "",
+        f"The revision above is this repository's; the binding that decoded is `{r['wheel']}`, "
+        "which is the version figure to check against it, since the wheel is built from a "
+        "revision of its own.",
+        "",
+        "A Speech Commands clip holds one word, so it holds no transition between words and no "
+        "finish. The streams here are built from the clips: utterances of one to five words, "
+        f"pauses of {PAUSE_MS[0]}-{PAUSE_MS[1]} ms between the words of an utterance, finishes of "
+        f"{FINISH_MS[0] / 1000:g}-{FINISH_MS[1] / 1000:g} s between utterances, and every gap cut in "
+        "rotation from the dataset's own six background recordings, scaled to about "
+        f"{GAP_FLOOR_DBFS:g} dBFS RMS rather than written as digital zeros, which the floor "
+        "tracker treats apart (`[[rr:TD-8#The runtime reports the floor]]`). Every word's "
+        "position and every gap's length are therefore exact, and each word's onset and offset "
+        "are the first and last 10 ms frame within 20 dB of its clip's peak, which owes nothing "
+        "to the decoder.",
+        "",
+        "| split | streams | minutes | utterances | words | pauses | finishes | blocks | advances | finals |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+        f"| validation (thresholds fitted) | {vz['streams']} | {vz['minutes']:.1f} | {vz['utterances']} | "
+        f"{vz['words']} | {vz['pauses']} | {vz['finishes']} | {vz['blocks']} | {vz['advances']} | {vz['finals']} |",
+        f"| testing (every figure below) | {sz['streams']} | {sz['minutes']:.1f} | {sz['utterances']} | "
+        f"{sz['words']} | {sz['pauses']} | {sz['finishes']} | {sz['blocks']} | {sz['advances']} | {sz['finals']} |",
+        "",
+        f"The readings change only when the decoder advances a chunk: over the testing streams "
+        f"{adv['n']} intervals between advances, median / p90 {adv['p50']:.0f} / {adv['p90']:.0f} ms, "
+        f"mean {adv['mean']:.1f} ms, which is the 240 ms "
+        "`[[rr:TD-9#Readings are read once per decoding advance]]` states at this block size. "
+        "Between advances every partial repeats, so a rule reading the partial gives the same "
+        "call; the calls below are therefore held flat between advances and scored at every "
+        "block.",
+        "",
+        "## The rules",
+        "",
+        "R0 is TD-8's reading of the fields, and nothing else: a word arriving at rank 0 is "
+        "speech beginning (a detection, no lead), the trailing `[sil]` entry's span past a bound "
+        "is speech ending, a span that goes on growing is silence being kept, and a word at rank "
+        "0 with no trailing span is speech continuing. R1 is R0 plus the readings' motion: at an "
+        "utterance's start the empty reading `[sil]` losing its lead means a word is coming, and "
+        "mid-utterance a reading that extends rank 0 by a word and is gaining on the field means "
+        "the next word is forming.",
+        "",
+        f"Fitted on the validation streams, at the {HORIZONS[0]} ms horizon, by the macro F1 over "
+        f"the four states: first the bound on the trailing span ({chosen['bound_ms']} ms chosen), "
+        f"then the two motion thresholds at that bound (`[sil]` lead_delta at or below "
+        f"{chosen['sil_delta']:+.2f} nats, an extending reading's lead_delta at or above "
+        f"{chosen['ext_delta']:+.2f} nats). TD-8's own bound, 300 ms, is reported beside them "
+        "because the record quotes its private figures there.",
+        "",
+        "| bound (ms) | macro F1 | F1 of *toward* | F1 of *away* | false *away* calls/min in finishes |",
+        "|---|---|---|---|---|",
+    ]
+    for k, v in r["fit"]["bound_scores"].items():
+        L.append(
+            f"| {k} | {v['macro_f1']:.3f} | {v['f1_toward']:.3f} | {v['f1_away']:.3f} | "
+            f"{v['finish_alarms_per_min']:.1f} |"
+        )
+    L += [
+        "",
+        "The motion thresholds, over the same validation streams at the chosen bound. A pair "
+        "that calls *away* everywhere buys recall on that state and loses the other three, which "
+        "is why the choice is the macro F1 and not the *away* F1; the last column is what each "
+        "pair costs inside the finish gaps, where the truth is never *away*.",
+        "",
+        "| `[sil]` lead_delta at or below | extending lead_delta at or above | macro F1 | F1 of *away* | F1 of *toward* | false *away* calls/min in finishes |",
+        "|---|---|---|---|---|---|",
+    ]
+    for key, v in r["fit"]["motion_scores"].items():
+        d, e = key.split(",")
+        L.append(
+            f"| {float(d):+.2f} | {float(e):+.2f} | {v['macro_f1']:.3f} | {v['f1_away']:.3f} | "
+            f"{v['f1_toward']:.3f} | {v['finish_alarms_per_min']:.1f} |"
+        )
+    L += [
+        "",
+        "## A. Silence direction",
+        "",
+        "At every block the ground truth says what the next W ms do: *toward* silence (speech "
+        "now, silence inside the window), *away* from silence (silence now, speech inside the "
+        "window), *maintaining silence*, *maintaining speech*. The predictor reads only the "
+        "partial at that block.",
+        "",
+        "Read the *away* row first. R0's *away* is a detection with no lead by construction: the "
+        "word is already at rank 0 when it calls, and by then the truth has usually moved on to "
+        "*maintaining speech*, so a low precision there is the shape of the problem rather than "
+        "a fault in the rule. The question this page asks is whether the motion moves that row.",
+        "",
+    ]
+    for w_ms in HORIZONS:
+        d = r["A1"][str(w_ms)]
+        L += [
+            f"### W = {w_ms} ms",
+            "",
+            "| state | blocks (truth) | R0 precision | R0 recall | R1 precision | R1 recall |",
+            "|---|---|---|---|---|---|",
+        ]
+        for s in STATES:
+            c0, c1 = d["R0"][s], d["R1"][s]
+            L.append(
+                f"| {s} | {c0['tp'] + c0['fn']} | {num(100 * c0['precision'])}% | {num(100 * c0['recall'])}% | "
+                f"{num(100 * c1['precision'])}% | {num(100 * c1['recall'])}% |"
+            )
+        L.append("")
+        for state in ("away", "toward"):
+            b = r["A1_bootstrap"].get(f"{state}@{w_ms}")
+            if b:
+                L.append(
+                    f"F1 of *{state}*: R0 {d['R0'][state]['f1']:.3f}, R1 {d['R1'][state]['f1']:.3f}; paired "
+                    f"bootstrap over utterances ({BOOTSTRAPS} resamples) of R1 - R0, "
+                    f"{b['diff']:+.3f} with a 95% interval [{b['lo']:+.3f}, {b['hi']:+.3f}]."
+                )
+        L.append("")
+    L += [
+        "### Lead time per true transition",
+        "",
+        "Every word's onset is a true move away from silence and every word's offset a move "
+        "toward it. Per transition, the milliseconds from the first block the rule calls that "
+        "state, inside the window from the previous transition to the next, to the transition "
+        f"itself; negative is before it. Handled means the call lands within {HORIZONS[0]} ms of "
+        "the truth, which is the paired unit for McNemar.",
+        "",
+        "| rule | transition | transitions | called | called before | p10 / p50 / p90 ms |",
+        "|---|---|---|---|---|---|",
+    ]
+    for rule in ("R0", "R1"):
+        for kind in ("away", "toward"):
+            d = r["A2"][rule][kind]
+            L.append(
+                f"| {rule} | {kind} | {d['n']} | {share(d['called'], d['n'])} | "
+                f"{share(d['before'], d['called'])} | {num(d['p10'])} / {num(d['p50'])} / {num(d['p90'])} |"
+            )
+    L.append("")
+    L += [
+        "A call before the transition is not the same thing as foresight: a rule that calls "
+        "*away* on a phantom word inside the gap has called it before the word, and the first "
+        "call is what this table takes. The false alarm rates below are the other half of the "
+        "figure, and the two should be read together.",
+        "",
+    ]
+    for kind in ("away", "toward"):
+        m = r["A2_mcnemar"][kind]
+        L.append(
+            f"McNemar on *{kind}* handled within the horizon: both {m['both']}, R0 only "
+            f"{m['only_a']}, R1 only {m['only_b']}, neither {m['neither']}, exact two-sided p = "
+            f"{pval(m['p'])}."
+        )
+    n = r["A3"]["noise"]
+    L += [
+        "",
+        "### False alarms",
+        "",
+        "*away* where the truth cannot be *away*: inside a finish gap once the word has ended, "
+        "and anywhere on the six background recordings fed continuously through one recognizer. "
+        "Counted as blocks and as distinct runs of the call.",
+        "",
+        "| audio | minutes | rule | away blocks/min | away calls/min |",
+        "|---|---|---|---|---|",
+    ]
+    for rule in ("R0", "R1"):
+        d = r["A3"]["finish"][rule]
+        L.append(f"| finish gaps | {d['minutes']:.1f} | {rule} | {d['per_min_blocks']:.1f} | {d['per_min']:.2f} |")
+    for rule in ("R0", "R1"):
+        d = n[rule]
+        L.append(f"| recordings alone | {d['minutes']:.1f} | {rule} | {d['per_min_blocks']:.1f} | {d['per_min']:.2f} |")
+    L += [
+        "",
+        f"The recordings alone also produced {n['finals']} finals over {n['minutes']:.1f} minutes, "
+        f"{n['finals_with_a_word']} of them carrying a word, which is the figure the benchmark's "
+        "noise pass reports; the rest are the 5 s silence rule closing a wordless stretch.",
+        "",
+        "### The end-of-speech confusion",
+        "",
+        "TD-8's core problem in public form. Among the silent stretches, at each millisecond of "
+        "trailing `[sil]` span: the share of inter-word pauses whose span reaches it before the "
+        "next word begins (a pause taken for a finish) against the share of finishes whose span "
+        "reaches it at all. The motion columns refuse the call at an advance where a reading "
+        f"extending rank 0 is gaining by at least {chosen['ext_delta']:+g} nats. The last column "
+        "is how far ahead of the decoder's own endpoint final the call arrived.",
+        "",
+        f"| trailing span (ms) | pauses mistaken ({r['A4']['totals'].get('pause', 0)}) | with motion | "
+        f"finishes called ({r['A4']['totals'].get('finish', 0)}) | with motion | called before the endpoint | median ms early |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    tot = r["A4"]["totals"]
+    for x in EOS_GRID:
+        c = r["A4"]["curve"][str(x)]
+        L.append(
+            f"| {x} | {share(c['pauses_mistaken'], tot.get('pause', 0))} | "
+            f"{share(c['pauses_mistaken_motion'], tot.get('pause', 0))} | "
+            f"{share(c['finishes_called'], tot.get('finish', 0))} | "
+            f"{share(c['finishes_called_motion'], tot.get('finish', 0))} | "
+            f"{share(c['early_n'], tot.get('finish', 0))} | {num(c['early_ms_p50'])} |"
+        )
+    L += [
+        "",
+        f"That share of pauses is a fact about this stream's pauses, which are uniform over "
+        f"{PAUSE_MS[0]}-{PAUSE_MS[1]} ms by construction, so it is given again by the length of "
+        f"the pause that was built, at TD-8's 300 ms bound and at the fitted "
+        f"{r['A4_by_pause']['bound_ms']} ms one:",
+        "",
+        "| pause built (ms) | pauses | mistaken at 300 ms | with motion | mistaken at "
+        f"{r['A4_by_pause']['bound_ms']} ms | with motion |",
+        "|---|---|---|---|---|---|",
+    ]
+    for key, d in r["A4_by_pause"]["td8_bound"].items():
+        c = r["A4_by_pause"]["chosen"][key]
+        L.append(
+            f"| {key} | {d['n']} | {share(d['mistaken'], d['n'])} | {share(d['mistaken_motion'], d['n'])} | "
+            f"{share(c['mistaken'], c['n'])} | {share(c['mistaken_motion'], c['n'])} |"
+        )
+    b1 = r["B1"]
+    b2 = r["B2"]
+    b3 = r["B3"]
+    b4 = r["B4"]
+    b5 = r["B5"]
+    L += [
+        "",
+        "## B. Transitioning between words",
+        "",
+        "Per ground-truth transition into a word, inside a window reaching "
+        f"{a.lookback_ms} ms back from its onset and 1500 ms forward: when the rank-0 word list "
+        "grew, which is the transition a host sees today; when the word itself led; when a "
+        "reading extending rank 0 first appeared and what its extra word was. A transition into "
+        "the first word of an utterance is a different thing from one mid-utterance: when rank 0 "
+        "is the empty reading every word-carrying reading extends it by definition "
+        "(`[[rr:TD-9#Every reading names its relation to the partial]]`), so the two are reported "
+        "apart.",
+        "",
+        "### Preview lead",
+        "",
+        "| position | transitions | rank 0 grew | the word that arrived was right | an extending "
+        "reading first | zero lead | lead ms p50 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for name in ("first in utterance", "mid utterance"):
+        d = b2[name]
+        L.append(
+            f"| {name} | {d['n']} | {share(d['arrived'], d['n'])} | {share(d['arrive_correct'], d['arrived'])} | "
+            f"{share(d['with_extender'], d['arrived'])} | {share(d['zero_lead'], d['with_extender'])} | "
+            f"{num(d['ms_p50'])} |"
+        )
+    L += [
+        "",
+        "The *an extending reading first* column is 100% by definition and not by measurement: "
+        "wherever rank 0 is the empty reading, which is most of a gap, every word-carrying "
+        "reading extends it. The column that carries information is the next one, and the "
+        "right-word figure below it.",
+        "",
+        f"Over all {b1['transitions']} transitions rank 0 grew on {b1['arrived']} and the word "
+        f"itself led on {b1['led']}. An extending reading was there before the growth on "
+        f"{share(b1['with_extender'], b1['arrived'])}, and that lead was zero advances on "
+        f"{share(b1['zero_lead'], b1['with_extender'])}; where it was not zero it ran "
+        f"{num(b1['advances_p50'])} / {num(b1['advances_p90'])} advances (median / p90), "
+        f"{num(b1['ms_p50'])} / {num(b1['ms_p90'])} ms. A reading extending rank 0 *by the word "
+        f"that was coming* appeared first on {share(b1['correct_lead_n'], b1['arrived'])}, by a "
+        f"median {num(b1['correct_lead_ms_p50'])} ms and a p90 "
+        f"{num(b1['correct_lead_ms_p90'])} ms.",
+        "",
+        "### Preview accuracy by the lead still to run",
+        "",
+        f"Every advance in those windows that carried an extending reading, {r['B2_advances']} of "
+        "them, scored by whether the top extending reading's extra word is the word that was "
+        "coming (top-1) and whether any of the top three extending readings has it (top-3), "
+        "against the milliseconds still to run before rank 0 grew. The second group keeps only "
+        "the advances where rank 0 already held a word, which is a continuation being previewed "
+        "rather than a word being guessed at from silence; the third keeps the advances carrying "
+        "a gaining one-word extender and ranks only those, which is the reading the rule uses.",
+        "",
+        "| lead still to run (ms) | advances | top-1 | top-3 | over a word | top-1 | top-3 | gaining | top-1 | top-3 |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for k, d in r["B2_by_lead"].items():
+        allr, over, gain = d["all"], d["over a word"], d["gaining"]
+        L.append(
+            f"| {k} | {allr['n']} | {share(allr['top1'], allr['n'])} | {share(allr['top3'], allr['n'])} | "
+            f"{over['n']} | {share(over['top1'], over['n'])} | {share(over['top3'], over['n'])} | "
+            f"{gain['n']} | {share(gain['top1'], gain['n'])} | {share(gain['top3'], gain['n'])} |"
+        )
+    L += [
+        "",
+        "### False transitions, and what the `[sil]` entries measure",
+        "",
+        "Readings that extend rank 0 by one word where no word follows, and never reach rank 0 "
+        "themselves, per minute. Split by whether rank 0 held a word: over a word this is the "
+        "beam offering a continuation that never comes, over the empty reading it is a word "
+        "being offered on silence, which is the rival "
+        "`[[rr:TD-8#A word on a quiet block was spoken and is reported]]` describes.",
+        "",
+        "| audio | minutes | per minute over a word | per minute over silence |",
+        "|---|---|---|---|",
+        f"| finish gaps | {b3['finish']['minutes']:.1f} | {b3['finish']['per_min_over_words']:.1f} | "
+        f"{b3['finish']['per_min_over_silence']:.1f} |",
+        f"| recordings alone | {b3['noise']['minutes']:.1f} | {b3['noise']['per_min_over_words']:.1f} | "
+        f"{b3['noise']['per_min_over_silence']:.1f} |",
+        "",
+        f"The inter-word `[sil]` entry against the pause that was built, read at the advance the "
+        f"next word first leads: {b4['inner_n']} pauses, mean error {num(b4['inner_mean_err'])} ms, "
+        f"median {num(b4['inner_p50_err'])} ms, p90 absolute error "
+        f"{num(b4['inner_p90_abs_err'])} ms. It is readable only where the decoder did not close "
+        "the utterance inside the pause, since a final starts the entries again.",
+        "",
+        "The trailing `[sil]` span per advance inside a gap, against two clocks: the silence "
+        "elapsed since the word's energy offset, and the silence since the decoder's own end of "
+        "that word. The second is the span's own lag, the first adds the difference between the "
+        "two alignments.",
+        "",
+        "| gap | advances | mean error ms | median error ms | p90 absolute error ms | against the decoder's own end: mean | p10 / p50 / p90 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for kind, d in sorted(b4["trailing"].items()):
+        L.append(
+            f"| {kind} | {d['n']} | {num(d['mean_err'])} | {num(d['p50_err'])} | {num(d['p90_abs_err'])} | "
+            f"{num(d['decoded_mean_err'])} | {num(d['decoded_p10_err'])} / {num(d['decoded_p50_err'])} / "
+            f"{num(d['decoded_p90_err'])} |"
+        )
+    L += [
+        "",
+        "### Transition latency on continuous audio",
+        "",
+        f"From a word's energy onset to the block the word itself leads the partial: median / p90 "
+        f"{num(b5['rank0_p50'])} / {num(b5['rank0_p90'])} ms over the {b5['n']} of "
+        f"{b5['transitions']} transitions where it led inside the window, and to the block its "
+        f"`stable_ms` clears {STABLE_BOUND_MS} ms, {num(b5['stable_p50'])} / "
+        f"{num(b5['stable_p90'])} ms over {b5['stable_n']}. Mid-utterance alone the first figure "
+        f"is {num(b5['mid_rank0_p50'])} ms. The decoder's own endpoint closed the utterance "
+        f"inside the pause on {share(b5['finals_in_pause'], b5['mid_n'])} of the mid-utterance "
+        "transitions: at this model's rules (`[[rr:TD-2#Inputs: configuration]]`) a pause of half "
+        "a second is already an endpoint, so most of this page's mid-utterance transitions are "
+        "the decoder starting again rather than continuing.",
+        "",
+        "### Before and after, on the transitions",
+        "",
+        "R0 is the host that sees a transition when rank 0 grows; R1 is the host that reads the "
+        "extending reading's extra word where one appeared first, and R0 where none did. Paired "
+        "on the transitions where rank 0 grew inside the window.",
+        "",
+    ]
+    m = r["B_mcnemar"]
+    mg = r["B_mcnemar_gaining"]
+    cm = r["B_call_ms"]
+    bb = r["B_bootstrap_call_ms"]
+    bg = r["B_bootstrap_call_ms_gaining"]
+    bgn = r["B_gaining"]
+    L += [
+        f"R1 comes in two forms: the first extending reading of any kind, and the first that is "
+        f"*gaining* by at least {chosen['ext_delta']:+.2f} nats, which is what reading the motion "
+        f"means. The gaining form was available on {share(bgn['with_gaining'], cm['n'])} of the "
+        f"transitions, with a lead of {num(bgn['ms_p50'])} / {num(bgn['ms_p90'])} ms (median / "
+        "p90).",
+        "",
+        "| comparison | both right | R0 only | R1 only | neither | exact p |",
+        "|---|---|---|---|---|---|",
+        f"| R0 against R1, any extender | {m['both']} | {m['only_a']} | {m['only_b']} | "
+        f"{m['neither']} | {pval(m['p'])} |",
+        f"| R0 against R1, gaining extender | {mg['both']} | {mg['only_a']} | {mg['only_b']} | "
+        f"{mg['neither']} | {pval(mg['p'])} |",
+        "",
+        f"Milliseconds from the onset to the call: R0 {num(cm['R0_p50'])} / {num(cm['R0_p90'])} "
+        f"(median / p90), R1 any {num(cm['R1_p50'])} / {num(cm['R1_p90'])}, R1 gaining "
+        f"{num(cm['Rg_p50'])} / {num(cm['Rg_p90'])}. Paired bootstrap over transitions "
+        f"({BOOTSTRAPS} resamples) of the mean difference in call time: any extender "
+        f"{bb['diff']:+.1f} ms, 95% interval [{bb['lo']:+.1f}, {bb['hi']:+.1f}]; gaining "
+        f"{bg['diff']:+.1f} ms, [{bg['lo']:+.1f}, {bg['hi']:+.1f}]. Earlier is better only if the "
+        "word called is right, which the table above answers.",
+        "",
+    ]
+    L += momentum_section(r, chosen)
+    if "vosk" in r:
+        v = r["vosk"]
+        pw = v.get("partial_words") or {}
+        L += [
+            "### The stock wheel on the same streams",
+            "",
+            f"The stock wheel has partial text and no readings to move. Over the same testing "
+            f"streams its partial grew a word inside the window on "
+            f"{share(v['arrived'], v['transitions'])} transitions, and that word was the right one "
+            f"on {share(v['correct'], v['arrived'])}, at {num(v['rank0_p50'])} / "
+            f"{num(v['rank0_p90'])} ms from the onset (median / p90). The word itself led on "
+            f"{share(v['led'], v['transitions'])} at {num(v['label_p50'])} / {num(v['label_p90'])} "
+            f"ms. It returned {v['finals']} finals where utter returned "
+            f"{r['sizes']['testing']['finals']}. That is the detection baseline: the moment R0 "
+            "reads, with nothing beside it.",
+            "",
+        ]
+        if pw:
+            L += [
+                f"Its partial word times could not be used at all. With partial words on, "
+                f"{pw['vosk']['on']['with_text']} of {pw['vosk']['on']['blocks']} blocks of the "
+                f"first testing stream carried partial text, against "
+                f"{pw['vosk']['off']['with_text']} with partial words off: the wheel drops the "
+                "word in progress from a partial when word times are requested. utter's partial "
+                f"carried text on {pw['utter']['on']['with_text']} blocks with them on and "
+                f"{pw['utter']['off']['with_text']} with them off. The baseline above is "
+                "therefore the wheel with partial words off.",
+                "",
+            ]
+    L += [
+        "## Caveat",
+        "",
+        "The words are isolated read commands joined with built gaps. They carry no "
+        "coarticulation across the join and no sentence prosody, and every pause is a splice "
+        "rather than a speaker drawing breath, so the transitions here are cleaner than "
+        "dictation and the pauses are more uniform. TD-8's figures come from the first "
+        "consumer's private gate corpus; this page is the reproducible counterpart, not a "
+        "replacement. The gaps are the dataset's own recordings scaled to one floor, so the "
+        "floor does not move within a stream as it does between rooms.",
+        "",
+        "Every figure above is in `partial-states.json`, and `partial-states.streams.jsonl` "
+        "carries, per stream, the ground truth, the finals and the whole advance series with "
+        "each reading's lead delta, age and relation, so another rule can be scored on the same "
+        "streams without decoding them again.",
+    ]
+    return L
+
+
+if __name__ == "__main__":
+    main()
