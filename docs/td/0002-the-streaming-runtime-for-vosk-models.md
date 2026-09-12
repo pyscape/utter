@@ -95,9 +95,9 @@ shares:
 |---|---|---|
 | `am/final.mdl` | Kaldi binary: TransitionModel then nnet3 Nnet | phone and pdf per transition id; the network |
 | `graph/HCLr.fst` | OpenFst binary, type `olabel_lookahead`, arc `standard` | H, C, L composed, word side relabeled, plus the lookahead add-on |
-| `graph/Gr.fst` | OpenFst binary, type `ngram` | the full LM; not read |
+| `graph/Gr.fst` | OpenFst binary, type `ngram` | its arcs are not read; its attached output symbol table is the word table, 152,217 symbols, already in the relabeled label space of `HCLr.fst` |
 | `graph/disambig_tid.int` | text, integers | transition-id-space disambiguation symbols erased after composition |
-| `graph/words.txt` | `word id` per line | word symbols for the grammar and for output |
+| `graph/words.txt` | absent in the small models | libvosk falls back to the table attached to `Gr.fst`, and so does the runtime |
 | `graph/phones/word_boundary.int` | `phone type` per line | word alignment on the best path: begin, end, internal, singleton, nonword |
 | `ivector/final.dubm`, `final.ie`, `final.mat`, `global_cmvn.stats` | Kaldi binary | Gaussian selection, i-vector estimation, LDA, CMVN start-up |
 | `ivector/online_cmvn.conf`, `splice.conf` | Kaldi option files | CMVN options (defaults) and splice context 3 and 3 |
@@ -117,8 +117,9 @@ frame subsampling factor, frames per chunk, endpoint silence phones and
 endpoint rule thresholds are read from the file; the stock file carries
 min-active 200, max-active 3000, beam 10.0, acoustic scale 1.0,
 subsampling 3, silence phones 1 to 10, and rules 2, 3 and 4 at 0.5, 1.0
-and 2.0 s; the consumer ships a sibling with frames per chunk 12 and the
-three rules at 0.4 s. Kaldi defaults fill the rest: rule 1 at 5.0 s with
+and 2.0 s, and does not set frames per chunk, so the stock model runs
+Kaldi's default of 24 input frames per chunk; the consumer ships a
+sibling with frames per chunk 12 and the three rules at 0.4 s. Kaldi defaults fill the rest: rule 1 at 5.0 s with
 no speech required, rule 5 at 20 s of utterance, rule 2 relative cost
 2.0, rule 3 relative cost 8.0, rule 4 unbounded.
 
@@ -132,8 +133,8 @@ every frame; libvosk sets max count 100.
 ### Inputs: the grammar
 
 A list of strings. libvosk tokenizes each on spaces, drops words absent
-from `words.txt` with a warning, and treats each string as one sentence
-for the bigram estimator. The runtime does the same, including the
+from the word table with a warning, and treats each string as one
+sentence for the bigram estimator. The runtime does the same, including the
 warning. A grammar may include the model's unknown-word symbol, and the
 runtime additionally offers absence as a reading (see Partial
 alternatives).
@@ -214,7 +215,10 @@ Vosk-Rust implements the batch extractor at 0.999 correlation to Kaldi's
 `ivector-extract` and reports that Kaldi's online tool has an
 extraction-order behaviour it did not reproduce. The runtime carries a
 mode switch: `faithful` (the above) and `zero` (a zero vector of the
-extractor's dimension). Gate G0 decides which mode ships.
+extractor's dimension). Gate G0 ran on 2026-09-11
+(`docs/gates/2026-09-11-g0.md`): faithful beat zero by 2.34 word error
+points against libvosk's finals on the consumer's corpus, so faithful
+ships and zero remains a measurement mode.
 
 ### The network
 
@@ -223,13 +227,23 @@ the nnet3 `Nnet` with its components and descriptor graph. Reference:
 Vosk-Rust `src/kaldi_io.rs`, `src/transition_model.rs`, `src/nnet3.rs`.
 
 Streaming execution follows Kaldi's `DecodableNnetSimpleLooped`: left
-and right context are read from the descriptor graph; input frames are
-consumed in chunks of frames-per-chunk; output frame t needs input
-frames up to 3t plus the right context and is not emitted before those
-frames exist; the i-vector for a chunk is the most recent estimate at
-the chunk's first frame; the output is the chain network's
-log-likelihood per output frame scaled by the acoustic scale, indexed
-by pdf.
+and right context are read from the descriptor graph (26 left and 14
+right input frames for the reference model, whose output is 2,192 pdfs
+over 10,014 transition ids); input frames are consumed in chunks of
+frames-per-chunk; output frame t needs input frames up to 3t plus the
+right context and is not emitted before those frames exist; the output
+is the chain network's log-likelihood per output frame scaled by the
+acoustic scale, indexed by pdf.
+
+The i-vector a chunk uses is the newest estimate available at the
+moment the chunk is computed, as `DecodableNnetLoopedOnlineBase::AdvanceChunk`
+takes it: the i-vector feature's frame at the smaller of the most
+recent input frame ready and the last i-vector frame ready, where
+i-vector frames ready is MFCC frames ready minus the splice right
+context of 3. Which estimate that is therefore depends on the feed
+step: 0.2 s inside libvosk's `AcceptWaveform`, but a host that calls
+`accept` per 40 ms block advances in 40 ms steps, and the runtime
+reproduces the schedule of whichever step the host uses.
 
 Matrix multiplication is the cost centre: 40-dimensional input, a
 15 MiB network, one forward per 30 ms of audio. The kernel is the
@@ -238,20 +252,27 @@ unrolled over eight accumulators so the compiler vectorizes it on
 stable Rust, and explicit AVX2 with FMA and NEON paths behind runtime
 feature detection through `std::arch`, scalar fallback everywhere else.
 
-### The graph: reading `HCLr.fst`
+### The graph: reading HCLr.fst
 
 The header names type `olabel_lookahead`, OpenFst's
-`StdOLabelLookAheadFst`: a `ConstFst` body followed by the label
-reachability add-on, `LabelReachableData`, which holds the relabeling
-that was applied to the graph's output labels and the interval sets
-used for lookahead. The runtime carries its own reader for the OpenFst
-binary header and the `ConstFst` body, and its own parser for the
-add-on per OpenFst's `label-reachable.h`: the reach-input flag, the
-final label, the label-to-index map, the interval sets. Only the
-label-to-index map is used, to relabel the grammar G before
-composition, which is what `LabelLookAheadRelabeler` does inside
-libvosk's compose. The interval sets are parsed to reach the end of the
-record and otherwise ignored.
+`StdOLabelLookAheadFst`: a `ConstFst` body followed by an `AddOnPair`
+whose input-side entry is absent and whose output-side entry is a
+`LabelReachableData` record: the reach-input flag, the final label,
+the label-to-index map, and the interval sets per state. The runtime
+carries its own reader for the OpenFst binary header and the `ConstFst`
+body and its own parser for the add-on per OpenFst's
+`label-reachable.h`.
+
+The graph was written by OpenFst 1.6.7, whose `olabel_lookahead` flags
+omit `kLookAheadKeepRelabelData`, so the label-to-index map in the
+record is empty: the relabeling was applied to the graph's output
+labels when it was built and not kept. The word table that matters is
+the symbol table attached to `Gr.fst`, which is already in that
+relabeled space and matches `HCLr.fst`'s output labels one to one, and
+it is what libvosk uses for its word symbols when no `words.txt` is
+present. The runtime therefore reads `Gr.fst`'s header and symbol table
+and never relabels G. The interval sets are the part of the add-on the
+runtime uses, for composition (next section).
 
 ### The graph: the grammar as a bigram
 
@@ -271,24 +292,33 @@ libvosk composes with OpenFst's default `ComposeFst` over the lookahead
 matcher the graph type carries, which selects the lookahead compose
 filter with weight and label pushing, then maps every input label in
 `disambig_tid.int` to epsilon, lazily with a 32 MiB cache. Lookahead
-exists to keep a lazy composition with a large G from expanding paths
-that can never reach a G arc. With a grammar of tens of words the
-runtime does not need it: it composes eagerly at construction with the
+exists to keep a composition from expanding paths that can never reach
+a G arc, and the determinized HCL makes that expansion the common case:
+word labels are delayed, so nearly the whole graph sits behind output
+epsilons and a plain eager composition copies it once per G state,
+which passed two million states on a 62-word grammar before it was
+stopped.
+
+The runtime therefore composes eagerly at construction with the
 standard epsilon-sequencing filter (G's backoff arcs are epsilons on its
-input side), erases the disambiguation labels, and trims states that
-cannot reach a final state. The result is a plain vector FST the decoder
-walks directly.
+input side) and prunes with the add-on's interval sets: a state pair is
+not expanded when no output label the G state accepts is reachable from
+the HCLr state. This is the reachability test the lookahead matcher
+performs, applied at build time. The disambiguation labels are erased
+and states that cannot reach a final state are trimmed; the connected
+result is identical to the unpruned composition. For the reference
+grammar of 62 words: 12,281 states and 32,537 arcs in 8 ms. The result
+is a plain vector FST the decoder walks directly.
 
 This yields the same paths and path weights as libvosk's graph, not the
-same weight placement: the lookahead filter pushes G's weights and
+same weight placement: the lookahead filter also pushes G's weights and
 labels earlier along a word's arcs, which lets the beam discard a losing
 word sooner. Best paths are identical; pruning near the beam edge can
 differ, which gate G2 measures. Should G2 fail on that account, weight
 pushing after eager composition is the fallback, a single pass over the
-trimmed graph. The runtime refuses a grammar whose eager composition
-exceeds a configured state count rather than silently taking seconds; a
-large-vocabulary G, which would need lazy lookahead composition, is out
-of scope.
+trimmed graph. The runtime refuses a grammar whose composition exceeds a
+configured state count rather than silently taking seconds; a
+large-vocabulary G, which would need lazy composition, is out of scope.
 
 ### The decoder: search
 
