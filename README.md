@@ -43,6 +43,59 @@ a general Kaldi. It decodes, it tells you what it thinks so far and
 what else it is still considering, and it tells you when the speaker
 stopped.
 
+## What a partial carries
+
+The stock wheel's partial is a line of text. A host that needs to know
+when a word is safe to act on, which rivals the decoder is still
+weighing, or whether a sound was speech at all runs its own detectors
+beside the decoder. utter puts that evidence in the partial. Fed the
+same audio at the same block, where the stock wheel returns
+
+```json
+{"partial": "alpha seven"}
+```
+
+utter returns the same text and, beside it, the readings still alive in
+the beam, the span and loudness and hold of each word, and the room's
+own noise floor:
+
+```json
+{
+  "partial": "alpha seven",
+  "partial_alternatives": [
+    {"text": "alpha seven",  "confidence": 1.94,  "result": [ ... ]},
+    {"text": "alpha eleven", "confidence": -3.32, "result": [ ... ]}
+  ],
+  "partial_result": [
+    {"word": "alpha", "start_sample": 196800, "end_sample": 202080, "energy_dbfs": -23.2, "stable_ms": 960},
+    {"word": "seven", "start_sample": 202080, "end_sample": 207680, "energy_dbfs": -22.8, "stable_ms": 240},
+    {"word": "[sil]",  "start_sample": 207680, "end_sample": 208320, "energy_dbfs": -48.6, "stable_ms": 0}
+  ],
+  "floor_dbfs": -51.7
+}
+```
+
+The `start` and `end` seconds libvosk emits sit on each word too, left
+out here for room.
+
+| field | stock wheel | what a host does with it |
+|---|---|---|
+| `partial_alternatives` | absent | the distinct readings still alive, ranked; the gap from the first `confidence` to the second is the strongest single sign the word is about to be revised |
+| `confidence` | absent | orders the readings; a raw path cost, never a probability |
+| `stable_ms` | absent | how long the word has held its place, the hold to wait out before acting on it |
+| `energy_dbfs` | absent | the loudness under the word, for telling a spoken word from one read into a quiet room |
+| `floor_dbfs` | absent | the room's own noise floor, so a silence gate travels between microphones rather than being a fixed dBFS |
+| `start_sample`, `end_sample` | absent | the word's span in samples of the audio fed: one clock, no drift against a second detector |
+| `[sil]` | empty string | a best path carrying no word says so, instead of vanishing or being forced to the nearest word |
+
+Stock `partial_result`, where it is turned on, carries `word`, `start`,
+`end` and `conf` in seconds; utter's carries the sample span, the energy
+and the hold, and adds the ranked readings the stock partial never had.
+Finals gain the same `energy_dbfs` on each word and `floor_dbfs` beside
+the text. What each field means exactly is `[[rr:TD-2#Interface]]`; how a
+host reads them for silence and for end of speech is
+`[[rr:TD-8#Decision outcome]]`.
+
 ## What it does
 
 - Loads a stock Vosk model directory: the nnet3 chain acoustic model,
@@ -129,13 +182,9 @@ confidence, `start_sample` and `end_sample` beside Kaldi's seconds,
 for how long a partial word has held, `floor_dbfs` for the noise floor
 of the audio fed, and `[sil]` where the reading carries no word.
 
-Silence is the host's to judge, and those last fields are what it judges
-with (`[[rr:TD-8#Decision outcome]]`): a word is silence when its
-`energy_dbfs` is within the host's own margin of `floor_dbfs`, never at
-an absolute level. End of speech is the endpoint; a host that wants it
-sooner than the model's rules allow reads the span of the trailing
-`[sil]` entry and applies its own bound. `stable_ms` is the hold before
-acting on a word, and is not an end-of-speech signal.
+What those added fields are and how a host reads them for trust, for
+silence and for end of speech is in "What a partial carries" above and
+in `[[rr:TD-8#Decision outcome]]`.
 
 ## Model compatibility
 
