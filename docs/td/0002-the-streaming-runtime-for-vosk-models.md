@@ -237,7 +237,7 @@ Vosk-Rust implements the batch extractor at 0.999 correlation to Kaldi's
 `ivector-extract` and reports that Kaldi's online tool has an
 extraction-order behaviour it did not reproduce. The runtime carries a
 mode switch: `faithful` (the above) and `zero` (a zero vector of the
-extractor's dimension). Gate G0 (`docs/gates/2026-09-11-g0.md`)
+extractor's dimension). Gate G0 (`docs/gates/g0-ivector-mode.md`)
 decides it: faithful beats zero by 2.34 word error points against
 libvosk's finals on the consumer's corpus, so faithful ships and zero
 remains a measurement mode.
