@@ -96,6 +96,38 @@ the text. What each field means exactly is `[[rr:TD-2#Interface]]`; how a
 host reads them for silence and for end of speech is
 `[[rr:TD-8#Decision outcome]]`.
 
+**How much to trust a partial word.** A word in a partial may still be
+revised as more audio arrives; on the Speech Commands split the first
+word shown is later revised 12% of the time. What predicts it is not the
+word's own `confidence`, which is a raw path cost, but its lead over the
+next reading, and the API already returns that lead in
+`partial_alternatives`. The decoder's costs are log-likelihoods in nats,
+so the gap between the top two confidences is a two-way softmax, and its
+sigmoid is a usable probability that the leading word will hold:
+
+```python
+import json, math
+
+def trust(partial_json):
+    """P that the top reading holds, from its lead over the next reading."""
+    alts = json.loads(partial_json).get("partial_alternatives") or []
+    if len(alts) < 2:
+        return 1.0                                    # nothing else is close
+    gap = alts[0]["confidence"] - alts[1]["confidence"]   # nats, >= 0
+    return 1.0 / (1.0 + math.exp(-gap))                   # sigmoid(gap)
+
+# act on the leading word only once the reading is clear of its rival
+p = rec.PartialResult()
+if trust(p) >= 0.9:                                   # a lead of about 2.2 nats
+    act(json.loads(p)["partial"])
+```
+
+That sigmoid is a Viterbi approximation over the two leading beam
+readings, not a lattice posterior, but it is well calibrated in practice:
+the derivation and a benchmark that holds the predicted survival against
+the measured survival over the testing split are in
+[`docs/benchmarks/partial-trust.md`](docs/benchmarks/partial-trust.md).
+
 ## What it does
 
 - Loads a stock Vosk model directory: the nnet3 chain acoustic model,
