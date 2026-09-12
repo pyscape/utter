@@ -56,7 +56,6 @@ LEVEL = [
     ("energy", "`energy_dbfs` under the word"),
 ]
 MOTION = [
-    ("age_ms", "`age_ms` of the top reading"),
     ("advances_alive", "advances the top reading has stood"),
     ("lead_delta0", "`lead_delta` of rank 0"),
     ("lead_delta1", "`lead_delta` of rank 1"),
@@ -113,6 +112,20 @@ def leads_of(readings):
     return {t: c - max(d for u, d in readings if u != t) for t, c in readings}
 
 
+def relation_of(top, text):
+    """A reading's word sequence set against rank 0's, as
+    `[[rr:TD-9#Every reading names its relation to the partial]]` defines it: a sequence relation
+    from the labels, and nothing about which word differs."""
+    a, b = sc.words_of(top), sc.words_of(text)
+    if a == b:
+        return "same"
+    if a[: len(b)] == b:
+        return "prefix"
+    if b[: len(a)] == a:
+        return "extends"
+    return "differs"
+
+
 def entropy_of(readings):
     """Shannon entropy in nats of the softmax over the confidences."""
     if not readings:
@@ -136,7 +149,6 @@ def advance_states(series):
     marks an advance: the readings are a function of the decoded frame count, so between advances
     every block repeats the last one."""
     states = []
-    first_seen = {}
     alive = {}
     churn = 0
     prev = None
@@ -144,8 +156,6 @@ def advance_states(series):
         if not readings or (prev is not None and readings == series[i - 1][1]):
             continue
         texts = [t for t, _ in readings]
-        for t in texts:
-            first_seen.setdefault(t, fed)
         alive = {t: alive.get(t, 0) + 1 for t in texts}
         lead = leads_of(readings)
         ent = entropy_of(readings)
@@ -166,7 +176,6 @@ def advance_states(series):
             top=top,
             lead=lead,
             delta=delta,
-            age={t: (fed - first_seen[t]) / SAMPLES_PER_MS for t in texts},
             alive=dict(alive),
             churn=churn,
             entropy=ent,
@@ -203,7 +212,6 @@ def features_at(st, vanished):
         gap=r[0][1] - r[1][1] if len(r) >= 2 else None,
         conf0=r[0][1],
         energy=energy_of(st["p"]),
-        age_ms=st["age"][st["top"]],
         advances_alive=st["alive"][st["top"]],
         lead_delta0=st["delta"].get(st["top"]),
         lead_delta1=st["delta"].get(rank1),
@@ -214,7 +222,8 @@ def features_at(st, vanished):
         vanished=vanished,
         had_history=st["top"] in st["prev_texts"],
         readings=[
-            dict(text=t, conf=c, age_ms=st["age"][t], lead=st["lead"][t], lead_delta=st["delta"].get(t)) for t, c in r
+            dict(text=t, conf=c, relation=relation_of(st["top"], t), lead=st["lead"][t], lead_delta=st["delta"].get(t))
+            for t, c in r
         ],
     )
 
@@ -389,19 +398,6 @@ def ece(pairs, edges):
     return err, out
 
 
-def mcnemar(b, c):
-    """The two-sided exact McNemar of `scripts/speech_commands.py`, in log space: here the two
-    rules disagree on thousands of clips, and that one's 2**n overflows a float past about 1020."""
-    n = b + c
-    if n == 0:
-        return 1.0
-    k = min(b, c)
-    terms = [math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1) for i in range(k + 1)]
-    top = max(terms)
-    log_tail = top + math.log(sum(math.exp(t - top) for t in terms)) - n * math.log(2.0)
-    return min(1.0, 2.0 * math.exp(log_tail)) if log_tail > -700.0 else 0.0
-
-
 def sorted_pairs(scores, labels):
     idx = [i for i, s in enumerate(scores) if s is not None]
     idx.sort(key=lambda i: scores[i])
@@ -470,16 +466,43 @@ def rule_cols(e):
         e["gap"],
         e["displaced_delta"] or 0.0,
         0.0 if e["displaced_delta"] is not None else 1.0,
-        e["age_ms"],
         e["lead_delta0"] or 0.0,
         0.0 if e["lead_delta0"] is not None else 1.0,
     ]
 
 
-def fit_rule(entries, ys):
-    rows = [[1.0] + rule_cols(e) for e in entries if e["gap"] is not None]
+def gap_cols(e):
+    return [e["gap"]]
+
+
+def gap_entropy_cols(e):
+    return [e["gap"], e["entropy"] if e["entropy"] is not None else 0.0]
+
+
+def entropy_motion_cols(e):
+    return gap_entropy_cols(e) + rule_cols(e)[1:]
+
+
+COEF_ORDER = {
+    "gap": "intercept, gap",
+    "gap + entropy": "intercept, gap, entropy",
+    "gap + motion": (
+        "intercept, gap, displaced `lead_delta`, its missing flag, rank-0 `lead_delta`, its missing flag"
+    ),
+    "gap + entropy + motion": (
+        "intercept, gap, entropy, displaced `lead_delta`, its missing flag, rank-0 `lead_delta`, its missing flag"
+    ),
+}
+
+
+def fit_cols(entries, ys, cols):
+    rows = [[1.0] + cols(e) for e in entries if e["gap"] is not None]
     ok = [y for e, y in zip(entries, ys) if e["gap"] is not None]
     return logistic_fit(rows, ok)
+
+
+def fit_rule(entries, ys):
+    return fit_cols(entries, ys, rule_cols)
 
 
 def gap_trust(e):
@@ -487,11 +510,25 @@ def gap_trust(e):
     return 1.0 if e["gap"] is None else sigmoid(e["gap"])
 
 
+def fitted_trust(cols, coef):
+    """A fitted rule's trust: one minus its P(revision), so every rule is read on one scale."""
+
+    def trust(e):
+        if e["gap"] is None:
+            return 1.0
+        x = [1.0] + cols(e)
+        return 1.0 - sigmoid(sum(c * v for c, v in zip(coef, x)))
+
+    return trust
+
+
 def rule_trust(e, coef):
-    if e["gap"] is None:
-        return 1.0
-    x = [1.0] + rule_cols(e)
-    return 1.0 - sigmoid(sum(c * v for c, v in zip(coef, x)))
+    return fitted_trust(rule_cols, coef)(e)
+
+
+def always_trust(e):
+    """The hold-only rule: no score at all, so it releases at the first advance it is read on."""
+    return 1.0
 
 
 def clears_at(f, trust_fn, bar, start):
@@ -511,16 +548,65 @@ def rule_run(feats, trust_fn, bar, start):
     delays = []
     never = 0
     correct = []
+    per_clip = []
     for f in feats:
         at = clears_at(f, trust_fn, bar, start)
         if at is None:
             never += 1
+        delay = None
         if f["survived"]:
-            delays.append((at - f["sighting_ms"]) if at is not None else (f["end_ms"] - f["sighting_ms"]))
+            delay = (at - f["sighting_ms"]) if at is not None else (f["end_ms"] - f["sighting_ms"])
+            delays.append(delay)
         elif at is None:
             caught += 1
         correct.append((f["survived"] and at is not None) or (not f["survived"] and at is None))
-    return dict(caught=caught, delays=delays, never=never, correct=correct)
+        per_clip.append((f["survived"], at is None, delay))
+    return dict(caught=caught, delays=delays, never=never, correct=correct, per_clip=per_clip)
+
+
+def run_interval(run, n=BOOTSTRAP, seed=1):
+    """The realized catch and delay with a 95% interval, resampling clips with replacement. A
+    threshold frozen on one split lands where the other split's clips put it, and that is a
+    sample."""
+    rows = run["per_clip"]
+    if not rows:
+        return {}
+    rng = random.Random(seed)
+    caught, delay = [], []
+    m = len(rows)
+    for _ in range(n):
+        pick = [rows[rng.randrange(m)] for _ in range(m)]
+        rev = [held for survived, held, _ in pick if not survived]
+        good = [d for survived, _, d in pick if survived and d is not None]
+        if rev:
+            caught.append(sum(rev) / len(rev))
+        if good:
+            delay.append(sum(good) / len(good))
+    caught.sort()
+    delay.sort()
+
+    def band(v):
+        return (v[int(0.025 * len(v))], v[min(len(v) - 1, int(0.975 * len(v)))]) if v else (None, None)
+
+    rev_n = sum(1 for survived, _, _ in rows if not survived)
+    return dict(
+        caught_share=run["caught"] / rev_n if rev_n else None,
+        caught_lo=band(caught)[0],
+        caught_hi=band(caught)[1],
+        delay_mean=mean(run["delays"]),
+        delay_lo=band(delay)[0],
+        delay_hi=band(delay)[1],
+    )
+
+
+def frozen_bar(fit_feats, trust_fn, start, target, kind, grid=None):
+    """The bar a rule is frozen at, chosen on the fitting split alone: the one whose delay, or
+    whose revisions caught, comes closest to the reference rule's on that same split."""
+    grid = grid or [i / 200 for i in range(1, 200)]
+    runs = [(bar, rule_run(fit_feats, trust_fn, bar, start)) for bar in grid]
+    if kind == "delay":
+        return min(runs, key=lambda t: abs(mean(t[1]["delays"]) - target))[0]
+    return min(runs, key=lambda t: (abs(t[1]["caught"] / max(1, len(fit_feats)) - target), mean(t[1]["delays"])))[0]
 
 
 def rule_score(feats, trust_fn, start, as_run=False):
@@ -565,53 +651,74 @@ def availability_section(feats, diag, lines, fig):
         f"{interval:.0f} ms and none measured anything else, one network chunk at 40 ms blocks. The "
         f"first advance lands at {dist(diag['first_advance_ms'])} ms, the audio that first chunk "
         f"needs. A one-second clip therefore holds {dist(diag['advances'])} advances, and a first "
-        "sighting has almost no history behind it:",
+        "sighting has almost no history behind it.",
         "",
-        "| at the first sighting | of the first sightings |",
-        "|---|---|",
+        "The two moments a rule is read at, and the two places the figure could come from. The "
+        "harness sees the readings the runtime reports, five of them here, and derives the motion "
+        "from its own series; the runtime keeps the history over every surviving group, so a "
+        "reading entering the list carries motion the harness has no record of "
+        "(`[[rr:TD-9#Readings are read once per decoding advance]]`). The runtime column is "
+        "**pending**: it is filled when the fields are read from the JSON instead of derived, and "
+        "until then this page's availability is a lower bound on the runtime's.",
+        "",
+        "| figure | defined at the sighting | defined one advance later | runtime, over every group |",
+        "|---|---|---|---|",
     ]
+    held = [f for f in feats if f["hold"]]
     rows = [
         (
             "history",
             "the rank-0 reading was there at the previous advance (`had_history`)",
             sum(1 for f in feats if f["had_history"]),
+            sum(1 for f in held if f["hold"]["had_history"]),
         ),
-        ("lead_delta0", "`lead_delta` of rank 0 is defined", len(defined(feats, "lead_delta0"))),
-        ("lead_delta1", "`lead_delta` of rank 1 is defined", len(defined(feats, "lead_delta1"))),
+        (
+            "lead_delta0",
+            "`lead_delta` of rank 0 is defined",
+            len(defined(feats, "lead_delta0")),
+            sum(1 for f in held if f["hold"]["lead_delta0"] is not None),
+        ),
+        (
+            "lead_delta1",
+            "`lead_delta` of rank 1 is defined",
+            len(defined(feats, "lead_delta1")),
+            sum(1 for f in held if f["hold"]["lead_delta1"] is not None),
+        ),
         (
             "displaced_delta",
             "`lead_delta` of the reading that led before is defined",
             len(defined(feats, "displaced_delta")),
+            sum(1 for f in held if f["hold"]["displaced_delta"] is not None),
         ),
         (
             "entropy_delta",
             "`entropy_delta` is defined (there was a previous advance)",
             len(defined(feats, "entropy_delta")),
+            sum(1 for f in held if f["hold"]["entropy_delta"] is not None),
         ),
     ]
-    for _, label, c in rows:
-        lines.append(f"| {label} | {c} / {n} ({100 * c / n:.1f}%) |")
-    ages = [f["age_ms"] for f in feats]
+    for _, label, c, h in rows:
+        hold_cell = f"{h} / {len(held)} ({100 * h / len(held):.1f}%)" if held else "-"
+        lines.append(f"| {label} | {c} / {n} ({100 * c / n:.1f}%) | {hold_cell} | pending |")
     alive = [f["advances_alive"] for f in feats]
-    born = sum(1 for a in ages if a == 0)
     alive1 = sum(1 for v in alive if v == 1)
     lines += [
         "",
-        f"The rank-0 reading is {dist(ages)} ms old (median / p90) and has stood "
-        f"{dist(alive, 0)} advances; it is brand new at {100 * born / n:.1f}% of first sightings by "
-        f"age and {100 * alive1 / n:.1f}% by advances stood. That is the shape of the problem: a "
+        f"The rank-0 reading has stood {dist(alive, 0)} advances (median / p90) and is at its "
+        f"first on {100 * alive1 / n:.1f}% of first sightings. That is the shape of the problem: a "
         "word first appears when its reading appears, so at that moment there is usually nothing "
         "to have moved.",
     ]
     fig["availability"] = dict(
         first_sightings=n,
         clips_decoded=diag["clips"],
-        defined={k: c for k, _, c in rows},
-        age_ms_p50=sc.quantile(ages, 0.5),
-        age_ms_p90=sc.quantile(ages, 0.9),
+        defined={k: c for k, _, c, _ in rows},
+        defined_at_hold={k: h for k, _, _, h in rows},
+        hold_available=len(held),
+        runtime_all_groups="pending",
         advances_alive_p50=sc.quantile(alive, 0.5),
         advances_alive_p90=sc.quantile(alive, 0.9),
-        born_at_sighting=born,
+        born_at_sighting=alive1,
         advance_interval_ms_p50=interval,
         advance_intervals=len(diag["intervals"]),
         advance_intervals_at_p50=exact,
@@ -916,76 +1023,135 @@ def vanishing_section(feats, lines, fig):
 
 
 def rules_section(feats, fit_feats, fit_name, lines, fig):
-    """The before and after, fit on one split and scored on another: the README's rule, the same
-    plus the motion, and the same read one advance later and charged for the wait."""
+    """The before and the after, every coefficient and every bar fitted on one split and scored on
+    another: the README's rule, the two cheaper baselines it is worth beating, a hold that reads
+    nothing, the motion, and the motion read one advance later."""
     ys = [not f["survived"] for f in feats]
+    fit_ys = [not f["survived"] for f in fit_feats]
+    fit_entries = [f["series"][0] for f in fit_feats]
     n = len(feats)
     revised = sum(ys)
     good = n - revised
-    coef = fit_rule([f["series"][0] for f in fit_feats], [not f["survived"] for f in fit_feats])
+
+    coefs = {name: fit_cols(fit_entries, fit_ys, cols) for name, cols in
+             (("gap", gap_cols), ("gap + entropy", gap_entropy_cols), ("gap + motion", rule_cols),
+              ("gap + entropy + motion", entropy_motion_cols))}
+    coef = coefs["gap + motion"]
+    trust = {
+        "R0": gap_trust,
+        "B1": fitted_trust(gap_cols, coefs["gap"]),
+        "B2": fitted_trust(gap_entropy_cols, coefs["gap + entropy"]),
+        "R1": fitted_trust(rule_cols, coef),
+        "R1e": fitted_trust(entropy_motion_cols, coefs["gap + entropy + motion"]),
+        "R2": fitted_trust(rule_cols, coef),
+        "H": always_trust,
+    }
+    start = {"R0": 0, "B1": 0, "B2": 0, "R1": 0, "R1e": 0, "R2": 1, "H": 1}
+    labels = {
+        "R0": "R0, `sigmoid(gap)`, the README's rule",
+        "B1": "B1, the gap recalibrated",
+        "B2": "B2, the gap and the readings' entropy",
+        "R1": "R1, the gap and the motion",
+        "R1e": "R1e, the gap, the entropy and the motion",
+        "R2": "R2, R1 one advance later, as the rule runs",
+        "H": "H, hold one advance, reading nothing",
+    }
     even = [f for i, f in enumerate(feats) if i % 2 == 0]
     odd = [f for i, f in enumerate(feats) if i % 2 == 1]
     coef_half = fit_rule([f["series"][0] for f in even], [not f["survived"] for f in even])
     coef_in = fit_rule([f["series"][0] for f in feats], ys)
 
-    def r1(e):
-        return rule_trust(e, coef)
+    scores = {k: rule_score(feats, trust[k], start[k], as_run=(k in ("R2", "H"))) for k in trust}
+    scores["R2 reading alone"] = rule_score(feats, trust["R2"], 1)
+    aucs = {k: auc(list(zip(v, ys))) for k, v in scores.items()}
+    a0, a1, a2, a2r = aucs["R0"], aucs["R1"], aucs["R2"], aucs["R2 reading alone"]
 
-    s0 = rule_score(feats, gap_trust, 0)
-    s1 = rule_score(feats, r1, 0)
-    s2 = rule_score(feats, r1, 1, as_run=True)
-    s2r = rule_score(feats, r1, 1)
-    a0, a1, a2, a2r = (auc(list(zip(s, ys))) for s in (s0, s1, s2, s2r))
     lines += [
         "",
-        "## Three rules on the same clips, fit off them",
+        "## Six rules on the same clips, every one fitted off them",
         "",
-        "The sections above are in sample. Here are three rules a host could run, with every "
-        f"coefficient fit on {fit_name} and every figure scored on the testing split:",
+        "The sections above are in sample. Here are the rules a host could run, with every "
+        f"coefficient and every operating point fitted on {fit_name} and every figure scored on "
+        "the testing split:",
         "",
         "- **R0**, the README's rule: `trust = sigmoid(gap)` at the first sighting, and 1.0 when "
         "the list holds one reading, exactly as the README's `trust()` reads it. Nothing is fit.",
-        "- **R1**, R0 plus the motion that is available at the first sighting: the gap, the "
-        "displaced reading's `lead_delta`, rank 0's `age_ms` and `lead_delta`, each missing value "
-        "zeroed beside an indicator, through a logistic fit.",
-        "- **R2**, the same fitted rule read at the first advance after the sighting, charged the wait.",
+        "- **B1**, the same gap through a logistic fit, which is the recalibration alone and the "
+        "baseline any new field has to beat.",
+        "- **B2**, the gap and the entropy of the readings' softmax: the strongest second reading "
+        "a host already has, and no runtime change.",
+        "- **R1**, the gap and the motion available at the first sighting: the displaced reading's "
+        "`lead_delta` and rank 0's, each missing value zeroed beside an indicator.",
+        "- **R1e**, the same with the entropy beside it, which is the strongest rule on this page "
+        "that a host could run at the sighting.",
+        "- **R2**, R1 read at the first advance after the sighting, charged the wait.",
+        "- **H**, the wait with no reading at all: release at the first advance where rank 0 still "
+        "leads with the word. It separates what the delay buys from what the motion buys.",
         "",
         "| rule | clips scored | AUC against revision |",
         "|---|---|---|",
-        f"| R0, `sigmoid(gap)` | {sum(1 for s in s0 if s is not None)} | {fmt(a0, 3)} |",
-        f"| R1, gap + motion | {sum(1 for s in s1 if s is not None)} | {fmt(a1, 3)} |",
-        f"| R2, R1 one advance later, as the rule runs | {sum(1 for s in s2 if s is not None)} | {fmt(a2, 3)} |",
-        f"| R2, the later reading alone | {sum(1 for s in s2r if s is not None)} | {fmt(a2r, 3)} |",
+    ]
+    for k in ("R0", "B1", "B2", "R1", "R1e", "R2", "H"):
+        lines.append(f"| {labels[k]} | {sum(1 for x in scores[k] if x is not None)} | {fmt(aucs[k], 3)} |")
+    lines.append(
+        f"| R2, the later reading alone | {sum(1 for x in scores['R2 reading alone'] if x is not None)} | "
+        f"{fmt(a2r, 3)} |"
+    )
+    fig["rules"] = dict(
+        fit_on=fit_name,
+        coefficients=coef,
+        coefficients_by_rule=coefs,
+        coefficients_split_half=coef_half,
+        coefficients_in_sample=coef_in,
+    )
+    fig["rules"]["auc"] = dict(aucs)
+    lines += [
         "",
-        "Scores are oriented as P(revision), so higher is better and 0.5 is no information. R2 is "
-        "scored only on the clips that have another advance. Its two rows are the same rule read "
-        "two ways: as it runs, a word rank 0 no longer leads with is a revision called with "
-        "certainty, and that is where nearly all of R2's information is; scoring the later reading "
-        "on its own gap and motion, as if the word were still on offer, is worse than R0 because "
-        "the gap keeps growing after the word's fate is settled. The paired bootstrap resamples "
-        f"clips {BOOTSTRAP} times, both rules seeing the same resample:",
+        "B1 orders the clips exactly as R0 does, a logistic of one column being monotone in it, so "
+        "its AUC difference is zero by construction and everything it buys is in the calibration "
+        "and the decisions below. Scores are oriented as P(revision), so higher is better and 0.5 "
+        "is no information. R2 and "
+        "H are scored only on the clips that have another advance, and both are read as they run: "
+        "a word rank 0 no longer leads with is a revision called with certainty, which is where "
+        "nearly all of their information is. H carries no score of its own, so its AUC is that "
+        "call and nothing else. Scoring R2's later reading on its own gap and motion, as if the "
+        "word were still on offer, is worse than R0 because the gap keeps growing after the word's "
+        f"fate is settled. The paired bootstrap resamples clips {BOOTSTRAP} times, both rules "
+        "seeing the same resample:",
         "",
         "| difference | clips | AUC difference | 95% interval |",
         "|---|---|---|---|",
     ]
-    fig["rules"] = dict(
-        fit_on=fit_name, coefficients=coef, coefficients_split_half=coef_half, coefficients_in_sample=coef_in
-    )
-    fig["rules"]["auc"] = dict(R0=a0, R1=a1, R2=a2)
     fig["rules"]["bootstrap"] = {}
-    for name, s in (("R1 - R0", s1), ("R2 - R0, as the rule runs", s2), ("R2 - R0, the reading alone", s2r)):
-        d, lo, hi, m = paired_bootstrap(s0, s, ys)
+    pairs = (
+        ("B1 - R0, the recalibration alone", "R0", "B1"),
+        ("B2 - B1, the entropy over it", "B1", "B2"),
+        ("R1 - R0, the motion against the README", "R0", "R1"),
+        ("R1 - B1, the motion over the recalibration", "B1", "R1"),
+        ("R1 - B2, the motion alone against the entropy alone", "B2", "R1"),
+        ("R1e - B2, the motion added to the entropy", "B2", "R1e"),
+        ("R2 - R0, as the rule runs", "R0", "R2"),
+        ("H - R0, the wait alone", "R0", "H"),
+    )
+    for name, a, b in pairs:
+        d, lo, hi, m = paired_bootstrap(scores[a], scores[b], ys)
         lines.append(f"| {name} | {m} | {fmt(d, 4)} | {fmt(lo, 4)} to {fmt(hi, 4)} |")
         fig["rules"]["bootstrap"][name] = dict(n=m, diff=d, lo=lo, hi=hi)
-    half_auc = auc(list(zip(rule_score(odd, lambda e: rule_trust(e, coef_half), 0), [not f["survived"] for f in odd])))
-    in_auc = auc(list(zip(rule_score(feats, lambda e: rule_trust(e, coef_in), 0), ys)))
+    half_auc = auc(list(zip(rule_score(odd, fitted_trust(rule_cols, coef_half), 0), [not f["survived"] for f in odd])))
+    in_auc = auc(list(zip(rule_score(feats, fitted_trust(rule_cols, coef_in), 0), ys)))
     lines += [
         "",
         f"Where the R1 coefficients come from moves it little: fit on {fit_name} it scores "
         f"{fmt(a1, 3)} on all {n} testing clips; fit on the even-indexed half of testing it scores "
         f"{fmt(half_auc, 3)} on the odd half; fit and scored on testing itself, {fmt(in_auc, 3)}. "
-        "The coefficients, in the order intercept, gap, displaced `lead_delta`, its missing flag, "
-        "`age_ms`, rank-0 `lead_delta`, its missing flag: " + ", ".join(f"{c:+.4f}" for c in coef) + ".",
+        "The fitted coefficients, each in the order named:",
+        "",
+        "| rule | order | coefficients |",
+        "|---|---|---|",
+    ]
+    for name, c in coefs.items():
+        lines.append(f"| {name} | {COEF_ORDER[name]} | " + ", ".join(f"{x:+.4f}" for x in c) + " |")
+    lines += [
         "",
         "### Calibration, and the error in it",
         "",
@@ -996,13 +1162,13 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
         "|---|---|---|---|---|",
     ]
     fig["rules"]["calibration"] = {}
-    for name, s in (("R0", s0), ("R1", s1), ("R2", s2)):
-        pairs = [(1.0 - p, f["survived"]) for p, f in zip(s, feats) if p is not None]
-        e, bins = ece(pairs, TRUST_EDGES)
+    for name in ("R0", "B1", "B2", "R1", "R1e", "R2"):
+        pr = [(1.0 - p, f["survived"]) for p, f in zip(scores[name], feats) if p is not None]
+        e, bins = ece(pr, TRUST_EDGES)
         for (lo, hi), m, mean_p, obs in bins:
             hi_label = "1" if hi > 1 else f"{hi:g}"
             lines.append(f"| {name} | {lo:g} to {hi_label} | {m} | {100 * mean_p:.0f}% | {100 * obs:.0f}% |")
-        lines.append(f"| {name} | **expected calibration error** | {len(pairs)} | | **{fmt(e, 3)}** |")
+        lines.append(f"| {name} | **expected calibration error** | {len(pr)} | | **{fmt(e, 3)}** |")
         fig["rules"]["calibration"][name] = dict(
             ece=e, bins=[[lo, hi, m, mean_p, obs] for (lo, hi), m, mean_p, obs in bins]
         )
@@ -1011,36 +1177,33 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
         "The same calibration read in the gap's own buckets, the ones the table at the top of the "
         "page uses, so a rule that is better ordered but worse calibrated shows as one:",
         "",
-        "| gap at the sighting (nats) | clips | survived | R0 predicts | R1 predicts | R2 predicts |",
-        "|---|---|---|---|---|---|",
+        "| gap at the sighting (nats) | clips | survived | R0 predicts | B1 predicts | B2 predicts | R1 predicts | R1e predicts | R2 predicts |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
-    errs = {"R0": 0.0, "R1": 0.0, "R2": 0.0}
-    scored = {
-        "R0": sum(1 for x in s0 if x is not None),
-        "R1": sum(1 for x in s1 if x is not None),
-        "R2": sum(1 for x in s2 if x is not None),
-    }
+    shown = ("R0", "B1", "B2", "R1", "R1e", "R2")
+    errs = {k: 0.0 for k in shown}
+    scored = {k: sum(1 for x in scores[k] if x is not None) for k in shown}
     fig["rules"]["gap_bucket_calibration"] = []
     for lo, hi in GAP_EDGES:
-        b = [(f, p0, p1, p2) for f, p0, p1, p2 in zip(feats, s0, s1, s2) if lo <= f["gap"] < hi]
-        if not b:
+        idx = [i for i, f in enumerate(feats) if lo <= f["gap"] < hi]
+        if not idx:
             continue
-        row = dict(lo=lo, hi=None if hi == float("inf") else hi, n=len(b))
+        row = dict(lo=lo, hi=None if hi == float("inf") else hi, n=len(idx))
         cells = []
-        for name, col in (("R0", 1), ("R1", 2), ("R2", 3)):
-            have = [x for x in b if x[col] is not None]
+        for name in shown:
+            have = [i for i in idx if scores[name][i] is not None]
             if not have:
                 cells.append("-")
                 continue
-            pred = sum(1.0 - x[col] for x in have) / len(have)
-            obs = sum(1 for x in have if x[0]["survived"]) / len(have)
+            pred = sum(1.0 - scores[name][i] for i in have) / len(have)
+            obs = sum(1 for i in have if feats[i]["survived"]) / len(have)
             errs[name] += len(have) / scored[name] * abs(pred - obs)
             cells.append(f"{100 * pred:.0f}%")
             row[name] = dict(n=len(have), predicted=pred, observed=obs)
-        surv = sum(1 for x in b if x[0]["survived"])
+        surv = sum(1 for i in idx if feats[i]["survived"])
         hi_label = "8+" if hi == float("inf") else f"{hi:g}"
         lines.append(
-            f"| {lo:g} to {hi_label} | {len(b)} | {surv} / {len(b)} ({100 * surv / len(b):.0f}%) | "
+            f"| {lo:g} to {hi_label} | {len(idx)} | {surv} / {len(idx)} ({100 * surv / len(idx):.0f}%) | "
             + " | ".join(cells)
             + " |"
         )
@@ -1067,10 +1230,10 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
     ]
     fig["rules"]["delay"] = {}
     runs = {}
-    for name, fn, start in (("R0", gap_trust, 0), ("R1", r1, 0), ("R2", r1, 1)):
+    for name in ("R0", "B1", "B2", "R1", "R1e", "R2"):
         fig["rules"]["delay"][name] = []
         for bar in BARS:
-            r = rule_run(feats, fn, bar, start)
+            r = rule_run(feats, trust[name], bar, start[name])
             runs[(name, bar)] = r
             good_never = sum(1 for f, ok in zip(feats, r["correct"]) if f["survived"] and not ok)
             lines.append(
@@ -1092,12 +1255,13 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
                     correct=sum(1 for c in r["correct"] if c),
                 )
             )
+    runs[("H", 1.0)] = rule_run(feats, always_trust, 1.0, 1)
     lines += [
         "",
         f"At the README's operating point, trust {OPERATING_TRUST:g} (a gap of about 2.2 nats for "
-        "R0), the same three rules and an exact McNemar on the clips they handle differently. A "
-        "clip is handled correctly when a revision is held to the final or a good word is released "
-        "before it:",
+        "R0), the same rules and an exact McNemar on the clips they handle differently. A clip is "
+        "handled correctly when a revision is held to the final or a good word is released before "
+        "it. H has no bar; it is the wait:",
         "",
         "| rule | clips | correct | revisions caught | good words: mean ms | median ms | p90 ms | never released |",
         "|---|---|---|---|---|---|---|---|",
@@ -1105,8 +1269,9 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
     base = runs[("R0", OPERATING_TRUST)]
     fig["rules"]["operating_point"] = dict(trust=OPERATING_TRUST)
     can_act = [f for f in feats if f["hold"]]
-    rows = [(name, feats, runs[(name, OPERATING_TRUST)]) for name in ("R0", "R1", "R2")]
-    rows.append(("R2, where it can act", can_act, rule_run(can_act, r1, OPERATING_TRUST, 1)))
+    rows = [(name, feats, runs[(name, OPERATING_TRUST)]) for name in ("R0", "B1", "B2", "R1", "R1e", "R2")]
+    rows.append(("H", feats, runs[("H", 1.0)]))
+    rows.append(("R2, where it can act", can_act, rule_run(can_act, trust["R2"], OPERATING_TRUST, 1)))
     for name, on, r in rows:
         ok = sum(1 for c in r["correct"] if c)
         rev = sum(1 for f in on if not f["survived"])
@@ -1134,27 +1299,79 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
         "| pair | R0 right, other wrong | other right, R0 wrong | exact McNemar p |",
         "|---|---|---|---|",
     ]
-    for name in ("R1", "R2"):
+    for name in ("B1", "B2", "R1", "R1e", "R2"):
         r = runs[(name, OPERATING_TRUST)]
         b = sum(1 for x, y in zip(base["correct"], r["correct"]) if x and not y)
         c = sum(1 for x, y in zip(base["correct"], r["correct"]) if y and not x)
-        p = mcnemar(b, c)
-        lines.append(f"| R0 against {name} | {b} | {c} | {'<1e-300' if p == 0.0 else f'{p:.3g}'} |")
-        fig["rules"]["operating_point"][f"mcnemar_R0_{name}"] = dict(b=b, c=c, p=p)
+        pv = sc.mcnemar(b, c)
+        lines.append(f"| R0 against {name} | {b} | {c} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |")
+        fig["rules"]["operating_point"][f"mcnemar_R0_{name}"] = dict(b=b, c=c, p=pv)
+    r1_op = runs[("R1", OPERATING_TRUST)]
+    b1_op = runs[("B1", OPERATING_TRUST)]
+    b = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"]) if x and not y)
+    c = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"]) if y and not x)
+    pv = sc.mcnemar(b, c)
+    lines.append(f"| B1 against R1, the motion's own share | {b} | {c} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |")
+    fig["rules"]["operating_point"]["mcnemar_B1_R1"] = dict(b=b, c=c, p=pv)
+
+    # The frozen operating points: the targets come from the fitting split, the figures from the
+    # scored one, so the bar is never chosen on the clips that judge it.
+    fit_base = rule_run(fit_feats, gap_trust, OPERATING_TRUST, 0)
+    fit_target_delay = mean(fit_base["delays"])
+    fit_target_caught = fit_base["caught"] / max(1, len(fit_feats))
+    frozen = {}
+    lines += [
+        "",
+        "### The frozen operating points",
+        "",
+        f"R0 at the README's bar charges a mean {fit_target_delay:.0f} ms on {fit_name}'s good "
+        f"words and catches {fit_base['caught']} of its {sum(1 for f in fit_feats if not f['survived'])} "
+        "revisions there. Each other rule's bar is the one that comes closest to *that* on *that* "
+        "split, frozen, and then read on the testing clips. The intervals are 95% over clip "
+        f"resamples ({BOOTSTRAP} of them):",
+        "",
+        "| rule | matched on | bar frozen on the fit | revisions caught | 95% interval | good words: mean ms | 95% interval |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for name in ("B1", "B2", "R1", "R1e", "R2"):
+        for kind, target in (("delay", fit_target_delay), ("catch", fit_target_caught)):
+            bar = frozen_bar(fit_feats, trust[name], start[name], target, kind)
+            r = rule_run(feats, trust[name], bar, start[name])
+            iv = run_interval(r)
+            frozen[f"{name}|{kind}"] = dict(bar=bar, caught=r["caught"], **iv)
+            lines.append(
+                f"| {name} | equal {kind} | {bar:.3f} | {r['caught']} / {revised} "
+                f"({100 * iv['caught_share']:.1f}%) | {100 * iv['caught_lo']:.1f}% to "
+                f"{100 * iv['caught_hi']:.1f}% | {iv['delay_mean']:.0f} | {iv['delay_lo']:.0f} to "
+                f"{iv['delay_hi']:.0f} |"
+            )
+    r0_iv = run_interval(base)
+    lines.append(
+        f"| R0 | the reference, trust {OPERATING_TRUST:g} | - | {base['caught']} / {revised} "
+        f"({100 * r0_iv['caught_share']:.1f}%) | {100 * r0_iv['caught_lo']:.1f}% to "
+        f"{100 * r0_iv['caught_hi']:.1f}% | {r0_iv['delay_mean']:.0f} | {r0_iv['delay_lo']:.0f} to "
+        f"{r0_iv['delay_hi']:.0f} |"
+    )
+    fig["rules"]["frozen"] = dict(
+        fit_delay_mean=fit_target_delay, fit_caught_share=fit_target_caught, R0=r0_iv, points=frozen
+    )
     grid = [i / 200 for i in range(1, 200)]
-    fine = [(bar, rule_run(feats, r1, bar, 0)) for bar in grid]
+    fine = [(bar, rule_run(feats, trust["R1"], bar, 0)) for bar in grid]
     same_delay = min(fine, key=lambda t: abs(mean(t[1]["delays"]) - mean(base["delays"])))
     same_caught = min(fine, key=lambda t: (abs(t[1]["caught"] - base["caught"]), mean(t[1]["delays"])))
     lines += [
         "",
-        "The two readings of that trade, R1's bar scanned on a fine grid against R0 at the "
-        f"operating point ({base['caught']} of {revised} revisions caught for a mean "
-        f"{mean(base['delays']):.0f} ms on the good words). At the bar where R1 charges the same "
-        f"mean delay, {same_delay[0]:.3f}, it catches {same_delay[1]['caught']} for "
-        f"{mean(same_delay[1]['delays']):.0f} ms. At the bar where it catches the same number, "
-        f"{same_caught[0]:.3f}, it charges {mean(same_caught[1]['delays']):.0f} ms.",
+        "For comparison, and **descriptive only**, the same two matches made by scanning R1's bar "
+        "on the testing clips themselves, which is the curve and not an operating point a host "
+        f"could have chosen: against R0's {base['caught']} of {revised} for a mean "
+        f"{mean(base['delays']):.0f} ms, R1 at {same_delay[0]:.3f} catches "
+        f"{same_delay[1]['caught']} for {mean(same_delay[1]['delays']):.0f} ms, and at "
+        f"{same_caught[0]:.3f} catches {same_caught[1]['caught']} for "
+        f"{mean(same_caught[1]['delays']):.0f} ms. A bar chosen where it is judged flatters itself; "
+        "the frozen table above is the one to read.",
     ]
     fig["rules"]["matched"] = dict(
+        descriptive=True,
         R0_caught=base["caught"],
         R0_delay_mean=mean(base["delays"]),
         equal_delay=dict(bar=same_delay[0], caught=same_delay[1]["caught"], delay_mean=mean(same_delay[1]["delays"])),
@@ -1168,7 +1385,8 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
         "R2 looks near-perfect where it can act, and the corpus is why: on "
         f"{100 * last / (len(can_act) or 1):.0f}% of the clips that have another advance at all, "
         "that advance is the clip's last, so rank 0 there is all but the final and the rule is "
-        "reading the answer rather than predicting it. What R2 measures on one-second clips is the "
+        "reading the answer rather than predicting it. H is the same wait with nothing read off "
+        "it, which is how much of R2 is the wait. What R2 measures on one-second clips is the "
         "value of waiting, not the value of the motion, and the wait it charges is the whole "
         "remainder of the utterance.",
     ]
@@ -1192,6 +1410,10 @@ def reading_section(feats, best, base, strat, diag, rules, lines, fig):
     op0 = runs[("R0", OPERATING_TRUST)]
     op1 = runs[("R1", OPERATING_TRUST)]
     op2 = runs[("R2", OPERATING_TRUST)]
+    op_r0 = sum(1 for c in op0["correct"] if c)
+    op_r1 = sum(1 for c in op1["correct"] if c)
+    op_b1 = sum(1 for c in runs[("B1", OPERATING_TRUST)]["correct"] if c)
+    op_b1_caught = runs[("B1", OPERATING_TRUST)]["caught"]
     top = []
     for key, label in MOTION:
         sub = defined(feats, key)
@@ -1224,23 +1446,19 @@ def reading_section(feats, best, base, strat, diag, rules, lines, fig):
         f"{fmt(best[0], 3)} ({gain:+.3f}).",
         "",
         f"Held out, the whole motion set moves the AUC from {fmt(a0, 3)} for the README's rule to "
-        f"{fmt(a1, 3)}, an interval on the difference that the bootstrap table above gives, and at "
-        "the README's operating point it decides "
-        f"{sum(1 for c in op1['correct'] if c)} of {n} clips correctly against "
-        f"{sum(1 for c in op0['correct'] if c)}, the same {op1['caught']} revisions caught for "
-        f"{sum(1 for f, c in zip(feats, op1['correct']) if f['survived'] and not c)} good words "
-        f"never released instead of "
-        f"{sum(1 for f, c in zip(feats, op0['correct']) if f['survived'] and not c)}. Matched "
-        "instead of thresholded alike, R1 catches "
-        f"{fig['rules']['matched']['equal_delay']['caught']} revisions for the delay R0 charges "
-        f"for {fig['rules']['matched']['R0_caught']}, or catches the same number for a mean "
-        f"{fig['rules']['matched']['equal_caught']['delay_mean']:.0f} ms against R0's "
-        f"{fig['rules']['matched']['R0_delay_mean']:.0f} ms. Net that is "
-        f"{sum(1 for c in op1['correct'] if c) - sum(1 for c in op0['correct'] if c)} clips of {n}, "
-        f"disagreeing {fig['rules']['operating_point']['mcnemar_R0_R1']['c']} to "
-        f"{fig['rules']['operating_point']['mcnemar_R0_R1']['b']} at exact McNemar "
-        f"{fig['rules']['operating_point']['mcnemar_R0_R1']['p']:.2g}: a small gain, and not a "
-        "chance one.",
+        f"{fmt(a1, 3)}, and from {fmt(fig['rules']['auc']['B1'], 3)} for the same gap recalibrated "
+        f"and {fmt(fig['rules']['auc']['B2'], 3)} for the gap with the readings' entropy beside it; "
+        "the bootstrap table above gives an interval on each of those differences. Most of the "
+        "distance from the README's rule is the recalibration, which costs nothing and needs no "
+        f"field: at the README's bar the recalibrated gap alone decides {op_b1} of {n} clips "
+        f"correctly where the README's rule decides {op_r0}, and the motion decides {op_r1}. "
+        f"Against the recalibration the motion is {op_r1 - op_b1:+d} clips, "
+        f"{fig['rules']['operating_point']['mcnemar_B1_R1']['c']} to "
+        f"{fig['rules']['operating_point']['mcnemar_B1_R1']['b']} on the clips they disagree "
+        f"about, exact McNemar {fig['rules']['operating_point']['mcnemar_B1_R1']['p']:.2g}, and it "
+        f"catches {op1['caught'] - op_b1_caught:+d} revisions in the exchange. That is a trade "
+        "made at one bar, not a safety gain: the frozen table above is where the two are compared "
+        "at the same delay and the same catch, each bar chosen on the fitting split.",
         "",
         "What buys more is the delay, not a new field. Waiting for the next advance costs "
         f"{dist([f['hold']['wait_ms'] for f in held]) if held else '-'} ms, is available on "
@@ -1287,10 +1505,12 @@ def build_page(feats, diag, fit_feats, fit_name, split, block_ms, alternatives, 
     lines = [
         "# Reading a partial's trust",
         "",
-        f"Run {time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime())}, utterpy over the Speech "
-        f"Commands {split} split, {n} clips whose first word appeared in a partial that carried a "
-        f"runner-up, 92-entry grammar, {block_ms} ms blocks, {alternatives} alternatives. "
-        "Measured by `scripts/partial_trust.py`.",
+        sc.provenance_line(diag["provenance"]),
+        "",
+        f"utterpy over the Speech Commands {split} split, {n} clips whose first word appeared in a "
+        f"partial that carried a runner-up, 92-entry grammar, {block_ms} ms blocks, "
+        f"{alternatives} alternatives, every coefficient and bar fitted on {fit_name}. Measured by "
+        "`scripts/partial_trust.py`.",
         "",
         f"The first word a host sees is revised before the utterance ends on {revised} of {n} "
         f"({100 * revised / n:.1f}%). A host that wants to act early needs to know, at the moment a "
@@ -1417,6 +1637,7 @@ def main():
         grammar = sc.DATASET_WORDS + sc.LETTERS + sc.NATO + sc.COLOURS
         eng = sc.Engine(a.engine, utterpy, a.model, grammar)
         recs, diag = decode(clips, eng, a.block_ms, a.alternatives)
+        diag["provenance"] = sc.provenance(a, ["utterpy"])
         feats = [promote(r) for r in recs]
         if a.clips:
             with open(a.clips, "w") as fh:
@@ -1425,7 +1646,10 @@ def main():
             Path(a.clips + ".diag.json").write_text(json.dumps(diag))
 
     fit_feats = load(a.fit_clips) if a.fit_clips else feats
-    fit_name = Path(a.fit_clips).name if a.fit_clips else "the testing split itself, in sample"
+    fit_name = "the testing split itself, in sample"
+    if a.fit_clips:
+        name = Path(a.fit_clips).name
+        fit_name = "the validation split" if "validation" in name else name
     fig = dict(
         run=time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime()),
         split=a.split,
@@ -1434,6 +1658,7 @@ def main():
         clips_file=a.from_clips or a.clips,
         fit_on=fit_name,
         fit_clips=len(fit_feats),
+        provenance=diag.get("provenance"),
     )
     lines = build_page(feats, diag, fit_feats, fit_name, a.split, a.block_ms, a.alternatives, fig)
     Path(a.out).write_text("\n".join(lines))
