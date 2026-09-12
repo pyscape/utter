@@ -13,6 +13,8 @@ struct Run {
     alternatives: usize,
     partial_words: bool,
     opts: utter::recognizer::RecognizerOptions,
+    endpoint_ms: Option<f32>,
+    endpoint_veto: Option<f32>,
 }
 
 fn main() {
@@ -25,6 +27,8 @@ fn main() {
     let mut dither: Option<f32> = None;
     let mut unknown_cost: Option<f32> = None;
     let mut silence_weight = utter::recognizer::SILENCE_WEIGHT;
+    let mut endpoint_ms: Option<f32> = None;
+    let mut endpoint_veto: Option<f32> = None;
     let mut threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
@@ -39,6 +43,8 @@ fn main() {
             "--dither" => dither = Some(it.next().unwrap().parse().unwrap()),
             "--unknown-cost" => unknown_cost = Some(it.next().unwrap().parse().unwrap()),
             "--silence-weight" => silence_weight = it.next().unwrap().parse().unwrap(),
+            "--endpoint-ms" => endpoint_ms = Some(it.next().unwrap().parse().unwrap()),
+            "--endpoint-veto" => endpoint_veto = Some(it.next().unwrap().parse().unwrap()),
             "--threads" => threads = it.next().unwrap().parse().unwrap(),
             "--corpus" => {
                 let dir = PathBuf::from(it.next().unwrap());
@@ -67,6 +73,8 @@ fn main() {
         block_ms,
         alternatives,
         partial_words,
+        endpoint_ms,
+        endpoint_veto,
         opts: utter::recognizer::RecognizerOptions {
             unknown_cost,
             silence_weight,
@@ -100,6 +108,7 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run)
     let t0 = Instant::now();
     let mut rec = Recognizer::with_options(model, w.sample_rate as f32, grammar, &run.opts)
         .expect("recognizer");
+    rec.set_endpoint_bound(run.endpoint_ms, run.endpoint_veto);
     let t_new = t0.elapsed();
     rec.set_words(true);
     rec.set_partial_words(run.partial_words);

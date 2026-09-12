@@ -141,6 +141,23 @@ pub unsafe extern "C" fn utter_recognizer_set_partial_words(rec: *mut UtterRecog
     }
 }
 
+/// A host endpoint bound: a final once the trailing silence reaches `trailing_ms` (0 or less
+/// removes it), unless `extending_veto_nats` is positive and a reading extending the partial by a
+/// further word is within that many nats of it.
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_endpoint_bound(
+    rec: *mut UtterRecognizer,
+    trailing_ms: c_float,
+    extending_veto_nats: c_float,
+) {
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner.set_endpoint_bound(
+            (trailing_ms > 0.0).then_some(trailing_ms),
+            (extending_veto_nats > 0.0).then_some(extending_veto_nats),
+        );
+    }
+}
+
 /// Partial alternatives to report, 0 for none.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_set_alternatives(rec: *mut UtterRecognizer, n: c_int) {
