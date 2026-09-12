@@ -8,10 +8,13 @@ what does it cost in real words?
 ## What ran
 
 - Model: `vosk-model-small-en-us-0.15`; the first consumer's grammar.
-- Replay corpus of 32 takes, 40 ms blocks, dither 0, partial words on,
+- Replay corpus of 33 takes, 40 ms blocks, dither 0, partial words on,
   `stream --unknown-cost` at each cost, scored by
-  `scripts/unk_sweep.py`: a block is quiet when its last 400 ms sit
-  below -40 dBFS; a final word is quiet when its own interval does.
+  `scripts/unk_sweep.py`. The tables below call a block quiet when its
+  last 400 ms sit below -40 dBFS and a final word quiet when its own
+  interval does; the script now reads the floor the runtime reports and
+  counts a word as silence within a margin of it, which is the last
+  table on this page.
 - Two scripted recordings, 679 script words, run by the consumer's
   benchmark through `utterpy` with the same costs, finals against the
   script.
@@ -150,3 +153,39 @@ percentile, 480 at the 99th, 630 at most.
 The hold on the last word is what a pause between words looks like too;
 the trailing entry is measured on the decoded path, where a word still
 being spoken shows as non-silence phones before its label appears.
+
+## The same sweep counted against the floor
+
+Ruling: `[[rr:TD-8#Measurements count a word whose own span carries no
+speech]]`. The same six runs of the same corpus, rerun on a runtime that
+reports the floor and the energy under a final word, and recounted by
+`scripts/unk_sweep.py` at its default margin of 8 dB. A quiet block is
+one whose last 400 ms sit within the margin of the floor its own partial
+carries; a quiet block holding a word is **held** when no word's span
+reaches that last 400 ms, **straddling** when one does and its own
+energy is above the margin, and **silence** when the last word's own
+energy is within it.
+
+| run | quiet blocks | rank 0 a word on a quiet block | held | straddling | silence | final words | silence final words | final words over 2 s | `[unk]` finals |
+|---|---|---|---|---|---|---|---|---|---|
+| no `[unk]` | 37,115 | 1,418 | 938 | 457 | 23 | 469 | 58 | 61 | 0 |
+| cost 8 | 37,115 | 1,418 | 938 | 457 | 23 | 469 | 58 | 61 | 0 |
+| cost 4 | 37,116 | 1,408 | 930 | 455 | 23 | 469 | 58 | 61 | 0 |
+| cost 2 | 37,117 | 1,399 | 923 | 453 | 23 | 466 | 58 | 61 | 2 |
+| cost 0 | 37,121 | 1,355 | 888 | 444 | 23 | 460 | 58 | 61 | 5 |
+| cost -2 | 37,123 | 1,341 | 876 | 442 | 23 | 448 | 59 | 63 | 12 |
+
+Against the floor the corpus has 37,115 quiet blocks where -40 dBFS
+found 30,943, and a word at rank 0 on 1,418 of them against 851. Two
+thirds are carry-over and the rest have just ended, as under the
+absolute gate. The 23 that are neither are three spoken words in three
+takes, each still shown six to nine blocks after it ended; no cost
+changes them, which is what the `[unk]` column has said throughout.
+
+Two totals differ from the tables above, which were run before the
+decoder moved: this runtime ends the corpus with 469 final words rather
+than 467, the count `[[rr:Gates a host can apply to a final]]` also
+measures. Its +8 dB row counts 55 of those 469 as silence where the
+script now counts 58, because the runtime's floor is the last ten
+seconds of audio at the moment the result is written and that section's
+is the whole take.
