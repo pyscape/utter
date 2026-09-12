@@ -6,8 +6,6 @@ section. Keep the heading shape exactly; rr keys the record on it.
 ```
 # TD-N: Title in one line
 
-- Status: Proposed
-- Date: YYYY-MM-DD
 - Tags: comma, separated
 
 ## Context and problem statement

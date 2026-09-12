@@ -1,7 +1,5 @@
 # TD-2: The streaming runtime for Vosk models - scope, stages, interface, dependencies and gates
 
-- Status: Proposed
-- Date: 2026-09-11
 - Tags: decoder, kaldi, vosk, partials, alternatives, grammar, endpointing, dependencies
 
 ## Context and problem statement

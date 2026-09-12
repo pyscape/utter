@@ -1,85 +1,71 @@
 # TD-3: The matrix kernel's tile is bounded by the register file
 
-- Status: Proposed
-- Date: 2026-09-11
 - Tags: performance, network, simd
 
 ## Context and problem statement
 
-`[[rr:TD-2#Dependency policy]]` puts the single-precision matrix
-product in the library's own hands rather than a crate's, and
-`[[rr:TD-2#Performance budgets]]` gives it a budget to meet. The
-network is the larger part of a block's compute, and the matrix
-product is the larger part of the network, so the shape of the inner
-tile decides whether the budget is met.
+`[[rr:TD-2#Dependency policy]]` puts the matrix product in the
+library's own hands; `[[rr:TD-2#Performance budgets]]` gives it a
+budget. The network is the larger part of a block's compute and the
+matrix product the larger part of the network.
 
-A tile holds one accumulator per output element it computes, plus the
-operand registers it loads each step. AVX2 gives sixteen YMM
-registers. A tile that wants more spills an accumulator to the stack
-and reloads it every step, and the spill costs more than the wider
-tile earns. Nothing in the code says how many registers a tile wants,
-so the constraint is invisible at the point where it is violated.
+A tile needs one accumulator per output element plus its operand
+registers. AVX2 has sixteen YMM. A tile wanting more spills one every
+step. Nothing in the code states the count, so the limit is invisible
+where it is broken.
 
 ## Decision drivers
 
-- The budget in `[[rr:TD-2#Performance budgets]]` is the bar.
-- Parity with libvosk is the contract; a faster kernel that changes
-  what the decoder reads is a regression, not an improvement.
-- The kernel is the one place the zero-dependency policy puts
-  performance at risk, and `[[rr:TD-2#Dependency policy]]` reserves
-  the `gemm` feature as the escape if it cannot be met.
-- A tile's shape must be justified by a number, not by taste.
+- The budget in `[[rr:TD-2#Performance budgets]]`.
+- Parity with libvosk: a kernel that changes what the decoder reads is
+  a regression, whatever it costs.
+- A tile shape is justified by a measurement, not by taste.
 
 ## Considered options
 
-- **Four A rows by three B rows.** Twelve accumulators, three B
-  registers, one A register: exactly the sixteen the instruction set
-  has. Taken.
-- **Three A rows by four B rows.** The same twelve accumulators and
-  the same twelve-FMA-to-seven-load ratio, but seventeen registers.
-  One accumulator spills every eight-element step. This was the shape
-  that shipped first, and measuring it against 4x3 is what produced
-  this record.
-- **Three by three, or four by two.** Fit comfortably, but the ratio
-  of arithmetic to loads falls to 1.5 or below and the kernel becomes
-  load-bound.
-- **A broadcast kernel over pre-packed weights.** What a tuned BLAS
-  does, and it would remove the horizontal sums entirely. Rejected for
-  now: it accumulates each output sequentially over k where this
-  kernel accumulates in eight lanes, so it changes floating-point
-  summation order, and the near-ties that decide segment agreement
-  would move with it. It is available if the budget is ever missed,
-  behind a re-run of G2.
-- **`matrixmultiply` behind the `gemm` feature.** The escape
-  `[[rr:TD-2#Dependency policy]]` already reserves; not needed.
+- **4 A rows x 3 B rows.** 12 accumulators, 3 B, 1 A: sixteen. Taken.
+- **3 x 4.** Same 12 accumulators, same 12:7 arithmetic-to-load ratio,
+  seventeen registers. Spills every step. This shipped first;
+  measuring it against 4x3 produced this record.
+- **3 x 3, 4 x 2.** Fit, but the ratio falls to 1.5 or below and the
+  kernel becomes load-bound.
+- **Broadcast over pre-packed weights.** Removes the horizontal sums,
+  which is the rest of the distance to peak. Accumulates each output
+  sequentially over k where this kernel uses eight lanes, so it
+  changes summation order and moves the near-ties G2 measures.
+  Available if the budget is missed, behind a G2 re-run.
+- **`matrixmultiply`.** The escape `[[rr:TD-2#Dependency policy]]`
+  already reserves. Not needed.
 
 ## Decision outcome
 
-The AVX2 kernel computes a tile of four A rows by three B rows, and a
-tile is sized so that its accumulators and operand registers together
-do not exceed the sixteen the instruction set provides. A change to
-the tile states the register count it implies.
+### A tile fits the register file
 
-Accumulation order is part of the contract, not an implementation
-detail: a tile change keeps the eight-lane accumulation over k and the
-horizontal sum per output element, so that the result is unchanged bit
-for bit. A change that does not is a change to the acoustics and is
+The AVX2 kernel computes 4 A rows by 3 B rows. A tile's accumulators
+and operand registers together do not exceed sixteen, and a change to
+the tile states the count it implies.
+
+### Accumulation order is part of the contract
+
+A tile change keeps the eight-lane accumulation over k and the
+horizontal sum per output element, so the result does not move. A
+change that alters summation order is a change to the acoustics and is
 ruled on separately.
 
 ## Consequences
 
-Over the stock small model's chunk shapes the retile moved the matrix
-product from 1.82 ms to 1.46 ms per 24-frame chunk, 85 to 106 GFLOP/s
-on one 12th-generation Core P-core, against a peak near 153. The
-decode is unchanged: the same corpus gives byte-identical partials and
-segments over 42,878 blocks.
+Over the stock small model's chunk shapes: 1.82 ms to 1.46 ms of
+matrix product per 24-frame chunk, 85 to 106 GFLOP/s on one
+12th-generation Core P-core against a peak near 153. Byte-identical
+partials and segments over 42,878 blocks.
 
-The remaining distance to peak is the horizontal sums, which only the
-rejected broadcast kernel removes. A tile of four rows suits a network
-run in chunks whose row count is a multiple of four; the odd rows and
-columns fall to the single-row path, which is correct but slower, so a
-model whose shapes are unfriendly to the tile should be measured
-before it is claimed to meet the budget.
+The rest of the distance to peak is the horizontal sums, which only
+the rejected broadcast kernel removes.
+
+A four-row tile suits chunks whose row count is a multiple of four.
+Odd rows and columns fall to the single-row path, which is correct and
+slower, so a model with unfriendly shapes is measured before it is
+claimed to meet the budget.
 
 ## Implemented by
 

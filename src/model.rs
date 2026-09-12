@@ -141,7 +141,7 @@ pub enum WordBoundary {
 }
 
 /// How many compiled grammars a model keeps.
-/// `[[rr:TD-4#Decision outcome]]`
+/// `[[rr:TD-4#The model keeps the grammars most recently asked of it]]`
 pub const CACHED_GRAPHS: usize = 4;
 
 #[derive(PartialEq, Eq, Hash)]
@@ -243,7 +243,7 @@ impl Model {
     }
 
     /// The decoding graph for a grammar.
-    /// `[[rr:TD-4#Decision outcome]]`
+    /// `[[rr:TD-4#The model keeps the grammars most recently asked of it]]`
     pub fn grammar_graph(
         &self,
         grammar: &[String],
@@ -256,7 +256,7 @@ impl Model {
             unknown_cost: unknown_cost.map(f32::to_bits),
             max_states,
         };
-        // [[rr:TD-4#Decision outcome]]
+        // [[rr:TD-4#The lock spans the composition]]
         let mut cache = self.graphs.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(i) = cache.iter().position(|(k, _)| *k == key) {
             let hit = cache.remove(i);

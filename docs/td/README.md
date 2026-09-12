@@ -22,15 +22,12 @@ Mint markers with `rr at`, never by hand. `rr index && rr verify` from
 the repository root must pass before a change to `docs/` or `src/` is
 committed.
 
-## Status
+## Changing a record
 
-- Proposed: written, not yet ruled on by the owner.
-- Accepted: in force.
-- Superseded by TD-M: no longer in force; the successor governs. Before
-  superseding or changing a record, `rr search 'TD-N'` lists every
-  comment and document that leans on it; each one is revisited in the
-  same change.
-- Deprecated: no longer in force and nothing replaces it.
+A record states what is. When a decision changes, the record changes
+with it, or a later record replaces it and says so in its own text.
+Before either, `rr search 'TD-N'` lists every comment and document
+that leans on the record; each one is revisited in the same change.
 
 ## Sections
 
@@ -41,7 +38,10 @@ by is optional: code cites the record with a bare marker, and
 
 ## Index
 
-| ID | Title | Status | Date |
-|---|---|---|---|
-| TD-1 | The technical decision record and the references that carry it | Proposed | 2026-09-11 |
-| TD-2 | The streaming runtime for Vosk models - scope, stages, interface, dependencies and gates | Proposed | 2026-09-11 |
+| ID | Title |
+|---|---|
+| TD-1 | The technical decision record and the references that carry it |
+| TD-2 | The streaming runtime for Vosk models - scope, stages, interface, dependencies and gates |
+| TD-3 | The matrix kernel's tile is bounded by the register file |
+| TD-4 | Compiled grammars are kept on the model |
+| TD-5 | The composition's lookahead is a function of the state pair |

@@ -84,7 +84,7 @@ mod avx2 {
         out
     }
 
-    /// `[[rr:TD-3#Decision outcome]]`
+    /// `[[rr:TD-3#A tile fits the register file]]`
     #[target_feature(enable = "avx2,fma")]
     pub unsafe fn dot4x3(a: [&[f32]; 4], b: [&[f32]; 3], out: &mut [[f32; 3]; 4]) {
         let k = a[0].len();
