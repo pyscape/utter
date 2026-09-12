@@ -33,7 +33,8 @@ the letters a to z, the NATO alphabet, and red, yellow, blue, black and white. T
 Latency is the fed-audio time at which the label first appears in a partial, minus the word's
 end from the clip's own energy envelope (the last 10 ms frame within 20 dB of the clip's peak),
 a reference that owes nothing to either engine. Also reported: how often the first word shown is
-later changed.
+later changed, split into the partial that another partial overtakes and the partial that stands
+until the final replaces it, with the lag between the two partials for the first kind.
 
 Writes `<out>.md`, `<out>.json`, and `<out>.clips.jsonl`, a line per clip with each engine's
 reading so two runs can be diffed rather than only compared in aggregate. `<out>.md` is
@@ -458,13 +459,17 @@ def final_words(finals):
 
 def run_clip(engine, pcm, block_ms, label):
     """Returns (final words, first-appearance second of the label or None, first word shown or
-    None, (construction seconds, decode seconds))."""
-    state = {"first": None, "first_word": None}
+    None, milliseconds from that first showing to the first partial that led with a different
+    word or None, (construction seconds, decode seconds))."""
+    state = {"first": None, "first_word": None, "shown_at": None, "revised_ms": None}
 
     def on_partial(fed, p):
         partial = words_of(p.get("partial", ""))
         if partial and state["first_word"] is None:
             state["first_word"] = partial[0]
+            state["shown_at"] = fed
+        elif partial and state["revised_ms"] is None and partial[0] != state["first_word"]:
+            state["revised_ms"] = 1000.0 * (fed - state["shown_at"]) / RATE
         if state["first"] is None and partial[:1] == [label]:
             state["first"] = fed / RATE
 
@@ -473,7 +478,7 @@ def run_clip(engine, pcm, block_ms, label):
     t1 = time.perf_counter()
     finals = feed(rec, pcm, block_ms, on_partial)
     t2 = time.perf_counter()
-    return final_words(finals), state["first"], state["first_word"], (t1 - t0, t2 - t1)
+    return final_words(finals), state["first"], state["first_word"], state["revised_ms"], (t1 - t0, t2 - t1)
 
 
 def agreement_table(clips, results, lines, report):
@@ -624,6 +629,8 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
         if eng.missing:
             lines.append(f"- {name}: words absent from the model's table: {eng.missing}")
         correct = never = shown = changed = 0
+        revised = flushed = 0
+        rev_lag = []
         conf = Counter()
         per_word = Counter()
         per_word_ok = Counter()
@@ -638,7 +645,7 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
             audio += len(pcm) / 2 / RATE
             if path not in ref_end:
                 ref_end[path] = energy_end(pcm)
-            words, first, first_word, (t_new, t_decode) = run_clip(eng, pcm, block_ms, label)
+            words, first, first_word, revised_ms, (t_new, t_decode) = run_clip(eng, pcm, block_ms, label)
             ctor += t_new
             ctors.append(t_new)
             decode += t_decode
@@ -651,6 +658,11 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
             if first_word is not None:
                 shown += 1
                 changed += words[:1] != [first_word]
+                if revised_ms is not None:
+                    revised += 1
+                    rev_lag.append(revised_ms)
+                elif words[:1] != [first_word]:
+                    flushed += 1
             if first is None:
                 never += 1
             elif ref_end[path] is not None:
@@ -660,6 +672,7 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
                 correct=words == [label],
                 first=first,
                 first_word=first_word,
+                revised_ms=revised_ms,
             )
         results[name] = dict(
             outcome=outcome,
@@ -673,6 +686,12 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
             never_in_partial=never,
             first_shown=shown,
             first_changed=changed,
+            first_revised=revised,
+            first_flushed=flushed,
+            rev_lag_ms_p50=quantile(rev_lag, 0.5),
+            rev_lag_ms_p90=quantile(rev_lag, 0.9),
+            rev_lag_ms_min=min(rev_lag) if rev_lag else None,
+            rev_lag_ms_max=max(rev_lag) if rev_lag else None,
             rtf=(ctor + decode) / audio if audio else None,
             decode_rtf=decode / audio if audio else None,
             ctor_ms=1000.0 * ctor / len(clips) if clips else None,
@@ -690,6 +709,28 @@ def full_grammar_pass(modules, model, clips, block_ms, grammar, lines, report):
             f"| {name} | {r['correct']} / {r['total']} | {pct(r['correct'], r['total']):.2f}% | {r['never_in_partial']} | "
             f"{r['latency_ms_p50']:.0f} / {r['latency_ms_p90']:.0f} ms over {r['latency_n']} | "
             f"{r['first_changed']} / {r['first_shown']} ({pct(r['first_changed'], r['first_shown']):.1f}%) |"
+        )
+    lines.append("")
+    lines.append(
+        "The last column counts the first word shown against the final, which a host feels as two "
+        "different things. A partial overtaken by another partial is a flicker on the screen; a "
+        "partial that stands through every later partial and is replaced only by the final is not a "
+        "flicker at all, and no amount of waiting on partials would have caught it. The two columns "
+        "below do not sum to that one: a partial can be overtaken and then come back, which the last "
+        "column does not count and the first of these does. The lag is the gap between the two "
+        "partials, and it decides whether a flicker is visible or too brief to see."
+    )
+    lines.append("")
+    lines.append(
+        "| engine | first word shown | overtaken by a later partial | stood, then changed by the final | revision lag p50 / p90 | lag min / max |"
+    )
+    lines.append("|---|---|---|---|---|---|")
+    for name, r in results.items():
+        lag = f"{r['rev_lag_ms_p50']:.0f} / {r['rev_lag_ms_p90']:.0f} ms" if r["first_revised"] else "-"
+        span = f"{r['rev_lag_ms_min']:.0f} / {r['rev_lag_ms_max']:.0f} ms" if r["first_revised"] else "-"
+        lines.append(
+            f"| {name} | {r['first_shown']} | {r['first_revised']} ({pct(r['first_revised'], r['first_shown']):.1f}%) | "
+            f"{r['first_flushed']} ({pct(r['first_flushed'], r['first_shown']):.1f}%) | {lag} | {span} |"
         )
     lines.append("")
     lines.append("Compute, one recognizer per clip:")
@@ -963,7 +1004,7 @@ def block_size_pass(modules, model, clips, grammar, lines, report, sizes, count)
             decode = 0.0
             firsts = []
             for (label, pcm), end in zip(pcms, ends):
-                words, first, _, (_, t_dec) = run_clip(eng, pcm, ms, label)
+                words, first, _, _, (_, t_dec) = run_clip(eng, pcm, ms, label)
                 ok += words == [label]
                 decode += t_dec
                 firsts.append(first)
@@ -1155,7 +1196,7 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
             ok = 0
             marks = []
             for label, pcm in mixed[level]:
-                words, _, _, _ = run_clip(eng, pcm, block_ms, label)
+                words, _, _, _, _ = run_clip(eng, pcm, block_ms, label)
                 got = words == [label]
                 marks.append(got)
                 ok += got
@@ -1164,7 +1205,7 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
         clean = 0
         marks = []
         for label, path in chosen:
-            words, _, _, _ = run_clip(eng, read_pcm(path), block_ms, label)
+            words, _, _, _, _ = run_clip(eng, read_pcm(path), block_ms, label)
             got = words == [label]
             marks.append(got)
             clean += got
@@ -1238,7 +1279,7 @@ def grammar_size_pass(modules, model, clips, block_ms, lines, report, sizes, cou
             ctors = []
             decode = 0.0
             for label, pcm in pcms:
-                words, _, _, (t_new, t_dec) = run_clip(eng, pcm, block_ms, label)
+                words, _, _, _, (t_new, t_dec) = run_clip(eng, pcm, block_ms, label)
                 ok += words == [label]
                 ctors.append(t_new)
                 decode += t_dec
