@@ -59,7 +59,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         id: model
         with:
           path: models/vosk-model-small-en-us-0.15
@@ -78,7 +78,7 @@ jobs:
         run: |
           cargo llvm-cov --release --lcov --output-path lcov.info --fail-under-lines 60
           cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov
           path: lcov.info
