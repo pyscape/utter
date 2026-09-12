@@ -1,10 +1,10 @@
 {
  "provenance": {
-  "date": "2026-09-12 23:43:31Z",
-  "utter_revision": "9ca0c02+dirty",
+  "date": "2026-09-13 00:08:03Z",
+  "utter_revision": "03402da",
   "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
-  "wheel_revision": "e1e5147d24723046a68f3b18a1d8722a0e9a4032",
-  "wheel_matches_head": false,
+  "wheel_revision": "03402daff5b5711a6b8207da9404cb24e9b34c2a",
+  "wheel_matches_head": true,
   "engines": {
    "utterpy": "0.0.1",
    "vosk": "0.3.45"
@@ -18,7 +18,7 @@
   "data": "/home/jared/Repos/utter-bench-data/speech_commands_v0.02",
   "model": "/home/jared/Repos/ChessAmis/assets/voice/models/vosk-model-small-en-us-0.15",
   "engine": "utterpy",
-  "out": "docs/benchmarks/partial-states",
+  "out": "/tmp/claude-1000/-home-jared-Repos-utter/e2d7397f-9480-4f46-afc9-99cc2f81013b/scratchpad/final/partial-states",
   "words": 2200,
   "utterances": 10,
   "block_ms": 40,
@@ -90,7 +90,7 @@
    "minutes": 78.57144583333334
   }
  },
- "decode_seconds": 187.4404576960951,
+ "decode_seconds": 187.5664848270826,
  "fit": {
   "bound_ms": 500,
   "sil_delta": -8.0,

@@ -1,6 +1,6 @@
 # Reading a partial's trust
 
-Run 2026-09-12 23:27:43Z, utter a74efb1+dirty, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter e1e5147d24723046a68f3b18a1d8722a0e9a4032, **not** the checkout as it stands (a74efb1+dirty).
+Run 2026-09-13 00:06:59Z, utter 03402da, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 03402daff5b5711a6b8207da9404cb24e9b34c2a, the checkout's HEAD.
 
 utterpy over the Speech Commands testing split, 9230 clips whose first word appeared in a partial that carried a runner-up, 92-entry grammar, 40 ms blocks, 5 alternatives, every coefficient and bar fitted on the validation split. Measured by `scripts/partial_trust.py`.
 
@@ -191,6 +191,30 @@ Over a clip there are 0.96 such events on average, 1 / 2 by median / p90, and 64
 |---|---|
 | at least one vanishing by the first sighting | 400 / 5207 (7.7%) |
 | none | 747 / 4023 (18.6%) |
+
+### The decoder's own count
+
+The proxy above reads the readings that were reported. The decoder can count what it dropped, and `stream --census` does, without touching a decision. Three quantities, kept apart because they are not the same event: `merges_close`, two paths meeting at one state with different word sequences and costs within 2 nats, counted whichever of the two is dropped; `readings_lost`, word sequences present among the surviving groups at one chunk and gone at the next; and `readings_lost_close`, those of them that were within 2 nats of the leader when last seen. A collision is not a reading lost: the loser's word sequence usually survives elsewhere in the beam, and neither path need be anywhere near the leader.
+
+Over 9230 clips, per clip: 815 close collisions (780 / 1180 by median / p90), 165.5 readings lost, and 0.53 of those lost from within 2 nats of the leader. Collisions are not rare events to be correlated with anything: 9230 of 9230 clips have at least one, so the question is how many, not whether.
+
+Revision rate of the first word by how many close collisions the clip's decode recorded, in quartiles:
+
+| close collisions in the decode | clips | revised |
+|---|---|---|
+| 0 to 616 | 2299 | 196 / 2299 (8.5%) |
+| 616 to 780 | 2310 | 237 / 2310 (10.3%) |
+| 780 to 980 | 2309 | 290 / 2309 (12.6%) |
+| 980 and up | 2312 | 424 / 2312 (18.3%) |
+
+And by the quantity the proxy above was reaching for, a reading lost from within 2 nats of the leader, which the decoder sees over every surviving group and the proxy sees only among the five reported:
+
+| clips | revised |
+|---|---|
+| at least one close reading lost | 556 / 4090 (13.6%) |
+| none | 591 / 5140 (11.5%) |
+
+Read this as an observation and not as a verdict. It counts collisions and disappearances; what a retained history or a summed posterior would have been worth is a measurement of its own, which the record defers rather than closes.
 
 ## Six rules on the same clips, every one fitted off them
 

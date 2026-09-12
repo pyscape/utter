@@ -1,6 +1,6 @@
 # Silence direction and word transitions on a built stream
 
-Run 2026-09-12 23:43:31Z, utter 9ca0c02+dirty, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter e1e5147d24723046a68f3b18a1d8722a0e9a4032, **not** the checkout as it stands (9ca0c02+dirty).
+Run 2026-09-13 00:08:03Z, utter 03402da, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 03402daff5b5711a6b8207da9404cb24e9b34c2a, the checkout's HEAD.
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 40 ms blocks, 8 partial alternatives, partial words on, seed 20260912. Measured by `scripts/partial_states.py`.
 
