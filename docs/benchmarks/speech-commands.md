@@ -2,21 +2,21 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-12 03:36:20Z, utter 1e88e2c, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4.
+Run 2026-09-12 05:13:32Z, utter 80cbb03, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4.
 
 ## Full grammar: accuracy
 
 | engine | correct | accuracy | never in a partial | first appearance after the clip's energy end p50 / p90 | first word shown later changed |
 |---|---|---|---|---|---|
 | vosk | 10070 / 11005 | 91.50% | 2445 | 40 / 250 ms over 8560 | 1138 / 9220 (12.3%) |
-| utterpy | 10102 / 11005 | 91.79% | 2432 | 40 / 250 ms over 8573 | 1149 / 9230 (12.4%) |
+| utterpy | 10102 / 11005 | 91.79% | 2432 | 40 / 250 ms over 8573 | 1147 / 9230 (12.4%) |
 
 Compute, one recognizer per clip:
 
 | engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |
 |---|---|---|---|---|---|
-| vosk | 0.38 | 0.286 | 0.286 | 0.0167 | 0.0170 |
-| utterpy | 2.30 | 0.024 | 0.024 | 0.0197 | 0.0197 |
+| vosk | 0.41 | 0.288 | 0.288 | 0.0168 | 0.0171 |
+| utterpy | 2.33 | 0.026 | 0.026 | 0.0141 | 0.0141 |
 
 | word | vosk | utterpy |
 |---|---|---|
@@ -77,8 +77,8 @@ One recognizer over 295 s of the clips joined end to end.
 
 | engine | RTF | per-block compute ms p50 / p95 / p99 |
 |---|---|---|
-| vosk | 0.0123 | 0.049 / 2.85 / 3.29 |
-| utterpy | 0.0182 | 0.107 / 4.10 / 4.55 |
+| vosk | 0.0124 | 0.048 / 2.86 / 3.33 |
+| utterpy | 0.0118 | 0.091 / 2.50 / 2.72 |
 
 ## Accuracy against noise
 
@@ -105,12 +105,12 @@ Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNem
 
 | entries | vosk accuracy | vosk first ms | vosk later ms | vosk RTF | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF |
 |---|---|---|---|---|---|---|---|---|
-| 35 | 94.0% | 0.23 | 0.191 | 0.0153 | 94.5% | 0.84 | 0.015 | 0.0201 |
-| 60 | 92.5% | 0.29 | 0.227 | 0.0164 | 92.8% | 1.44 | 0.019 | 0.0204 |
-| 92 | 92.0% | 0.35 | 0.288 | 0.0169 | 92.2% | 2.31 | 0.024 | 0.0197 |
-| 150 | 91.0% | 0.45 | 0.388 | 0.0175 | 92.0% | 3.59 | 0.036 | 0.0199 |
-| 200 | 90.5% | 0.57 | 0.467 | 0.0181 | 91.5% | 5.19 | 0.044 | 0.0200 |
-| 246 | 88.8% | 0.63 | 0.527 | 0.0186 | 89.8% | 6.45 | 0.063 | 0.0201 |
+| 35 | 94.0% | 0.22 | 0.192 | 0.0154 | 94.5% | 0.84 | 0.014 | 0.0138 |
+| 60 | 92.5% | 0.30 | 0.226 | 0.0163 | 92.8% | 1.47 | 0.020 | 0.0139 |
+| 92 | 92.0% | 0.35 | 0.289 | 0.0169 | 92.2% | 2.30 | 0.026 | 0.0139 |
+| 150 | 91.0% | 0.47 | 0.386 | 0.0174 | 92.0% | 3.87 | 0.040 | 0.0140 |
+| 200 | 90.5% | 0.56 | 0.454 | 0.0178 | 91.5% | 5.04 | 0.047 | 0.0145 |
+| 246 | 88.8% | 0.61 | 0.521 | 0.0185 | 89.8% | 6.45 | 0.058 | 0.0152 |
 
 ## Twelve-class: ten commands plus the unknown-word symbol
 
@@ -144,11 +144,13 @@ Before TD-6 the runtime read 458 clips as silence against libvosk's
 414, a one-way excess of 46; it now reads 412. No word's difference
 survives correction for having tested all 35.
 
-Compute is the standing gap: 1.5 times libvosk on continuous audio,
-4.10 ms against 2.85 at the 95th percentile. Construction is the other
-way around, 0.024 ms against 0.286, because a compiled grammar is kept
-(`[[rr:TD-4]]`); the first construction is dearer and grows with the
-grammar, 0.84 ms at 35 entries to 6.45 at 246.
+Compute is no longer the gap it was. On continuous audio the runtime
+is at 0.0118 against the wheel's 0.0124, and ahead where it counts,
+2.50 ms against 2.86 at the 95th percentile, which is the blocks that
+run a network chunk. It is behind on the blocks that do not: 0.091 ms
+against 0.048. Construction is the other way around again, 0.026 ms
+against 0.288, because a compiled grammar is kept (`[[rr:TD-4]]`); the
+first is dearer and grows with the grammar.
 
 Two figures a host should read before choosing a grammar. Accuracy
 falls about five points from 35 entries to 246, so distractors are not

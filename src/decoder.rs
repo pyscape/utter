@@ -13,10 +13,12 @@ use std::collections::HashMap;
 
 /// The token maps key on a graph state id. `HashMap`'s default hash costs more than the probe
 /// it protects and its quality buys nothing for a dense integer key, so the two per-frame maps
-/// use a multiply-rotate over the id instead. The map's iteration order changes with the hash,
-/// and the order decides which tokens a narrowing cutoff prunes; it did not move the output
-/// over the corpus, and could not have been fixed before, since the default hash is seeded
-/// afresh every run.
+/// use a multiply-rotate over the id instead.
+///
+/// Iteration order decides which tokens a narrowing cutoff prunes, so it can move a partial
+/// where two readings tie. The default hash is seeded afresh every run, which made that
+/// order, and so those partials, differ between runs of the same audio; a fixed hash is what
+/// makes them repeatable.
 #[derive(Default)]
 struct StateHasher(u64);
 

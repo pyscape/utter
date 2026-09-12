@@ -43,6 +43,10 @@ of 24 frames: a block that computes a chunk costs about 4 ms, of which
 the network is the larger part and the i-vector update most of the rest,
 and every other block well under 0.1 ms. Two runs of the same audio
 produce the same output; ties in token cost go to the newest token.
+That holds for any audio only since the decoder's token maps were given
+a fixed hash: the default one is seeded per run, and its iteration order
+decides which tokens a narrowing cutoff drops, so a partial on a tie
+could differ between runs. Three clips of Speech Commands showed it.
 
 These figures are a later run than the reading below, after the matrix
 kernel was retiled and after `[[rr:TD-6]]` scaled the graph cost on

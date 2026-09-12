@@ -15,11 +15,13 @@ Before TD-6 the runtime read 458 clips as silence against libvosk's
 414, a one-way excess of 46; it now reads 412. No word's difference
 survives correction for having tested all 35.
 
-Compute is the standing gap: 1.5 times libvosk on continuous audio,
-4.10 ms against 2.85 at the 95th percentile. Construction is the other
-way around, 0.024 ms against 0.286, because a compiled grammar is kept
-(`[[rr:TD-4]]`); the first construction is dearer and grows with the
-grammar, 0.84 ms at 35 entries to 6.45 at 246.
+Compute is no longer the gap it was. On continuous audio the runtime
+is at 0.0118 against the wheel's 0.0124, and ahead where it counts,
+2.50 ms against 2.86 at the 95th percentile, which is the blocks that
+run a network chunk. It is behind on the blocks that do not: 0.091 ms
+against 0.048. Construction is the other way around again, 0.026 ms
+against 0.288, because a compiled grammar is kept (`[[rr:TD-4]]`); the
+first is dearer and grows with the grammar.
 
 Two figures a host should read before choosing a grammar. Accuracy
 falls about five points from 35 entries to 246, so distractors are not
