@@ -2,7 +2,7 @@
 
 - Tags: graph, grammar, performance, algorithm
 
-## Context and problem statement
+## Context
 
 Composing the graph with the grammar, per
 `[[rr:TD-2#The graph: composition]]`, looks ahead from every
@@ -13,16 +13,8 @@ grammar's arc whole onto the epsilon.
 
 Arc by arc, that scan walks the grammar's whole arc list. The list
 grows with the vocabulary and so does the number of composed states
-scanning it, so cost grew as roughly the square of the grammar: 1.0 ms
-for 35 entries, 16.6 ms for 246, while the graph itself grew 4.6-fold.
-
-## Decision drivers
-
-- The composed graph does not change; it is what
-  `[[rr:TD-2#The graph: composition]]` specifies, arc for arc.
-- A few hundred command words is the size the library is for.
-- The fix is in the composition. `[[rr:TD-4]]` spares repeat
-  constructions and leaves the first untouched.
+scanning it, so cost grew as roughly the square of the grammar while
+the graph grew linearly.
 
 ## Considered options
 

@@ -2,7 +2,7 @@
 
 - Tags: graph, grammar, performance, api
 
-## Context and problem statement
+## Context
 
 `[[rr:TD-2#The graph: composition]]` composes eagerly, to reproduce
 libvosk's lookahead filter stack arc for arc. libvosk composes lazily
@@ -12,15 +12,6 @@ Eager composition moves that cost to construction. The stock API,
 which this library mirrors, invites a recognizer per utterance: 4.8 ms
 a clip under a 92-entry grammar against the wheel's 0.4 ms, for an
 identical graph every time.
-
-## Decision drivers
-
-- The eager composition is not negotiable; it is what
-  `[[rr:TD-2#The graph: composition]]` buys.
-- A host is not punished for the construction pattern the stock API
-  teaches.
-- Memory is bounded and predictable.
-- Two streams on one grammar do not each compose it.
 
 ## Considered options
 
@@ -50,19 +41,17 @@ opened on one grammar compose it once between them.
 
 ## Consequences
 
-Construction after the first falls from 4.8 ms to about 0.03 ms, below
-the wheel's 0.3 ms. The first construction is unchanged; that cost is
-`[[rr:TD-5]]`.
+Construction after the first falls to about 0.03 ms, below the wheel's
+0.3 ms. The first is unchanged; that cost is `[[rr:TD-5]]`.
 
 A model retains up to the bound for its lifetime, so its resident size
 depends on the grammars asked of it. A host alternating between more
-grammars than the bound recompiles on every switch, which is the
-behaviour before this record rather than a new penalty.
+than the bound recompiles on every switch, which is the behaviour
+before this record, not a new penalty.
 
-A thread building a recognizer on a second, uncached grammar waits for
-a first composition. Composition is milliseconds and construction is
-off the audio path, so the simpler rule is preferred to a lock per
-grammar.
+A thread building on a second, uncached grammar waits for a first
+composition. Composition is milliseconds and construction is off the
+audio path, so the simpler rule beats a lock per grammar.
 
 ## Implemented by
 

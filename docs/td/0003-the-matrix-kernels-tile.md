@@ -2,7 +2,7 @@
 
 - Tags: performance, network, simd
 
-## Context and problem statement
+## Context
 
 `[[rr:TD-2#Dependency policy]]` puts the matrix product in the
 library's own hands; `[[rr:TD-2#Performance budgets]]` gives it a
@@ -10,16 +10,9 @@ budget. The network is the larger part of a block's compute and the
 matrix product the larger part of the network.
 
 A tile needs one accumulator per output element plus its operand
-registers. AVX2 has sixteen YMM. A tile wanting more spills one every
+registers. AVX2 has sixteen YMM; a tile wanting more spills one every
 step. Nothing in the code states the count, so the limit is invisible
 where it is broken.
-
-## Decision drivers
-
-- The budget in `[[rr:TD-2#Performance budgets]]`.
-- Parity with libvosk: a kernel that changes what the decoder reads is
-  a regression, whatever it costs.
-- A tile shape is justified by a measurement, not by taste.
 
 ## Considered options
 
@@ -54,18 +47,15 @@ ruled on separately.
 
 ## Consequences
 
-Over the stock small model's chunk shapes: 1.82 ms to 1.46 ms of
-matrix product per 24-frame chunk, 85 to 106 GFLOP/s on one
-12th-generation Core P-core against a peak near 153. Byte-identical
-partials and segments over 42,878 blocks.
+Over the stock small model's chunk shapes: 1.82 to 1.46 ms of matrix
+product per 24-frame chunk, 85 to 106 GFLOP/s on one 12th-generation
+Core P-core against a peak near 153, byte-identical over 42,878
+blocks. The rest of the distance to peak is the horizontal sums, which
+only the rejected broadcast kernel removes.
 
-The rest of the distance to peak is the horizontal sums, which only
-the rejected broadcast kernel removes.
-
-A four-row tile suits chunks whose row count is a multiple of four.
-Odd rows and columns fall to the single-row path, which is correct and
-slower, so a model with unfriendly shapes is measured before it is
-claimed to meet the budget.
+Odd rows and columns fall to the single-row path, correct and slower,
+so a model whose shapes do not suit a four-row tile is measured before
+it is claimed to meet the budget.
 
 ## Implemented by
 

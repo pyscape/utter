@@ -31,10 +31,11 @@ that leans on the record; each one is revisited in the same change.
 
 ## Sections
 
-Copy `TEMPLATE.md`. Every section is required; "none" is an acceptable
-body for Considered options when the decision was forced. Implemented
-by is optional: code cites the record with a bare marker, and
-`rr search 'TD-N'` lists every citation, so no list has to be kept.
+Copy `TEMPLATE.md`. Decision outcome is the record; the rest are
+written when they carry something it does not. Considered options
+usually does, and is where a record earns its length: the next reader
+reaches for the rejected option. Implemented by is optional, because
+`rr search 'TD-N'` lists every citation and no list has to be kept.
 
 ## Index
 

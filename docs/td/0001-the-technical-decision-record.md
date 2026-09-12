@@ -50,13 +50,12 @@ that stops applying is changed or replaced, not left standing.
 
 ### The sections
 
-Every record carries, in this order: the tags line;
-Context and problem statement; Decision drivers; Considered options;
-Decision outcome; Consequences; and, when the record names what carries
-it out, Implemented by. `docs/td/TEMPLATE.md` is copied, never
-retyped. Decision outcome is written in subsections whose headings
-state the ruling, so that a citation can point at one ruling rather than
-at the whole record.
+A record carries the tags line and Decision outcome, written in
+subsections whose headings state each ruling, so a citation points at
+one ruling rather than the whole record. Context, Decision drivers, Considered options, Consequences and
+Implemented by follow it in that order when they carry something the
+outcome does not, and are left out when they do not.
+`docs/td/TEMPLATE.md` is copied, never retyped.
 
 ### A record carries no ceremony
 
