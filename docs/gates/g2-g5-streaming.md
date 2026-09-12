@@ -24,8 +24,8 @@ compute half of G3.
 | segment word sequence equal | 191 / 205 (93.17%) | 99% |
 | word times within one output frame, equal segments | 433 / 439 (98.63%) | 95% |
 | endpoints within 0.2 s | 167 / 172 (97.09%) | 95% |
-| compute per 40 ms block, p50 / p95 / p99 | 0.04 / 5.06 / 5.48 ms | p95 5 ms |
-| real-time factor | 0.022 | 0.05 |
+| compute per 40 ms block, p50 / p95 / p99 | 0.04 / 4.21 / 4.56 ms | p95 5 ms |
+| real-time factor | 0.018 | 0.05 |
 
 Word disagreement over 471 reference words: 7 words only in libvosk's
 finals, 3 only in the runtime's, 6 substitutions.
@@ -38,9 +38,11 @@ mark by 14 segments whose difference is a near tie on the acoustic side
 the split is symmetric, so neither side is emitting noise words. The
 front-end differences that remain, 7.8e-4 on MFCC and an unmeasured
 i-vector difference, are the plausible source, and the i-vector oracle
-is the open leg of G1. The compute p95 sits at the budget with the stock
-chunk of 24 frames; a block that computes a chunk costs about 5 ms and
-every other block well under 0.1 ms.
+is the open leg of G1. Compute is inside the budget with the stock chunk
+of 24 frames: a block that computes a chunk costs about 4 ms, of which
+the network is 2.7 ms and the i-vector update most of the rest, and
+every other block well under 0.1 ms. Two runs of the same audio produce
+the same output; ties in token cost go to the newest token.
 
 ## What decided the partial figure
 
