@@ -135,7 +135,18 @@ pub struct Decoder<'g> {
     tmp_costs: Vec<f32>,
     queue: Vec<StateId>,
     seq: u32,
+    /// Count local collisions between readings. Off by default: it walks both chains where the
+    /// costs are close. `[[rr:TD-9#No lattice is added for this feature]]`
+    pub census: bool,
+    /// Collisions at a state where the two chains' word sequences differ and their costs are
+    /// within `CENSUS_NATS`. The loser is dropped whichever way the comparison goes, so both
+    /// directions count. A collision is not a reading lost: the loser's sequence may survive
+    /// on another token, and neither path need be near the leader.
+    pub merges_close: u64,
 }
+
+/// How close two colliding paths must be to be counted.
+pub const CENSUS_NATS: f32 = 2.0;
 
 impl<'g> Decoder<'g> {
     pub fn new(
@@ -160,6 +171,8 @@ impl<'g> Decoder<'g> {
             tmp_costs: Vec::new(),
             queue: Vec::new(),
             seq: 0,
+            census: false,
+            merges_close: 0,
         };
         d.init_decoding();
         d
@@ -289,7 +302,18 @@ impl<'g> Decoder<'g> {
                     next_cutoff = tot + adaptive_beam;
                 }
                 let (better, seq) = match next.get(&a.nextstate) {
-                    Some(t) => (tot < t.cost, t.seq),
+                    Some(t) => {
+                        if self.census && (t.cost - tot).abs() < CENSUS_NATS {
+                            let mut mine = Self::words_on(tok.link.as_deref());
+                            if a.olabel != 0 {
+                                mine.push(a.olabel);
+                            }
+                            if mine != Self::words_on(t.link.as_deref()) {
+                                self.merges_close += 1;
+                            }
+                        }
+                        (tot < t.cost, t.seq)
+                    }
                     None => {
                         self.seq += 1;
                         (true, self.seq)
@@ -346,7 +370,18 @@ impl<'g> Decoder<'g> {
                     continue;
                 }
                 let (better, seq) = match self.cur.get(&a.nextstate) {
-                    Some(t) => (tot < t.cost, t.seq),
+                    Some(t) => {
+                        if self.census && (t.cost - tot).abs() < CENSUS_NATS {
+                            let mut mine = Self::words_on(tok.link.as_deref());
+                            if a.olabel != 0 {
+                                mine.push(a.olabel);
+                            }
+                            if mine != Self::words_on(t.link.as_deref()) {
+                                self.merges_close += 1;
+                            }
+                        }
+                        (tot < t.cost, t.seq)
+                    }
                     None => {
                         self.seq += 1;
                         (true, self.seq)
@@ -420,6 +455,20 @@ impl<'g> Decoder<'g> {
         } else {
             best_final - best
         }
+    }
+
+    /// The word sequence on a chain, in order.
+    fn words_on(link: Option<&Link>) -> Vec<Label> {
+        let mut words = Vec::new();
+        let mut l = link;
+        while let Some(r) = l {
+            if r.word != 0 {
+                words.push(r.word);
+            }
+            l = r.prev.as_deref();
+        }
+        words.reverse();
+        words
     }
 
     /// Traceback of a token's records into words and phone segments.

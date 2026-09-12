@@ -7,7 +7,7 @@
 // [[rr:TD-2#The decoder: partial alternatives]]
 // [[rr:TD-2#The decoder: finals]]
 
-use crate::decoder::{Decoder, DecoderConfig, Path};
+use crate::decoder::{Decoder, DecoderConfig, Path, CENSUS_NATS};
 use crate::frontend::FeaturePipeline;
 use crate::fst::{Label, VectorFst};
 use crate::json::write_string;
@@ -166,7 +166,7 @@ impl Reading {
 fn roll_history(
     history: &mut HashMap<Vec<Label>, Reading>,
     groups: &[(Vec<Label>, f32, Option<f32>)],
-) -> Vec<Option<f32>> {
+) -> (Vec<Option<f32>>, (u64, u64)) {
     let mut next: HashMap<Vec<Label>, Reading> = HashMap::with_capacity(groups.len());
     let mut deltas = Vec::with_capacity(groups.len());
     for (words, _, lead) in groups {
@@ -179,8 +179,14 @@ fn roll_history(
         deltas.push(r.delta());
         next.insert(words.clone(), r);
     }
+    // whatever the old map still holds left the beam between the two chunks
+    let lost = history.len() as u64;
+    let close = history
+        .values()
+        .filter(|h| h.lead_now.map(|l| -l < CENSUS_NATS).unwrap_or(false))
+        .count() as u64;
     *history = std::mem::take(&mut next);
-    deltas
+    (deltas, (lost, close))
 }
 
 /// `[[rr:TD-9#Every reading names its relation to the partial]]`
@@ -229,6 +235,15 @@ pub struct Recognizer<'m> {
     readings_n: usize,
     trace_groups: bool,
     group_trace: Vec<String>,
+    /// The merge and reading-loss census: separate quantities, neither of which settles what a
+    /// lattice would keep. `[[rr:TD-9#No lattice is added for this feature]]`
+    census: bool,
+    /// Groups that were in the beam at the previous chunk and are not at this one, and those of
+    /// them that were within `CENSUS_NATS` of the leader when last seen.
+    readings_lost: u64,
+    readings_lost_close: u64,
+    /// `merges_close` from decoders this recognizer has already discarded.
+    merges_carried: u64,
     /// The decoder's best path without final costs, the decoded frame count it was read at,
     /// and the counts the silence weighting's frame labels and the stable list were last
     /// brought up to. `[[rr:TD-7#Decision outcome]]`
@@ -335,6 +350,10 @@ impl<'m> Recognizer<'m> {
             readings_n: 0,
             trace_groups: false,
             group_trace: Vec::new(),
+            census: false,
+            readings_lost: 0,
+            readings_lost_close: 0,
+            merges_carried: 0,
             best_path: None,
             best_path_frames: None,
             sw_traceback_frames: None,
@@ -372,6 +391,23 @@ impl<'m> Recognizer<'m> {
         self.endpoint_veto_nats = extending_veto_nats;
     }
     /// Partial alternatives to report, 0 for none.
+    /// Count local collisions and lost readings while decoding. Off by default; it never
+    /// touches a decision.
+    pub fn set_census(&mut self, on: bool) {
+        self.census = on;
+        if let Some(d) = self.decoder.as_mut() {
+            d.census = on;
+        }
+    }
+
+    /// Local close collisions, readings lost between chunks, and those of them that were within
+    /// two nats of the leader when last seen.
+    pub fn census_counts(&self) -> (u64, u64, u64) {
+        let merges =
+            self.merges_carried + self.decoder.as_ref().map(|d| d.merges_close).unwrap_or(0);
+        (merges, self.readings_lost, self.readings_lost_close)
+    }
+
     pub fn set_trace_groups(&mut self, on: bool) {
         self.trace_groups = on;
     }
@@ -412,6 +448,9 @@ impl<'m> Recognizer<'m> {
     }
 
     fn rebuild(&mut self) {
+        if let Some(d) = self.decoder.as_ref() {
+            self.merges_carried += d.merges_close;
+        }
         self.samples_round_start += self.samples_processed;
         self.samples_processed = 0;
         self.frame_offset = 0;
@@ -422,12 +461,14 @@ impl<'m> Recognizer<'m> {
         self.pipeline = Some(FeaturePipeline::new(&opts, self.model.ivector.as_ref()));
         self.nnet = Some(LoopedNnet::new(self.model));
         let cfg = self.decoder_config();
-        self.decoder = Some(Decoder::new(
+        let mut dec = Decoder::new(
             self.graph.clone(),
             &self.model.tm.tid2pdf,
             &self.model.tm.tid2phone,
             cfg,
-        ));
+        );
+        dec.census = self.census;
+        self.decoder = Some(dec);
         self.stable.clear();
     }
 
@@ -541,7 +582,7 @@ impl<'m> Recognizer<'m> {
     /// One grouping of the surviving tokens: the history over every group, and the top n traced
     /// for `partial` to read. `[[rr:TD-9#Readings are read once per decoding advance]]`
     fn update_readings(&mut self) {
-        if self.partial_alternatives == 0 && !self.trace_groups {
+        if self.partial_alternatives == 0 && !self.trace_groups && !self.census {
             return;
         }
         let n = self.partial_alternatives;
@@ -571,7 +612,9 @@ impl<'m> Recognizer<'m> {
             let paths = dec.trace_groups(&groups, n);
             (decoded, self.sample_of(decoded), leads, paths)
         };
-        let deltas = roll_history(&mut self.history, &groups);
+        let (deltas, (lost, close)) = roll_history(&mut self.history, &groups);
+        self.readings_lost += lost;
+        self.readings_lost_close += close;
         if self.trace_groups {
             self.push_group_trace(decoded, sample, &groups, &deltas);
         }
@@ -1128,6 +1171,7 @@ impl<'m> Recognizer<'m> {
         // libvosk drops the pipeline here; the next accept rebuilds it.
         if let Some(d) = &self.decoder {
             self.frame_offset += d.num_frames_decoded();
+            self.merges_carried += d.merges_close;
         }
         self.pipeline = None;
         self.nnet = None;
@@ -1233,38 +1277,47 @@ mod tests {
     fn a_reading_is_born_carried_dropped_and_born_again() {
         let mut h = HashMap::new();
         let first = vec![group(&[1], 0.0, Some(2.0)), group(&[2], 2.0, Some(-2.0))];
-        assert_eq!(roll_history(&mut h, &first), vec![None, None]);
+        assert_eq!(roll_history(&mut h, &first).0, vec![None, None]);
 
         // carried: the delta is this lead less the last
         let second = vec![group(&[1], 0.0, Some(3.0)), group(&[2], 3.0, Some(-3.0))];
-        assert_eq!(roll_history(&mut h, &second), vec![Some(1.0), Some(-1.0)]);
+        assert_eq!(roll_history(&mut h, &second).0, vec![Some(1.0), Some(-1.0)]);
 
         // [2] is gone; [3] is new
         let third = vec![group(&[1], 0.0, Some(1.0)), group(&[3], 1.0, Some(-1.0))];
-        assert_eq!(roll_history(&mut h, &third), vec![Some(-2.0), None]);
+        let (deltas, (lost, close)) = roll_history(&mut h, &third);
+        assert_eq!(deltas, vec![Some(-2.0), None]);
+        // [2] was three nats behind the leader when it went, so it is lost but not close
+        assert_eq!((lost, close), (1, 0));
         assert_eq!(h.len(), 2);
         assert!(!h.contains_key(&vec![2]));
 
         // [2] returns: new again, not carried from before it died
         let fourth = vec![group(&[1], 0.0, Some(1.0)), group(&[2], 1.0, Some(-1.0))];
-        assert_eq!(roll_history(&mut h, &fourth), vec![Some(0.0), None]);
+        let (deltas, (lost, close)) = roll_history(&mut h, &fourth);
+        assert_eq!(deltas, vec![Some(0.0), None]);
+        // [3] was one nat behind when it went
+        assert_eq!((lost, close), (1, 1));
     }
 
     #[test]
     fn one_surviving_reading_has_no_lead_and_no_delta() {
         let mut h = HashMap::new();
         assert_eq!(
-            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))]),
+            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))]).0,
             vec![None]
         );
         // the lead is undefined at this end, so the delta is null on both sides of it
-        assert_eq!(roll_history(&mut h, &[group(&[1], 0.0, None)]), vec![None]);
         assert_eq!(
-            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))]),
+            roll_history(&mut h, &[group(&[1], 0.0, None)]).0,
             vec![None]
         );
         assert_eq!(
-            roll_history(&mut h, &[group(&[1], 0.0, Some(3.0))]),
+            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))]).0,
+            vec![None]
+        );
+        assert_eq!(
+            roll_history(&mut h, &[group(&[1], 0.0, Some(3.0))]).0,
             vec![Some(1.0)]
         );
     }

@@ -21,6 +21,7 @@ stream --model DIR --grammar JSON [--corpus DIR | WAV...] [options]
   --threads N           takes decoded in parallel
   --trace-groups        the tracker's oracle: every surviving group at every
                         network chunk, as \"group_trace\" on the take's JSON line
+  --census              merge and reading-loss counters, as \"census\"
 
 A take's line carries \"take\", \"block_ms\", \"samples\", \"new_ms\",
 \"graph_states\", \"compute_us\", \"partials\" and \"segments\".
@@ -43,6 +44,18 @@ whole take, including the chunk a final flushes. \"frames\" counts from the
 take's start across endpoints, so it identifies the chunk; the history behind
 \"lead_delta\" is cleared at an endpoint, where the first chunk after it reads
 null again.
+
+--census adds, per take:
+
+  \"census\": {\"merges_close\": N,        // local collisions within 2 nats
+              \"readings_lost\": N,       // groups gone between two chunks
+              \"readings_lost_close\": N} // of those, within 2 nats of the leader
+
+Three separate quantities. A local collision is two paths meeting at a state
+with different word sequences and costs within two nats, counted whichever
+path is dropped; it is not a reading lost, since the loser's sequence may
+survive elsewhere in the beam and neither path need be near the leader. None
+of them settles what a lattice would keep, and none touches a decision.
 ";
 
 struct Run {
@@ -50,6 +63,7 @@ struct Run {
     alternatives: usize,
     partial_words: bool,
     trace_groups: bool,
+    census: bool,
     opts: utter::recognizer::RecognizerOptions,
     endpoint_ms: Option<f32>,
     endpoint_veto: Option<f32>,
@@ -63,6 +77,7 @@ fn main() {
     let mut alternatives = 0usize;
     let mut partial_words = false;
     let mut trace_groups = false;
+    let mut census = false;
     let mut dither: Option<f32> = None;
     let mut unknown_cost: Option<f32> = None;
     let mut silence_weight = utter::recognizer::SILENCE_WEIGHT;
@@ -80,6 +95,7 @@ fn main() {
             "--alternatives" => alternatives = it.next().unwrap().parse().unwrap(),
             "--partial-words" => partial_words = true,
             "--trace-groups" => trace_groups = true,
+            "--census" => census = true,
             "--help" | "-h" => {
                 print!("{HELP}");
                 return;
@@ -118,6 +134,7 @@ fn main() {
         alternatives,
         partial_words,
         trace_groups,
+        census,
         endpoint_ms,
         endpoint_veto,
         opts: utter::recognizer::RecognizerOptions {
@@ -159,6 +176,7 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run)
     rec.set_partial_words(run.partial_words);
     rec.set_alternatives(run.alternatives);
     rec.set_trace_groups(run.trace_groups);
+    rec.set_census(run.census);
     let block = w.sample_rate as usize * run.block_ms / 1000;
     let mut partials: Vec<String> = Vec::new();
     let mut segments: Vec<String> = Vec::new();
@@ -219,6 +237,12 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run)
         s.push_str(", \"group_trace\": [");
         s.push_str(&trace.join(", "));
         s.push(']');
+    }
+    if run.census {
+        let (merges, lost, lost_close) = rec.census_counts();
+        s.push_str(&format!(
+            ", \"census\": {{\"merges_close\": {merges}, \"readings_lost\": {lost}, \"readings_lost_close\": {lost_close}}}"
+        ));
     }
     s.push('}');
     s
