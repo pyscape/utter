@@ -46,5 +46,46 @@ none of the quiet final words before it starts deleting real words: one
 script word at costs 0 and 2, fourteen more at a bonus of 2, with the
 corpus finals dropping from 467 to 445 words. On this model the
 unknown-word path does not compete with short vocabulary words read into
-silence. The silence fix a host should use is the energy under the word
-and the `[sil]` entries; `[unk]` stays an option, off by default.
+silence. `[unk]` stays an option, off by default.
+
+## libvosk reads the same 851
+
+Run afterwards on the 2026-08-30 corpus, both engines fed the same 40 ms
+blocks at dither 0 under the same grammar, quiet as defined above:
+libvosk carries a vocabulary word at rank 0 on **851** quiet blocks, the
+same count, and on the 30,941 quiet blocks where both emitted a partial
+there is **not one** where only one of them shows a word. libvosk ends
+with slightly more quiet final words than the runtime, 55 against 52.
+
+So a word on a quiet block is not a defect in this runtime, and emitting
+fewer of them would be a divergence from the oracle rather than a fix.
+Silence is a host's gate to apply, not the decoder's to pre-empt.
+
+## The 851 counts the wrong thing
+
+Of the 851, **596 (70%) are carry-over**: no rank-0 word's own span
+reaches the quiet tail at all, and the partial is still holding words
+spoken earlier in the segment because the decoder has not endpointed
+yet. Of the remaining 255, the words straddle the boundary, with a
+median energy of -27 dBFS under a median span of 450 ms: the block is
+quiet, the word is not.
+
+Counted as a word whose own span carries no speech, the corpus has
+**61 such finals, 2.13 a minute**, and 44 of those are one artefact:
+a single word whose alignment has absorbed a silent region, median span
+19.7 s against 360 ms for a real word. libvosk produces it too.
+
+A gate on the energy under the word works, but only relative to the
+take's own noise floor, not at an absolute level that will not carry
+between microphones: at the floor plus 4 dB it catches 69% of the 61
+and suppresses 1.5% of real words; at plus 12 dB, 95% for 4.4%. A
+duration guard is independent of level and nearly as good on its own,
+since real words reach 750 ms at the 95th percentile and the artefacts
+start around five seconds.
+
+The `[sil]` rival does not help here. It appears on **none** of 210
+no-speech blocks, and on 5.5% of speech blocks: over sustained silence
+the silence path is already pruned from the beam, so no rival is
+offered to rank. The ruling that put it there,
+`[[rr:TD-2#Silence and unknown speech announce themselves]]`, holds for
+a pause inside speech and not for a quiet room.
