@@ -28,7 +28,9 @@ a reference that owes nothing to either engine. Also reported: how often the fir
 later changed.
 
 Writes `<out>.md`, `<out>.json`, and `<out>.clips.jsonl`, a line per clip with each engine's
-reading so two runs can be diffed rather than only compared in aggregate. The header of the
+reading so two runs can be diffed rather than only compared in aggregate. `<out>.md` is
+generated and overwritten every run; what a run *means* goes in `<out>.reading.md`, which the
+report appends to itself, so the prose survives the next run. The header of the
 report records the utter revision, the engine versions and the machine, without which the
 compute figures mean nothing.
 """
@@ -919,6 +921,12 @@ def main():
         grammar_size_pass(modules, args.model, clips, args.block_ms, lines, report, sizes, args.grammar_clips)
     twelve_class_pass(modules, args.model, clips, noise, args.block_ms, lines, report)
     noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report)
+    # The reading of a run is written by hand and would not survive the next run; keep it in
+    # a sidecar the report folds back in.
+    reading = Path(args.out + ".reading.md")
+    if reading.exists():
+        lines.append(reading.read_text().strip())
+        lines.append("")
     text = "\n".join(lines) + "\n"
     Path(args.out + ".md").write_text(text)
     Path(args.out + ".json").write_text(json.dumps(report, indent=1))
