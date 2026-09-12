@@ -24,9 +24,16 @@ pub struct Link {
     pub phone: i32,
 }
 
+/// libvosk scales the graph half of a final path's cost by this before choosing which path
+/// to emit, so a token carries its graph cost apart from its total.
+/// `[[rr:TD-6#Decision outcome]]`
+pub const GRAPH_SCALE: f32 = 0.9;
+
 #[derive(Clone)]
 pub struct Token {
     pub cost: f32,
+    /// The arc weights along this path, without the acoustic likelihoods.
+    pub graph: f32,
     pub link: Option<Rc<Link>>,
     /// Phone of the last emitting arc on this path, for change detection.
     pub phone: i32,
@@ -114,6 +121,7 @@ impl<'g> Decoder<'g> {
             self.fst.start,
             Token {
                 cost: 0.0,
+                graph: 0.0,
                 link: None,
                 phone: 0,
                 seq: 0,
@@ -247,6 +255,7 @@ impl<'g> Decoder<'g> {
                         a.nextstate,
                         Token {
                             cost: tot,
+                            graph: tok.graph + a.weight,
                             link,
                             phone,
                             seq,
@@ -302,6 +311,7 @@ impl<'g> Decoder<'g> {
                         a.nextstate,
                         Token {
                             cost: tot,
+                            graph: tok.graph + a.weight,
                             link,
                             phone: tok.phone,
                             seq,
@@ -317,7 +327,7 @@ impl<'g> Decoder<'g> {
     /// non-final token counts only when no token is final.
     pub fn best_token(&self, use_final: bool) -> Option<(&Token, f32)> {
         let any_final = use_final && self.cur.keys().any(|&s| self.fst.is_final(s));
-        let mut best: Option<(&Token, f32)> = None;
+        let mut best: Option<(&Token, f32, f32)> = None;
         for (&s, t) in &self.cur {
             let fw = if any_final {
                 self.fst.states[s as usize].final_weight
@@ -325,15 +335,20 @@ impl<'g> Decoder<'g> {
                 0.0
             };
             let c = t.cost + fw;
+            let rank = if any_final {
+                c - (1.0 - GRAPH_SCALE) * (t.graph + fw)
+            } else {
+                c
+            };
             if c.is_finite()
                 && best
-                    .map(|(bt, b)| c < b || (c == b && t.seq > bt.seq))
+                    .map(|(bt, b, _)| rank < b || (rank == b && t.seq > bt.seq))
                     .unwrap_or(true)
             {
-                best = Some((t, c));
+                best = Some((t, rank, c));
             }
         }
-        best
+        best.map(|(t, _, c)| (t, c))
     }
 
     /// Kaldi's `FinalRelativeCost`: infinity when no active token is final.
@@ -415,7 +430,7 @@ impl<'g> Decoder<'g> {
     /// cheapest token's path. With `use_final`, final costs are added as for `best_token`.
     pub fn alternatives(&self, use_final: bool, max: usize) -> Vec<Path> {
         let any_final = use_final && self.cur.keys().any(|&s| self.fst.is_final(s));
-        let mut groups: HashMap<Vec<Label>, (f32, &Token)> = HashMap::new();
+        let mut groups: HashMap<Vec<Label>, (f32, f32, &Token)> = HashMap::new();
         for (&s, t) in &self.cur {
             let fw = if any_final {
                 self.fst.states[s as usize].final_weight
@@ -426,6 +441,12 @@ impl<'g> Decoder<'g> {
             if !c.is_finite() {
                 continue;
             }
+            // Grouped and ranked at the scale the reading is chosen by, not at the raw cost.
+            let rank = if any_final {
+                c - (1.0 - GRAPH_SCALE) * (t.graph + fw)
+            } else {
+                c
+            };
             let mut words = Vec::new();
             let mut l = t.link.as_deref();
             while let Some(r) = l {
@@ -436,16 +457,16 @@ impl<'g> Decoder<'g> {
             }
             words.reverse();
             match groups.get_mut(&words) {
-                Some(g) if g.0 < c || (g.0 == c && g.1.seq >= t.seq) => {}
-                Some(g) => *g = (c, t),
+                Some(g) if g.0 < rank || (g.0 == rank && g.2.seq >= t.seq) => {}
+                Some(g) => *g = (rank, c, t),
                 None => {
-                    groups.insert(words, (c, t));
+                    groups.insert(words, (rank, c, t));
                 }
             }
         }
-        let mut v: Vec<(f32, &Token)> = groups.into_values().collect();
-        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(b.1.seq.cmp(&a.1.seq)));
+        let mut v: Vec<(f32, f32, &Token)> = groups.into_values().collect();
+        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(b.2.seq.cmp(&a.2.seq)));
         v.truncate(max);
-        v.into_iter().map(|(c, t)| self.trace(t, c)).collect()
+        v.into_iter().map(|(_, c, t)| self.trace(t, c)).collect()
     }
 }
