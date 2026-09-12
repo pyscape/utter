@@ -207,18 +207,46 @@ impl Model {
         })
     }
 
-    /// Compile a grammar to the decoding graph: bigram, compose, erase disambiguation labels,
-    /// connect. `warn` receives libvosk's warnings about unknown words.
-    pub fn compile_grammar(&self, grammar: &[String], max_states: usize, warn: impl FnMut(String)) -> Result<VectorFst> {
-        let g = grammar_fst(grammar, &self.word_ids, warn);
-        let reach = if self.reach.len() == self.hcl.num_states() { Some((self.reach.as_slice(), self.final_label)) } else { None };
-        let mut fst = match compose(&self.hcl, &g, &self.relabel, reach, max_states) {
+    /// Compile a grammar to the decoding graph: bigram, lookahead composition, erase the
+    /// disambiguation labels. `unknown_cost` adds the model's unknown-word symbol to the grammar
+    /// with that cost on its arcs. `warn` receives libvosk's warnings about unknown words.
+    pub fn compile_grammar(&self, grammar: &[String], unknown_cost: Option<f32>, max_states: usize, warn: impl FnMut(String)) -> Result<VectorFst> {
+        let mut grammar: Vec<String> = grammar.to_vec();
+        let unk = "[unk]";
+        if unknown_cost.is_some() && !grammar.iter().any(|s| s.split(' ').any(|w| w == unk)) {
+            grammar.push(unk.to_string());
+        }
+        let mut g = grammar_fst(&grammar, &self.word_ids, warn);
+        if let (Some(cost), Some(&id)) = (unknown_cost, self.word_ids.get(unk)) {
+            for st in g.states.iter_mut() {
+                for a in st.arcs.iter_mut() {
+                    if a.ilabel == id as i32 {
+                        a.weight += cost;
+                    }
+                }
+            }
+        }
+        if !self.relabel.is_empty() {
+            for st in g.states.iter_mut() {
+                for a in st.arcs.iter_mut() {
+                    if a.ilabel != 0 {
+                        a.ilabel = *self.relabel.get(&a.ilabel).unwrap_or(&-1);
+                    }
+                }
+                st.arcs.sort_by_key(|a| a.ilabel);
+            }
+        }
+        let mut fst = match compose(&self.hcl, &g, &self.reach, self.final_label, max_states) {
             Ok(f) => f,
             Err(ComposeError(m)) => return Err(err(&m)),
         };
         erase_input_labels(&mut fst, &self.disambig);
-        fst.connect();
         Ok(fst)
+    }
+
+    /// The model's unknown-word symbol id, when the word table has one.
+    pub fn unknown_word(&self) -> Option<Label> {
+        self.word_ids.get("[unk]").map(|&i| i as Label)
     }
 
     pub fn word(&self, id: Label) -> &str {

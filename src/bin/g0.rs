@@ -214,7 +214,7 @@ fn main() {
     let grammar_text = std::fs::read_to_string(&args.grammar).expect("grammar file");
     let grammar = utter::json::parse_string_array(&grammar_text).expect("grammar JSON");
     let t1 = Instant::now();
-    let graph = model.compile_grammar(&grammar, 2_000_000, |w| eprintln!("warning: {w}")).expect("compose");
+    let graph = model.compile_grammar(&grammar, None, 5_000_000, |w| eprintln!("warning: {w}")).expect("compose");
     eprintln!("graph compiled in {:?}: {} states {} arcs", t1.elapsed(), graph.num_states(), graph.num_arcs());
 
     let jobs: Vec<(PathBuf, String)> =
