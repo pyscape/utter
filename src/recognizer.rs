@@ -453,7 +453,7 @@ impl<'m> Recognizer<'m> {
     /// libvosk's `PartialResult`, extended.
     pub fn partial(&mut self) -> &str {
         let empty = |this: &mut Self| {
-            this.last_result = "{\"partial\": \"\"}".to_string();
+            this.last_result = format!("{{\"partial\": \"{SIL}\"}}");
         };
         if self.state != State::Running {
             empty(self);
