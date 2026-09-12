@@ -30,5 +30,9 @@ pub mod silence_weighting;
 pub mod transition_model;
 pub mod wav;
 
+/// The git revision of the checkout this crate was built from, with a `-dirty` suffix when
+/// tracked files had uncommitted edits, or `unknown` when there was no checkout to ask.
+pub const REVISION: &str = env!("UTTER_REVISION");
+
 pub use model::Model;
 pub use recognizer::{Recognizer, Step};

@@ -8,10 +8,48 @@ use std::time::Instant;
 use utter::wav::read_wav;
 use utter::{Model, Recognizer};
 
+const HELP: &str = "\
+stream --model DIR --grammar JSON [--corpus DIR | WAV...] [options]
+
+  --block-ms N          audio per accept, default 40
+  --alternatives N      partial alternatives per block, default 0
+  --partial-words       word lists on partials
+  --dither F            MFCC dither, 0 for a repeatable front end
+  --unknown-cost F      add the model's unknown word at this cost
+  --silence-weight F    i-vector weight for silence frames
+  --endpoint-ms F / --endpoint-veto F   the host's endpoint bound
+  --threads N           takes decoded in parallel
+  --trace-groups        the tracker's oracle: every surviving group at every
+                        network chunk, as \"group_trace\" on the take's JSON line
+
+A take's line carries \"take\", \"block_ms\", \"samples\", \"new_ms\",
+\"graph_states\", \"compute_us\", \"partials\" and \"segments\".
+
+--trace-groups adds, per take:
+
+  \"group_trace\": [
+    {\"frames\": <output frames decoded when the chunk ended>,
+     \"sample\": <audio sample that frame ends at>,
+     \"groups\": [{\"text\": \"...\",          // [sil] for the empty sequence
+                  \"confidence\": <-cost>,
+                  \"relation\": \"same\"|\"prefix\"|\"extends\"|\"differs\",
+                  \"lead\": <nats>|null,    // confidence less the best other
+                  \"lead_delta\": <nats>|null}]}   // lead less the previous chunk's
+  ]
+
+Every surviving group is listed, ranked as the partial's alternatives are,
+whatever --alternatives reports: one entry per network chunk decoded, over the
+whole take, including the chunk a final flushes. \"frames\" counts from the
+take's start across endpoints, so it identifies the chunk; the history behind
+\"lead_delta\" is cleared at an endpoint, where the first chunk after it reads
+null again.
+";
+
 struct Run {
     block_ms: usize,
     alternatives: usize,
     partial_words: bool,
+    trace_groups: bool,
     opts: utter::recognizer::RecognizerOptions,
     endpoint_ms: Option<f32>,
     endpoint_veto: Option<f32>,
@@ -24,6 +62,7 @@ fn main() {
     let mut block_ms = 40usize;
     let mut alternatives = 0usize;
     let mut partial_words = false;
+    let mut trace_groups = false;
     let mut dither: Option<f32> = None;
     let mut unknown_cost: Option<f32> = None;
     let mut silence_weight = utter::recognizer::SILENCE_WEIGHT;
@@ -40,6 +79,11 @@ fn main() {
             "--block-ms" => block_ms = it.next().unwrap().parse().unwrap(),
             "--alternatives" => alternatives = it.next().unwrap().parse().unwrap(),
             "--partial-words" => partial_words = true,
+            "--trace-groups" => trace_groups = true,
+            "--help" | "-h" => {
+                print!("{HELP}");
+                return;
+            }
             "--dither" => dither = Some(it.next().unwrap().parse().unwrap()),
             "--unknown-cost" => unknown_cost = Some(it.next().unwrap().parse().unwrap()),
             "--silence-weight" => silence_weight = it.next().unwrap().parse().unwrap(),
@@ -73,6 +117,7 @@ fn main() {
         block_ms,
         alternatives,
         partial_words,
+        trace_groups,
         endpoint_ms,
         endpoint_veto,
         opts: utter::recognizer::RecognizerOptions {
@@ -113,10 +158,12 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run)
     rec.set_words(true);
     rec.set_partial_words(run.partial_words);
     rec.set_alternatives(run.alternatives);
+    rec.set_trace_groups(run.trace_groups);
     let block = w.sample_rate as usize * run.block_ms / 1000;
     let mut partials: Vec<String> = Vec::new();
     let mut segments: Vec<String> = Vec::new();
     let mut compute_us: Vec<u128> = Vec::new();
+    let mut trace: Vec<String> = Vec::new();
     let mut fed = 0usize;
     let mut i = 0;
     while i < w.samples.len() {
@@ -135,9 +182,11 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run)
             partials.push(rec.partial().to_string());
         }
         compute_us.push(t.elapsed().as_micros());
+        trace.append(&mut rec.take_group_trace());
         i = end;
     }
     let res = rec.final_result().to_string();
+    trace.append(&mut rec.take_group_trace());
     segments.push(format!(
         "{{\"end_sample\": {}, \"endpoint_sample\": {}, \"result\": {}}}",
         fed, fed, res
@@ -165,6 +214,12 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run)
     }
     s.push_str("], \"segments\": [");
     s.push_str(&segments.join(", "));
-    s.push_str("]}");
+    s.push(']');
+    if run.trace_groups {
+        s.push_str(", \"group_trace\": [");
+        s.push_str(&trace.join(", "));
+        s.push(']');
+    }
+    s.push('}');
     s
 }

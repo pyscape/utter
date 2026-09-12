@@ -53,6 +53,59 @@ fn without_floor(json: &str) -> String {
     }
 }
 
+/// The entries of `partial_alternatives`, each as its own JSON object text.
+fn alternatives_of(json: &str) -> Vec<String> {
+    let key = "\"partial_alternatives\": [";
+    let Some(i) = json.find(key) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (k, c) in json[i + key.len()..].char_indices() {
+        match c {
+            '{' => {
+                if depth == 0 {
+                    start = k;
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    out.push(json[i + key.len() + start..=i + key.len() + k].to_string());
+                }
+            }
+            ']' if depth == 0 => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The raw JSON value after `key`, up to the next comma or closing brace.
+fn value_of_key(json: &str, key: &str) -> String {
+    let i = json.find(key).unwrap_or_else(|| panic!("{key} in {json}")) + key.len();
+    let rest = &json[i..];
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
+    rest[..end].trim().to_string()
+}
+
+/// The two keys TD-9 appends to every reading, which the identity gate strips.
+/// `[[rr:TD-9#The keys are appended]]`
+fn without_series(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    let mut rest = json;
+    while let Some(i) = rest.find(", \"relation\": ") {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let end = tail.find('}').expect("reading object ends");
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn text_of(json: &str) -> String {
     let key = "\"text\": ";
     let i = json.rfind(key).expect("text key") + key.len();
@@ -306,4 +359,189 @@ fn an_unimplemented_component_is_refused_at_load() {
     // A component the output never reaches is not fatal: the model carries a log-softmax on
     // the xent branch, which is never evaluated.
     assert!(Model::open(&dir).is_ok());
+}
+
+#[test]
+fn readings_carry_their_relation_and_their_leads_motion() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    // three words with silence between them, so a partial holds a word while shorter and
+    // longer readings compete with it
+    let samples = [
+        clip("yes"),
+        vec![0i16; 4000],
+        clip("seven"),
+        vec![0i16; 4000],
+        clip("no"),
+        vec![0i16; 4000],
+    ]
+    .concat();
+
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    rec.set_partial_words(true);
+    rec.set_alternatives(5);
+    let (partials, finals) = decode(&mut rec, &samples);
+    assert!(partials.len() > 10);
+
+    let mut relations: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut carried = 0;
+    let mut entered_with_history = 0;
+    let mut first_block = true;
+    for p in partials.iter() {
+        let alts = alternatives_of(p);
+        if alts.is_empty() {
+            // before the first chunk is decoded there is no reading to report
+            assert_eq!(without_floor(p), "{\"partial\": \"[sil]\"}");
+            continue;
+        }
+        assert_eq!(value_of_key(&alts[0], "\"relation\": "), "\"same\"");
+        for a in &alts {
+            let text = text_of_key(a, "\"text\": ");
+            let delta = value_of_key(a, "\"lead_delta\": ");
+            relations.push(value_of_key(a, "\"relation\": "));
+            // the history starts empty, so the first chunk reported has no motion
+            if first_block {
+                assert_eq!(delta, "null", "{a}");
+            }
+            if delta != "null" {
+                if seen.contains(&text) {
+                    carried += 1;
+                } else {
+                    // the history is kept over every group, so a reading entering the n
+                    // reported brings the motion it earned outside them
+                    entered_with_history += 1;
+                }
+            }
+            seen.insert(text);
+        }
+        first_block = false;
+    }
+    assert!(
+        entered_with_history > 0,
+        "no reading entered with a history"
+    );
+    assert!(carried > 0, "no reading ever carried a lead forward");
+    for r in ["\"same\"", "\"prefix\"", "\"extends\"", "\"differs\""] {
+        assert!(relations.iter().any(|x| x == r), "no {r} reading");
+    }
+
+    // The keys are appended, so the output with them removed is the output without them.
+    let mut plain = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    plain.set_partial_words(true);
+    let (plain_partials, plain_finals) = decode(&mut plain, &samples);
+    assert_eq!(finals, plain_finals);
+    for (p, q) in partials.iter().zip(plain_partials.iter()) {
+        let stripped = without_series(p);
+        assert!(!stripped.contains("relation") && !stripped.contains("lead_delta"));
+        let key = ", \"partial_alternatives\": [";
+        let Some(i) = stripped.find(key) else {
+            assert_eq!(stripped, *q);
+            continue;
+        };
+        let j = stripped
+            .find("], \"partial_result\"")
+            .expect("partial result");
+        // everything outside the readings is what a decode without them emits
+        assert_eq!(format!("{}{}", &stripped[..i], &stripped[j + 1..]), *q);
+    }
+}
+
+#[test]
+fn the_readings_are_sampled_once_per_chunk_whatever_is_asked_of_them() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let samples = clip("seven");
+
+    // One alternative requested still tracks every group that survives, so the one reading
+    // reported carries a lead earned against readings outside it.
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    rec.set_alternatives(1);
+    for block in samples.chunks(640) {
+        rec.accept(block);
+    }
+    let one = rec.partial().to_string();
+    let alts = alternatives_of(&one);
+    assert_eq!(alts.len(), 1);
+    assert_ne!(value_of_key(&alts[0], "\"lead_delta\": "), "null", "{one}");
+    // repeated calls read the memo, not a new grouping
+    assert_eq!(rec.partial(), one);
+
+    // n moves with no new audio: the trace is re-traced, the history is untouched
+    rec.set_alternatives(3);
+    let three = rec.partial().to_string();
+    let alts3 = alternatives_of(&three);
+    assert_eq!(alts3.len(), 3);
+    assert_eq!(alts3[0], alts[0]);
+
+    // Disabled then enabled: the history starts at the next chunk, so nothing has a delta yet.
+    let mut late = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    for block in samples.chunks(640) {
+        late.accept(block);
+    }
+    late.set_alternatives(3);
+    for a in alternatives_of(late.partial()) {
+        assert_eq!(value_of_key(&a, "\"lead_delta\": "), "null", "{a}");
+    }
+    late.accept(&vec![0i16; 16000]);
+    assert!(alternatives_of(late.partial())
+        .iter()
+        .any(|a| value_of_key(a, "\"lead_delta\": ") != "null"));
+
+    // A final restarts the decoder, which clears the history: the first chunk after it reads
+    // null again.
+    late.final_result();
+    let mut first = String::new();
+    for block in samples.chunks(640) {
+        late.accept(block);
+        if !alternatives_of(late.partial()).is_empty() {
+            first = late.partial().to_string();
+            break;
+        }
+    }
+    let alts = alternatives_of(&first);
+    assert!(!alts.is_empty(), "no reading after the restart");
+    for a in alts {
+        assert_eq!(value_of_key(&a, "\"lead_delta\": "), "null", "{a}");
+    }
+}
+
+#[test]
+fn one_accept_over_several_chunks_samples_each_of_them() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    rec.set_trace_groups(true);
+    // a second of audio in one call, where a chunk is 240 ms
+    rec.accept(&clip("seven"));
+    let trace = rec.take_group_trace();
+    assert!(trace.len() >= 3, "{trace:?}");
+    let frames: Vec<f64> = trace
+        .iter()
+        .map(|r| num_of_key(r, "\"frames\": "))
+        .collect();
+    assert!(frames.windows(2).all(|w| w[1] > w[0]), "{frames:?}");
+    for (k, r) in trace.iter().enumerate() {
+        let first = alternatives_or_groups(r);
+        let delta = value_of_key(&first, "\"lead_delta\": ");
+        if k == 0 {
+            assert_eq!(delta, "null", "{r}");
+        }
+    }
+    assert!(
+        trace[1..]
+            .iter()
+            .any(|r| value_of_key(&alternatives_or_groups(r), "\"lead_delta\": ") != "null"),
+        "no chunk carried a lead forward"
+    );
+    assert!(rec.take_group_trace().is_empty());
+}
+
+/// The first group of a `--trace-groups` record.
+fn alternatives_or_groups(record: &str) -> String {
+    let key = "\"groups\": [";
+    let i = record.find(key).expect("groups") + key.len();
+    let rest = &record[i..];
+    let end = rest.find('}').expect("group ends");
+    rest[..=end].to_string()
 }

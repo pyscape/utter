@@ -113,6 +113,16 @@ impl Path {
     }
 }
 
+/// One reading: a word sequence surviving in the beam, with the cheapest token that carries it.
+/// `rank` is what the readings are ordered by, `cost` what a traced path reports; without final
+/// costs they are equal.
+pub struct Group<'t> {
+    pub words: Vec<Label>,
+    pub rank: f32,
+    pub cost: f32,
+    pub token: &'t Token,
+}
+
 pub struct Decoder<'g> {
     fst: Arc<VectorFst>,
     pub config: DecoderConfig,
@@ -457,8 +467,9 @@ impl<'g> Decoder<'g> {
     }
 
     /// Surviving tokens grouped by word sequence, cheapest first; each group carries its
-    /// cheapest token's path. With `use_final`, final costs are added as for `best_token`.
-    pub fn alternatives(&self, use_final: bool, max: usize) -> Vec<Path> {
+    /// cheapest token. With `use_final`, final costs are added as for `best_token`.
+    /// `[[rr:TD-9#Readings are read once per decoding advance]]`
+    pub fn grouped(&self, use_final: bool) -> Vec<Group<'_>> {
         let any_final = use_final && self.cur.keys().any(|&s| self.fst.is_final(s));
         let mut groups: HashMap<Vec<Label>, (f32, f32, &Token)> = HashMap::new();
         for (&s, t) in &self.cur {
@@ -494,9 +505,37 @@ impl<'g> Decoder<'g> {
                 }
             }
         }
-        let mut v: Vec<(f32, f32, &Token)> = groups.into_values().collect();
-        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(b.2.seq.cmp(&a.2.seq)));
-        v.truncate(max);
-        v.into_iter().map(|(_, c, t)| self.trace(t, c)).collect()
+        let mut v: Vec<Group<'_>> = groups
+            .into_iter()
+            .map(|(words, (rank, cost, token))| Group {
+                words,
+                rank,
+                cost,
+                token,
+            })
+            .collect();
+        v.sort_by(|a, b| {
+            a.rank
+                .partial_cmp(&b.rank)
+                .unwrap()
+                .then(b.token.seq.cmp(&a.token.seq))
+        });
+        v
+    }
+
+    /// The first `max` groups traced.
+    pub fn trace_groups(&self, groups: &[Group<'_>], max: usize) -> Vec<Path> {
+        groups
+            .iter()
+            .take(max)
+            .map(|g| self.trace(g.token, g.cost))
+            .collect()
+    }
+
+    /// Surviving tokens grouped by word sequence, cheapest first; each group carries its
+    /// cheapest token's path. With `use_final`, final costs are added as for `best_token`.
+    pub fn alternatives(&self, use_final: bool, max: usize) -> Vec<Path> {
+        let groups = self.grouped(use_final);
+        self.trace_groups(&groups, max)
     }
 }

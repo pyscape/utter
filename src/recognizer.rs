@@ -14,7 +14,7 @@ use crate::json::write_string;
 use crate::looped::LoopedNnet;
 use crate::model::{Model, WordBoundary};
 use crate::silence_weighting::SilenceWeighting;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +143,59 @@ impl FloorTracker {
     }
 }
 
+/// A reading's lead now and at the previous advance. The lead is the reading's confidence less
+/// the best confidence among the others, undefined when one reading survives.
+#[derive(Clone, Copy, Debug, Default)]
+struct Reading {
+    lead_prev: Option<f32>,
+    lead_now: Option<f32>,
+}
+
+impl Reading {
+    fn delta(&self) -> Option<f32> {
+        match (self.lead_now, self.lead_prev) {
+            (Some(now), Some(prev)) => Some(now - prev),
+            _ => None,
+        }
+    }
+}
+
+/// The history at the next advance: each surviving group carries its previous lead forward, a
+/// group that was not there is born, and one that is gone is dropped. Returns each group's
+/// `lead_delta` in the order given.
+fn roll_history(
+    history: &mut HashMap<Vec<Label>, Reading>,
+    groups: &[(Vec<Label>, f32, Option<f32>)],
+) -> Vec<Option<f32>> {
+    let mut next: HashMap<Vec<Label>, Reading> = HashMap::with_capacity(groups.len());
+    let mut deltas = Vec::with_capacity(groups.len());
+    for (words, _, lead) in groups {
+        // A sequence that left the groups and returned is new again.
+        let lead_prev = history.remove(words).and_then(|h| h.lead_now);
+        let r = Reading {
+            lead_prev,
+            lead_now: *lead,
+        };
+        deltas.push(r.delta());
+        next.insert(words.clone(), r);
+    }
+    *history = std::mem::take(&mut next);
+    deltas
+}
+
+/// `[[rr:TD-9#Every reading names its relation to the partial]]`
+fn relation(words: &[Label], best: &[Label]) -> &'static str {
+    if words == best {
+        "same"
+    } else if best.starts_with(words) {
+        "prefix"
+    } else if words.starts_with(best) {
+        "extends"
+    } else {
+        "differs"
+    }
+}
+
 pub struct Recognizer<'m> {
     model: &'m Model,
     graph: Arc<VectorFst>,
@@ -166,6 +219,16 @@ pub struct Recognizer<'m> {
     max_alternatives: usize,
     /// Word at each partial position and the sample position since which it has held.
     stable: Vec<(Label, u64)>,
+    /// Every surviving reading's lead at this advance and at the previous one, keyed by the
+    /// word sequence that is its identity. `[[rr:TD-9#Every reading carries its lead's motion]]`
+    history: HashMap<Vec<Label>, Reading>,
+    /// The top n traced at the last grouping, the decoded frame count it was traced at, and the
+    /// n it was traced for. `[[rr:TD-7#Decision outcome]]`
+    readings: Option<Vec<Path>>,
+    readings_frames: Option<usize>,
+    readings_n: usize,
+    trace_groups: bool,
+    group_trace: Vec<String>,
     /// The decoder's best path without final costs, the decoded frame count it was read at,
     /// and the counts the silence weighting's frame labels and the stable list were last
     /// brought up to. `[[rr:TD-7#Decision outcome]]`
@@ -190,6 +253,13 @@ fn escape_json_number(v: f64) -> String {
         "1e999".into()
     } else {
         "-1e999".into()
+    }
+}
+
+fn number_or_null(v: Option<f32>) -> String {
+    match v {
+        Some(x) => escape_json_number(x as f64),
+        None => "null".into(),
     }
 }
 
@@ -259,6 +329,12 @@ impl<'m> Recognizer<'m> {
             partial_alternatives: 0,
             max_alternatives: 0,
             stable: Vec::new(),
+            history: HashMap::new(),
+            readings: None,
+            readings_frames: None,
+            readings_n: 0,
+            trace_groups: false,
+            group_trace: Vec::new(),
             best_path: None,
             best_path_frames: None,
             sw_traceback_frames: None,
@@ -296,6 +372,15 @@ impl<'m> Recognizer<'m> {
         self.endpoint_veto_nats = extending_veto_nats;
     }
     /// Partial alternatives to report, 0 for none.
+    pub fn set_trace_groups(&mut self, on: bool) {
+        self.trace_groups = on;
+    }
+
+    /// The group trace recorded since the last call, one JSON object per chunk decoded.
+    pub fn take_group_trace(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.group_trace)
+    }
+
     pub fn set_alternatives(&mut self, n: usize) {
         self.partial_alternatives = n;
     }
@@ -371,6 +456,7 @@ impl<'m> Recognizer<'m> {
     }
 
     fn forget_best_path(&mut self) {
+        self.forget_readings();
         self.best_path = None;
         self.best_path_frames = None;
         self.sw_traceback_frames = None;
@@ -418,18 +504,137 @@ impl<'m> Recognizer<'m> {
         iv.update_frame_weights(&deltas);
     }
 
+    /// Output frames one network chunk produces. `[[rr:TD-2#The network]]`
+    fn chunk_frames(&self) -> usize {
+        (self.model.conf.frames_per_chunk / self.model.conf.frame_subsampling_factor).max(1)
+    }
+
+    /// The drain stops at each chunk boundary so the readings are sampled there, whatever the
+    /// block size that fed it. `[[rr:TD-9#Readings are read once per decoding advance]]`
     fn advance_decoding(&mut self) {
-        let (Some(pipe), Some(nnet), Some(dec)) = (
-            self.pipeline.as_mut(),
-            self.nnet.as_mut(),
-            self.decoder.as_mut(),
-        ) else {
+        let chunk = self.chunk_frames();
+        loop {
+            {
+                let (Some(pipe), Some(nnet), Some(dec)) = (
+                    self.pipeline.as_mut(),
+                    self.nnet.as_mut(),
+                    self.decoder.as_mut(),
+                ) else {
+                    return;
+                };
+                let ready = nnet.num_frames_ready(pipe);
+                if dec.num_frames_decoded() >= ready {
+                    return;
+                }
+                let offset = nnet.frame_offset();
+                let boundary = (dec.num_frames_decoded() + offset) / chunk * chunk + chunk;
+                let limit = boundary.saturating_sub(offset).min(ready);
+                while dec.num_frames_decoded() < limit {
+                    let row = nnet.frame(pipe, dec.num_frames_decoded());
+                    dec.advance_frame(row);
+                }
+            }
+            self.update_readings();
+        }
+    }
+
+    /// One grouping of the surviving tokens: the history over every group, and the top n traced
+    /// for `partial` to read. `[[rr:TD-9#Readings are read once per decoding advance]]`
+    fn update_readings(&mut self) {
+        if self.partial_alternatives == 0 && !self.trace_groups {
+            return;
+        }
+        let n = self.partial_alternatives;
+        let (decoded, sample, groups, paths) = {
+            let Some(dec) = self.decoder.as_ref() else {
+                return;
+            };
+            let decoded = dec.num_frames_decoded();
+            if self.readings_frames == Some(decoded) {
+                return;
+            }
+            let groups = dec.grouped(false);
+            // Without final costs the rank is the cost, so the best other cost is the first
+            // group's, or the second's for the first group itself.
+            let leads: Vec<(Vec<Label>, f32, Option<f32>)> = groups
+                .iter()
+                .enumerate()
+                .map(|(i, g)| {
+                    let lead = match (i, groups.len()) {
+                        (_, 0 | 1) => None,
+                        (0, _) => Some(groups[1].cost - g.cost),
+                        _ => Some(groups[0].cost - g.cost),
+                    };
+                    (g.words.clone(), g.cost, lead)
+                })
+                .collect();
+            let paths = dec.trace_groups(&groups, n);
+            (decoded, self.sample_of(decoded), leads, paths)
+        };
+        let deltas = roll_history(&mut self.history, &groups);
+        if self.trace_groups {
+            self.push_group_trace(decoded, sample, &groups, &deltas);
+        }
+        self.readings = Some(paths);
+        self.readings_frames = Some(decoded);
+        self.readings_n = n;
+    }
+
+    /// The traced top n at the current frame count, re-traced when n moved without new audio.
+    /// A change of n invalidates the trace, not the history.
+    fn refresh_readings(&mut self) {
+        let n = self.partial_alternatives;
+        let Some(dec) = self.decoder.as_ref() else {
             return;
         };
-        while dec.num_frames_decoded() < nnet.num_frames_ready(pipe) {
-            let row = nnet.frame(pipe, dec.num_frames_decoded());
-            dec.advance_frame(row);
+        let decoded = dec.num_frames_decoded();
+        if self.readings_frames == Some(decoded) && self.readings_n == n {
+            return;
         }
+        let groups = dec.grouped(false);
+        let paths = dec.trace_groups(&groups, n);
+        self.readings = Some(paths);
+        self.readings_frames = Some(decoded);
+        self.readings_n = n;
+    }
+
+    fn forget_readings(&mut self) {
+        self.history.clear();
+        self.readings = None;
+        self.readings_frames = None;
+        self.readings_n = 0;
+    }
+
+    /// `stream --trace-groups`: every surviving group at every chunk, the tracker's oracle.
+    fn push_group_trace(
+        &mut self,
+        decoded: usize,
+        sample: u64,
+        groups: &[(Vec<Label>, f32, Option<f32>)],
+        deltas: &[Option<f32>],
+    ) {
+        let best: &[Label] = groups.first().map(|g| g.0.as_slice()).unwrap_or(&[]);
+        let mut out = format!(
+            "{{\"frames\": {}, \"sample\": {}, \"groups\": [",
+            self.frame_offset + decoded,
+            sample
+        );
+        for (i, (words, cost, lead)) in groups.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push_str("{\"text\": ");
+            write_string(&mut out, &self.text_of(words));
+            out.push_str(&format!(
+                ", \"confidence\": {}, \"relation\": \"{}\", \"lead\": {}, \"lead_delta\": {}}}",
+                escape_json_number(-(*cost as f64)),
+                relation(words, best),
+                number_or_null(*lead),
+                number_or_null(deltas[i]),
+            ));
+        }
+        out.push_str("]}");
+        self.group_trace.push(out);
     }
 
     /// Feed 16-bit mono PCM at the recognizer's rate.
@@ -770,7 +975,9 @@ impl<'m> Recognizer<'m> {
             return &self.last_result;
         }
         self.refresh_best_path();
-        let dec = self.decoder.as_ref().unwrap();
+        if self.partial_alternatives > 0 {
+            self.refresh_readings();
+        }
         let Some(path) = self.best_path.as_ref() else {
             empty(self);
             return &self.last_result;
@@ -780,7 +987,9 @@ impl<'m> Recognizer<'m> {
         write_string(&mut out, &self.text_of(&path.words));
         if self.partial_alternatives > 0 {
             out.push_str(", \"partial_alternatives\": [");
-            let alts = dec.alternatives(false, self.partial_alternatives);
+            let empty: Vec<Path> = Vec::new();
+            let alts = self.readings.as_ref().unwrap_or(&empty);
+            let best: &[Label] = alts.first().map(|a| a.words.as_slice()).unwrap_or(&[]);
             for (i, alt) in alts.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
@@ -801,6 +1010,11 @@ impl<'m> Recognizer<'m> {
                     }
                     out.push(']');
                 }
+                out.push_str(&format!(
+                    ", \"relation\": \"{}\", \"lead_delta\": {}",
+                    relation(&alt.words, best),
+                    number_or_null(self.history.get(&alt.words).and_then(|h| h.delta())),
+                ));
                 out.push('}');
             }
             out.push(']');
@@ -1009,5 +1223,60 @@ mod tests {
         f.feed(&constant(-20.0, 10.0));
         f.feed(&constant(-60.0, 10.0));
         assert!((f.dbfs().unwrap() + 60.0).abs() < 1.0, "{:?}", f.dbfs());
+    }
+
+    fn group(words: &[Label], cost: f32, lead: Option<f32>) -> (Vec<Label>, f32, Option<f32>) {
+        (words.to_vec(), cost, lead)
+    }
+
+    #[test]
+    fn a_reading_is_born_carried_dropped_and_born_again() {
+        let mut h = HashMap::new();
+        let first = vec![group(&[1], 0.0, Some(2.0)), group(&[2], 2.0, Some(-2.0))];
+        assert_eq!(roll_history(&mut h, &first), vec![None, None]);
+
+        // carried: the delta is this lead less the last
+        let second = vec![group(&[1], 0.0, Some(3.0)), group(&[2], 3.0, Some(-3.0))];
+        assert_eq!(roll_history(&mut h, &second), vec![Some(1.0), Some(-1.0)]);
+
+        // [2] is gone; [3] is new
+        let third = vec![group(&[1], 0.0, Some(1.0)), group(&[3], 1.0, Some(-1.0))];
+        assert_eq!(roll_history(&mut h, &third), vec![Some(-2.0), None]);
+        assert_eq!(h.len(), 2);
+        assert!(!h.contains_key(&vec![2]));
+
+        // [2] returns: new again, not carried from before it died
+        let fourth = vec![group(&[1], 0.0, Some(1.0)), group(&[2], 1.0, Some(-1.0))];
+        assert_eq!(roll_history(&mut h, &fourth), vec![Some(0.0), None]);
+    }
+
+    #[test]
+    fn one_surviving_reading_has_no_lead_and_no_delta() {
+        let mut h = HashMap::new();
+        assert_eq!(
+            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))]),
+            vec![None]
+        );
+        // the lead is undefined at this end, so the delta is null on both sides of it
+        assert_eq!(roll_history(&mut h, &[group(&[1], 0.0, None)]), vec![None]);
+        assert_eq!(
+            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))]),
+            vec![None]
+        );
+        assert_eq!(
+            roll_history(&mut h, &[group(&[1], 0.0, Some(3.0))]),
+            vec![Some(1.0)]
+        );
+    }
+
+    #[test]
+    fn a_relation_is_read_off_the_labels() {
+        assert_eq!(relation(&[1, 2], &[1, 2]), "same");
+        assert_eq!(relation(&[1], &[1, 2]), "prefix");
+        assert_eq!(relation(&[], &[1, 2]), "prefix");
+        assert_eq!(relation(&[1, 2, 3], &[1, 2]), "extends");
+        assert_eq!(relation(&[1, 2], &[]), "extends");
+        assert_eq!(relation(&[2, 3], &[1, 3]), "differs");
+        assert_eq!(relation(&[], &[]), "same");
     }
 }
