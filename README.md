@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/pyscape/utter/actions/workflows/ci.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/ci.yml)
 [![docs](https://github.com/pyscape/utter/actions/workflows/docs.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/docs.yml)
-[![crates.io](https://img.shields.io/crates/v/utter.svg)](https://crates.io/crates/utter)
-[![PyPI](https://img.shields.io/pypi/v/utterpy.svg)](https://pypi.org/project/utterpy/)
+[![crates.io](https://img.shields.io/crates/v/utter)](https://crates.io/crates/utter)
+[![PyPI](https://img.shields.io/pypi/v/utterpy)](https://pypi.org/project/utterpy/)
 [![License: MIT AND Apache-2.0](https://img.shields.io/badge/license-MIT%20AND%20Apache--2.0-blue.svg)](LICENSE)
 
 A pure-Rust streaming speech recognizer for [Vosk](https://alphacephei.com/vosk/)
