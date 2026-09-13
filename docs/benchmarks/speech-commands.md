@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-13 15:11:08Z, utter afbe98e, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty, **not** the checkout as it stands (afbe98e).
+Run 2026-09-13 15:11:08Z, utter afbe98e, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py` built from utter d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty, **not** the checkout as it stands (afbe98e).
 
 ## Engines
 
@@ -447,4 +447,3 @@ here because a one-way excess is what a decoder dropping a reading
 looks like; at two events in some twenty thousand paired blocks there
 is nothing to test, and the paired tests over samples find no
 difference at all.
-

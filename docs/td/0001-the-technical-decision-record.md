@@ -76,7 +76,7 @@ Every reference to a record, from code, from another record, from a use
 case or from the README, is an rr marker, on the record for the whole
 of it and on the record plus a section heading for one ruling:
 
-```
+```text
 [[rr:TD-N]]
 [[rr:TD-N#Decision outcome]]
 ```

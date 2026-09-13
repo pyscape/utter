@@ -1863,7 +1863,7 @@ def main():
         args=vars(a),
     )
     lines = build_page(feats, diag, fit_feats, fit_name, a.split, a.block_ms, a.alternatives, fig)
-    Path(a.out).write_text("\n".join(lines))
+    sc.write_page(a.out, lines)
     if a.json:
         Path(a.json).write_text(json.dumps(fig, indent=2, default=str))
     print(f"wrote {a.out} from {len(feats)} clips of {diag['clips']}", file=sys.stderr)

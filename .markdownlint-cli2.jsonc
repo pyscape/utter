@@ -1,0 +1,12 @@
+{
+  "globs": ["**/*.md"],
+  "ignores": ["target/**", "third_party/**", "models/**", "node_modules/**"],
+  "config": {
+    // benchmark pages carry generated rows wider than any wrap rule
+    "MD013": false,
+    // the `<page>.reading.md` fragments are appended to a page and start at H2
+    "MD041": false,
+    "MD050": { "style": "asterisk" },
+    "MD060": false
+  }
+}

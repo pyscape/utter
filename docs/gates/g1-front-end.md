@@ -108,7 +108,7 @@ it and its value is fixed at 15. `--use-most-recent-ivector=true` is
 accepted and then set to false by the binary, the sequence that lines
 the rows up.
 
-```
+```sh
 compute-mfcc-feats --config=$M/conf/mfcc.conf --dither=0 \
   "scp:echo take $W|" ark:mfcc.ark
 ivector-extract-online2 --config=ivector_extractor.conf \

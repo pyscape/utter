@@ -88,4 +88,3 @@ What `lead_delta` does not do is improve the trust read: measured over
 every reading the decoder tracks, it adds nothing to the gap. Use it for
 the state reads above, not for trust. The figures are on the
 [partial-states](../benchmarks/partial-states.md) page.
-

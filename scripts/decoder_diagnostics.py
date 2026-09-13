@@ -766,8 +766,7 @@ def main():
     if reading.exists():
         lines.append(reading.read_text().strip())
         lines.append("")
-    text = "\n".join(lines) + "\n"
-    Path(args.out + ".md").write_text(text)
+    text = sc.write_page(args.out + ".md", lines)
     Path(args.out + ".json").write_text(json.dumps(report, indent=1))
     if not args.work:
         shutil.rmtree(work, ignore_errors=True)

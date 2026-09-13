@@ -367,7 +367,7 @@ def page(r, names, corpus_label, model_name):
         "that pass is not a split of the count beside it: the stock wheel's partial-word path is a "
         "lattice one that trails the audio.",
     ]
-    lines += ["", "Paired over the same takes, a take carrying any word at rank 0 on a wordless block:"]
+    lines += ["", "Paired over the same takes, a take carrying any word at rank 0 on a wordless block:", ""]
     for frac, per in r["paired"].items():
         if len(names) == 2:
             a, b = per[names[0]], per[names[1]]
@@ -418,7 +418,7 @@ def main():
     reading = Path(a.out).with_suffix(".reading.md")
     if reading.exists():
         lines += [reading.read_text().strip(), ""]
-    Path(a.out).write_text("\n".join(lines) + "\n")
+    sc.write_page(a.out, lines)
     Path(a.out).with_suffix(".json").write_text(json.dumps(r, indent=1) + "\n")
     note(f"wrote {a.out}")
 

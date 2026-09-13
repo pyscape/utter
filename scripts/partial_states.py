@@ -2393,7 +2393,7 @@ def main():
     reading = out.with_suffix(".reading.md")
     if reading.exists():
         lines += [reading.read_text().strip(), ""]
-    out.with_suffix(".md").write_text("\n".join(lines) + "\n")
+    sc.write_page(out.with_suffix(".md"), lines)
     out.with_suffix(".json").write_text(json.dumps(report, indent=1, default=str) + "\n")
     sc.note(f"wrote {out.with_suffix('.md')}, {out.with_suffix('.json')}")
 

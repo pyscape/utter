@@ -6,7 +6,7 @@ the only required section: it is the record. Write the others when
 they carry something a reader cannot get from the outcome, and leave
 them out when they do not.
 
-```
+```markdown
 # TD-N: Title in one line
 
 - Tags: comma, separated

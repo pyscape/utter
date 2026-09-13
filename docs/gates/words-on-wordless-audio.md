@@ -5,7 +5,7 @@ Ruling: `[[rr:TD-8#Measurements count a word whose own span carries no speech]]`
 ## What ran
 
 - Model: `vosk-model-small-en-us-0.15`; the first consumer's grammar, and the leading fractions of it.
-- Run 2026-09-13 05:11:02Z, utter ec82d1c, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter ec82d1cffd8f9ca50cfc6901693d44d36376e97c, the checkout's HEAD.
+- Run 2026-09-13 05:11:02Z, utter ec82d1c, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py` built from utter ec82d1cffd8f9ca50cfc6901693d44d36376e97c, the checkout's HEAD.
 - Corpus: the 2026-08-30 replay set, 33 takes, 28.6 minutes, of which 24.8 minutes are wordless blocks.
 - 40 ms blocks, both engines fed identically, scored by `scripts/wordless_census.py`.
 - A block is wordless by the audio alone: its last 400 ms within 8 dB of the floor at that moment, the floor computed host-side by the runtime's own definition so the stock wheel is judged by the same rule. Neither engine's reading enters the labelling, so both are scored on one set of blocks. The block counts still differ by a handful between the engines, which is the blocks each consumed as a final rather than a partial.
@@ -26,6 +26,7 @@ Rates are per wordless minute. **silence** is the bucket the complaint falls in:
 A dash means the engine showed a different partial when asked for the words under it, so that pass is not a split of the count beside it: the stock wheel's partial-word path is a lattice one that trails the audio.
 
 Paired over the same takes, a take carrying any word at rank 0 on a wordless block:
+
 - the grammar, 0.25 of it: vosk only 0, utterpy only 0, exact two-sided p = 1.
 - the grammar, 0.5 of it: vosk only 0, utterpy only 0, exact two-sided p = 1.
 - the grammar, all of it: vosk only 0, utterpy only 0, exact two-sided p = 1.
@@ -88,4 +89,3 @@ at every size.
 The wordless final words move barely at all across the three rows, 57 to
 73 of some 470, which says again that the finals and the partials are
 two different mechanisms and only the finals need the gate.
-

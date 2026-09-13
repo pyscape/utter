@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 10 readings asked for on the partial and on the final.
 
-Run 2026-09-13 15:47:21Z, utter afbe98e, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty, **not** the checkout as it stands (afbe98e). Pages under `docs` were modified at the time of the run.
+Run 2026-09-13 15:47:21Z, utter afbe98e, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py` built from utter d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty, **not** the checkout as it stands (afbe98e). Pages under `docs` were modified at the time of the run.
 
 ## Engines
 
@@ -191,4 +191,3 @@ cadence, and the only thing that moves the cadence is the chunk
 (`[[rr:TD-2#Inputs: configuration]]`), which is read from `conf/model.conf` and
 is part of the byte identity the runtime is gated on. The remaining buckets have
 no lever named on this page and none is guessed for them.
-

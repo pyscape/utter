@@ -1,6 +1,6 @@
 # Silence direction and word transitions on a built stream
 
-Run 2026-09-13 17:12:30Z, utter 11fbe89, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 11fbe8924c91fae89e2ccf7984bc2d4a93a234a4, the checkout's HEAD.
+Run 2026-09-13 17:12:30Z, utter 11fbe89, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py` built from utter 11fbe8924c91fae89e2ccf7984bc2d4a93a234a4, the checkout's HEAD.
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 40 ms blocks, 8 partial alternatives, partial words on, seed 20260912. Measured by `scripts/partial_states.py`.
 
@@ -456,4 +456,3 @@ Paired over the 75 testing streams, a stream carrying any word at rank 0 in a ga
 Three things to read off these tables. The rate is not flat across a gap's length: it is highest in the short pauses, where the decoder is still inside the utterance and no endpoint has fired, and it falls as the gap lengthens and the rules close the stretch, which is the mechanism `[[rr:TD-8#A word on a quiet block was spoken and is reported]]` describes rather than a second one. The floor the gap is built at moves the finals and barely moves rank 0, so a host that gates on level is gating the right half. And the two engines are read on the same blocks here, so any cell where they differ is a one-way excess and is reported as such; the paired test over streams is the test of it.
 
 The gap-floor table's own rows are not one sample: the page's own streams carry the whole testing split and each rebuilt set carries fewer words, so read the rates and not the block counts across it.
-

@@ -38,6 +38,7 @@ from speech_commands import (  # noqa: E402
     provenance_line,
     quantile,
     read_pcm,
+    write_page,
 )
 
 FRAME_S = 0.03
@@ -234,8 +235,7 @@ def main():
     if reading.exists():
         lines.append(reading.read_text().strip())
         lines.append("")
-    text = "\n".join(lines) + "\n"
-    Path(args.out + ".md").write_text(text)
+    text = write_page(args.out + ".md", lines)
     Path(args.out + ".json").write_text(json.dumps(report, indent=1))
     note(f"written: {args.out}.md, .json, .clips.jsonl")
     print(text)

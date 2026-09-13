@@ -13,7 +13,7 @@ First line: `# TD-N: Title`. rr indexes that heading as the record
 anchor, so a marker on the record ID cites the whole record and a marker
 on the ID plus a section heading cites that section alone:
 
-```
+```text
 [[rr:TD-N]]
 [[rr:TD-N#Decision outcome]]
 ```

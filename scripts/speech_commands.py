@@ -53,6 +53,7 @@ import json
 import math
 import platform
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -425,6 +426,13 @@ def wheel_build():
     return getattr(utterpy, "__file__", None), rev
 
 
+def write_page(path, lines):
+    """Sections and appended readings each bring their own blank lines; markdownlint wants one."""
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip("\n") + "\n"
+    Path(path).write_text(text)
+    return text
+
+
 def provenance_line(prov):
     """The header sentence every page opens with."""
     engines = ", ".join(f"{k} {v}" for k, v in prov["engines"].items())
@@ -434,10 +442,10 @@ def provenance_line(prov):
             if prov["wheel_matches_head"]
             else f"**not** the checkout as it stands ({prov['utter_revision']})"
         )
-        wheel = f"binding {prov['wheel_path']} built from utter {prov['wheel_revision']}, {agree}"
+        wheel = f"binding `{prov['wheel_path']}` built from utter {prov['wheel_revision']}, {agree}"
     else:
         wheel = (
-            f"binding {prov['wheel_path']}, which does not report the utter revision it was built "
+            f"binding `{prov['wheel_path']}`, which does not report the utter revision it was built "
             "from, so the revision above is the checkout's and not the runtime's"
         )
     docs = " Pages under `docs` were modified at the time of the run." if prov.get("docs_dirty") else ""
@@ -2160,8 +2168,7 @@ def main():
     if reading.exists():
         lines.append(reading.read_text().strip())
         lines.append("")
-    text = "\n".join(lines) + "\n"
-    Path(args.out + ".md").write_text(text)
+    text = write_page(args.out + ".md", lines)
     Path(args.out + ".json").write_text(json.dumps(report, indent=1))
     note(f"written: {args.out}.md, .json, .clips.jsonl")
     print(text)
