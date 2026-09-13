@@ -679,6 +679,79 @@ def eos_by_gap_length(streams, bound_ms, ext_delta, edges=(100, 200, 300, 400, 5
     return rows
 
 
+def built_alike(a, b):
+    """Whether two runs' `stream_sizes` describe the same built streams. The counts the decode
+    produces, finals and advances among them, are what a bound is there to change."""
+    keys = ("streams", "words", "utterances", "pauses", "finishes", "transitions", "blocks", "minutes")
+    return all(a[k] == b[k] for k in keys)
+
+
+def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
+    """The same question as `eos_curve`, asked of the finals the runtime emitted rather than of
+    the spans the series recorded: over the same silent stretches, how many pauses got a final
+    before the next word and how many finishes got one at all. With a host bound set this is what
+    the bound did; with the stock rules it is what they did.
+
+    The word counts are the price. A final's word entries carry spans measured from the start of
+    the audio, so a truth word no entry covers was lost and one two entries cover was decoded
+    twice, which is what a bound firing inside a word leaves behind."""
+    tot = Counter()
+    hits = Counter()
+    lead = []
+    by_pause = {f"{lo}-{hi}": dict(n=0, mistaken=0) for lo, hi in zip(edges, edges[1:])}
+    finals = words_in_finals = 0
+    samples = 0
+    words_total = lost = restarted = 0
+    for s_ in streams:
+        feds = sorted(f["fed"] for f in s_["finals"])
+        for g in s_["gaps"]:
+            w = s_["words"][g["after"]]
+            lo_s = w["offset"]
+            hi_s = g["pos"] + g["samples"]
+            if g["kind"] == "pause":
+                nxt = g["after"] + 1
+                hi_s = s_["words"][nxt]["onset"] if nxt < len(s_["words"]) else hi_s
+            tot[g["kind"]] += 1
+            hit = next((f for f in feds if lo_s <= f < hi_s), None)
+            if hit is not None:
+                hits[g["kind"]] += 1
+                if g["kind"] == "finish":
+                    lead.append((hit - lo_s) / SAMPLES_PER_MS)
+            if g["kind"] == "pause":
+                ms = g["samples"] / SAMPLES_PER_MS
+                key = next((k for k, (lo, hi) in zip(by_pause, zip(edges, edges[1:])) if lo <= ms < hi), None)
+                if key is not None:
+                    by_pause[key]["n"] += 1
+                    by_pause[key]["mistaken"] += hit is not None
+        spans = [
+            (e["start"] * RATE, e["end"] * RATE) for f in s_["finals"] for e in f["result"] if sc.words_of(e["word"])
+        ]
+        for w in s_["words"]:
+            covering = sum(1 for lo_s, hi_s in spans if lo_s < w["offset"] and hi_s > w["onset"])
+            words_total += 1
+            lost += covering == 0
+            restarted += covering > 1
+        finals += len(s_["finals"])
+        words_in_finals += sum(1 for f in s_["finals"] if sc.words_of(f["text"]))
+        samples += s_["samples"]
+    minutes = samples / RATE / 60.0
+    return dict(
+        totals={k: tot[k] for k in ("pause", "finish")},
+        pauses_mistaken=hits["pause"],
+        finishes_called=hits["finish"],
+        finish_ms_p50=sc.quantile(lead, 0.5),
+        finish_ms_p90=sc.quantile(lead, 0.9),
+        by_pause=by_pause,
+        finals=finals,
+        finals_with_a_word=words_in_finals,
+        finals_per_min=finals / minutes if minutes else float("nan"),
+        minutes=minutes,
+        words=words_total,
+        lost=lost,
+        restarted=restarted,
+    )
+
+
 def transition_records(streams, ext_delta, lookback_ms, forward_ms=1500):
     """Per ground-truth transition into a word, inside a bounded window around its onset: when
     the rank-0 word list grew (the detection a host has today), when the word itself led, when a
@@ -1589,6 +1662,12 @@ def main():
     )
     ap.add_argument("--variant-words", type=int, default=600, help="words per pause-variant stream set")
     ap.add_argument("--no-streams", action="store_true", help="skip the per-stream JSON lines")
+    ap.add_argument(
+        "--bound-runs",
+        default="",
+        help="JSON written by earlier runs of this script under a host endpoint bound, reported "
+        "beside this run's finals; the streams must be the ones this run builds",
+    )
     a = ap.parse_args()
 
     import utterpy
@@ -1743,6 +1822,17 @@ def main():
         td8_bound=eos_by_gap_length(test, TD8_BOUND_MS, ext_delta),
         chosen=eos_by_gap_length(test, bound, ext_delta),
     )
+
+    # A5: the same stretches, read off the finals the runtime emitted rather than off the series.
+    report["A5"] = runtime_finals(test)
+    report["A5_bound"] = {}
+    for path in [x for x in a.bound_runs.split(",") if x.strip()]:
+        other = json.loads(Path(path).read_text())
+        report["A5_bound"][other["args"]["engine"]] = dict(
+            other["A5"],
+            wheel_revision=other["provenance"]["wheel_revision"],
+            same_streams=built_alike(other["sizes"]["testing"], report["sizes"]["testing"]),
+        )
 
     # B: the transitions.
     rec, previews = transition_records(test, ext_delta, a.lookback_ms)
@@ -2220,6 +2310,60 @@ def momentum_section(r, chosen):
     return L
 
 
+def runtime_finals_section(r, a):
+    """The finals the runtime emitted over the stretches the curve above measures, for this run's
+    engine and for any bound run passed beside it."""
+    rows = [(a.engine, r["A5"])] + sorted(r.get("A5_bound", {}).items())
+    L = [
+        "",
+        "### The same stretches, from the finals the runtime emitted",
+        "",
+        "The table above reads the trailing `[sil]` span a host would apply its own bound to. "
+        "This one reads what the recognizer did: a final landing between a word's energy offset "
+        "and the next word's onset is a pause the runtime ended, a final inside a finish gap is a "
+        "finish it called. The bound rows are the same streams decoded again with the "
+        "recognizer's own host bound set (`[[rr:TD-8#A host may add one endpoint bound of its "
+        "own, off by default]]`), `MS` of trailing silence and, after the slash, the margin in "
+        "nats within which a reading extending the partial vetoes the final.",
+        "",
+        "| engine | pauses ended | finishes called | ms after the word's energy end p50 / p90 | "
+        "finals | with a word | per minute | words lost | words decoded twice |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for name, d in rows:
+        tot = d["totals"]
+        L.append(
+            f"| {name} | {share(d['pauses_mistaken'], tot.get('pause', 0))} | "
+            f"{share(d['finishes_called'], tot.get('finish', 0))} | "
+            f"{num(d['finish_ms_p50'])} / {num(d['finish_ms_p90'])} | {d['finals']} | "
+            f"{d['finals_with_a_word']} | {d['finals_per_min']:.1f} | "
+            f"{share(d['lost'], d['words'])} | {share(d['restarted'], d['words'])} |"
+        )
+    stale = [name for name, d in r.get("A5_bound", {}).items() if not d["same_streams"]]
+    if stale:
+        L += ["", f"**{', '.join(stale)} ran over a different stream set; its row is not paired.**"]
+    L += [
+        "",
+        "The first row is the model's own endpointing (`[[rr:TD-2#Inputs: configuration]]`), "
+        "which on this stream ends most pauses already. A bound is a gain only where it calls the "
+        "finishes sooner than that without ending more pauses and without costing words, and the "
+        "last two columns are where a bound firing inside a word shows up: a word no final "
+        "covers, or one that two of them each decode.",
+        "",
+        "By the length of the pause that was built, as the series table above gives it:",
+        "",
+        "| pause built (ms) | " + " | ".join(name for name, _ in rows) + " |",
+        "|---|" + "---|" * len(rows),
+    ]
+    for key in r["A5"]["by_pause"]:
+        cells = []
+        for _, d in rows:
+            c = d["by_pause"].get(key, dict(n=0, mistaken=0))
+            cells.append(share(c["mistaken"], c["n"]))
+        L.append(f"| {key} | " + " | ".join(cells) + " |")
+    return L
+
+
 def page(r, a, chosen):
     p = r["provenance"]
     sz = r["sizes"]["testing"]
@@ -2453,6 +2597,7 @@ def page(r, a, chosen):
             f"| {key} | {d['n']} | {share(d['mistaken'], d['n'])} | {share(d['mistaken_motion'], d['n'])} | "
             f"{share(c['mistaken'], c['n'])} | {share(c['mistaken_motion'], c['n'])} |"
         )
+    L += runtime_finals_section(r, a)
     b1 = r["B1"]
     b2 = r["B2"]
     b3 = r["B3"]

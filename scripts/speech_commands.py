@@ -1003,21 +1003,33 @@ def determinism_pass(modules, model, clips, block_ms, grammar, lines, report, co
     report["determinism"] = out
 
 
-def endpoint_time(engine, pcm, block_ms):
+def endpoint_run(engine, pcm, block_ms):
     """The fed-audio second at which the engine first closes a segment of its own accord, or None
-    if it never does within the audio given."""
+    if it never does within the audio given, and every word it reports over the whole of it. The
+    audio runs on past the first close because a bound that fires early leaves the rest of the
+    clip to a second segment, and a word cut in two shows up only in the words."""
     rec = engine.new()
     block = RATE * block_ms // 1000 * 2
     fed = 0
+    at = None
+    finals = []
     for i in range(0, len(pcm), block):
         chunk = pcm[i : i + block]
         fed += len(chunk) // 2
         if rec.AcceptWaveform(chunk):
-            return fed / RATE
-    return None
+            finals.append(json.loads(rec.Result()))
+            if at is None:
+                at = fed / RATE
+    finals.append(json.loads(rec.FinalResult()))
+    return at, final_words(finals)
 
 
-def endpoint_pass(modules, model, clips, block_ms, grammar, lines, report, count, pad_ms):
+def bound_engines(modules, names):
+    """`utterpy@300` and the rest run on the module their name is spelled over."""
+    return [(name, modules[name.split("@")[0]]) for name in names]
+
+
+def endpoint_pass(modules, model, clips, block_ms, grammar, lines, report, count, pad_ms, bound=()):
     """How long after the speech stops the final arrives. First appearance says when a word
     becomes visible; this says when the engine commits, which is the pause a speaker sits through
     before the turn comes back and the thing a host tunes endpointing for.
@@ -1038,20 +1050,32 @@ def endpoint_pass(modules, model, clips, block_ms, grammar, lines, report, count
         "clip alone, so without the silence there is nothing here to measure."
     )
     lines.append("")
+    if bound:
+        lines.append(
+            "The rows spelled `utterpy@MS` and `utterpy@MS/NATS` carry a host endpoint bound of "
+            "their own beside the model's rules, `[[rr:TD-8#A host may add one endpoint bound of "
+            "its own, off by default]]`: a final once the trailing silence reaches MS, and where a "
+            "margin follows, no final while a reading extending the partial is within that many "
+            "nats of the leader."
+        )
+        lines.append("")
     lines.append("| engine | endpointed | after the clip's energy end p50 / p90 / p99 | never within the silence |")
     lines.append("|---|---|---|---|")
     out = {}
     at_by_engine = {}
-    for name, mod in modules.items():
+    words_by_engine = {}
+    for name, mod in list(modules.items()) + bound_engines(modules, bound):
         eng = Engine(name, mod, model, grammar)
         delays = []
         never = 0
         at_by_engine[name] = {}
+        words_by_engine[name] = {}
         for _, path in chosen:
             pcm = read_pcm(path)
             end = energy_end(pcm)
-            at = endpoint_time(eng, pcm + pad, block_ms)
+            at, words = endpoint_run(eng, pcm + pad, block_ms)
             at_by_engine[name][str(path)] = at
+            words_by_engine[name][str(path)] = words
             if at is None:
                 never += 1
             elif end is not None:
@@ -1089,6 +1113,70 @@ def endpoint_pass(modules, model, clips, block_ms, grammar, lines, report, count
         )
         lines.append("")
     report["endpoint"] = dict(clips=len(chosen), pad_ms=pad_ms, engines=out, agreement=agree)
+    if bound:
+        bound_words_section(chosen, words_by_engine, bound, lines, report)
+
+
+def bound_words_section(chosen, words_by_engine, bound, lines, report):
+    """What the host's bound costs in words on the clips it was timed over. A bound that fires
+    inside a word leaves the rest of it to the next segment, so the loss is not only a word gone:
+    it is also a word arriving twice."""
+    base = "utterpy"
+    lines.append("### What the bound costs in words")
+    lines.append("")
+    lines.append(
+        f"The same {len(chosen)} padded clips, every word each engine finally reported, paired "
+        f"against stock `{base}` clip by clip. *Right* is the clip's label and nothing else; the "
+        "three columns after it are how a reading that differs from the stock engine's differs. "
+        "The test is exact McNemar over the clips where exactly one of the two was right."
+    )
+    lines.append("")
+    lines.append(
+        f"| engine | right | differs from {base} | said nothing | said more words | said another word | "
+        f"{base} right only / bound right only | exact p |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
+    out = {}
+    for name in bound:
+        right = differs = empty = longer = other = b = c = 0
+        for label, path in chosen:
+            key = str(path)
+            mine, theirs = words_by_engine[name][key], words_by_engine[base][key]
+            ok, ok_base = mine == [label], theirs == [label]
+            right += ok
+            b += ok_base and not ok
+            c += ok and not ok_base
+            if mine != theirs:
+                differs += 1
+                if not mine:
+                    empty += 1
+                elif len(mine) > len(theirs):
+                    longer += 1
+                else:
+                    other += 1
+        p = mcnemar(b, c)
+        out[name] = dict(
+            right=right,
+            base_right=sum(1 for label, path in chosen if words_by_engine[base][str(path)] == [label]),
+            differs=differs,
+            said_nothing=empty,
+            said_more=longer,
+            said_another=other,
+            base_only=b,
+            bound_only=c,
+            p=p,
+        )
+        lines.append(
+            f"| {name} | {right} / {len(chosen)} ({pct(right, len(chosen)):.2f}%) | {differs} | {empty} | "
+            f"{longer} | {other} | {b} / {c} | {p:.3g} |"
+        )
+    lines.append("")
+    lines.append(
+        f"Stock `{base}` was right on {out[bound[0]]['base_right']} of the {len(chosen)} under the "
+        "same grammar and padding, which is the row every bound is paired against."
+    )
+    lines.append("")
+    report["endpoint"]["bound_words"] = out
 
 
 def block_size_pass(modules, model, clips, grammar, lines, report, sizes, count):
@@ -1221,7 +1309,7 @@ def twelve_class_pass(modules, model, clips, noise, block_ms, lines, report):
     report["twelve"] = twelve
 
 
-def noise_pass(modules, model, noise, block_ms, grammar, lines, report):
+def noise_pass(modules, model, noise, block_ms, grammar, lines, report, bound=()):
     lines.append("")
     lines.append("## Background noise under the full grammar")
     lines.append("")
@@ -1230,8 +1318,9 @@ def noise_pass(modules, model, noise, block_ms, grammar, lines, report):
     )
     lines.append("|---|---|---|---|---|---|---|")
     out = {}
-    note(f"background noise: {len(modules)} engines x 2 grammars over the noise recordings")
-    for name, mod in modules.items():
+    engines = list(modules.items()) + bound_engines(modules, bound)
+    note(f"background noise: {len(engines)} engines x 2 grammars over the noise recordings")
+    for name, mod in engines:
         for variant, g in [("full", grammar), ("full + [unk]", grammar + ["[unk]"])]:
             note(f"  {name}, {variant}")
             eng = Engine(name, mod, model, g)
@@ -1552,6 +1641,12 @@ def main():
         help="partial alternatives carried in the compared trace",
     )
     ap.add_argument("--endpoint-clips", type=int, default=800, help="clips for endpoint latency, 0 to skip")
+    ap.add_argument(
+        "--bound-engines",
+        default="utterpy@300,utterpy@300/4,utterpy@300/8",
+        help="host endpoint bounds run beside the stock engines in the endpoint and noise passes, "
+        "spelled MS or MS/NATS; empty to skip",
+    )
     ap.add_argument("--endpoint-pad-ms", type=int, default=2000, help="silence appended so an endpoint can fire")
     ap.add_argument("--block-sizes", default="10,20,40,80,100", help="block-size sweep, empty to skip")
     ap.add_argument("--block-clips", type=int, default=400, help="clips per block size")
@@ -1574,6 +1669,11 @@ def main():
         modules[name] = __import__(name.split("@")[0])
         if name == "vosk":
             modules[name].SetLogLevel(-1)
+
+    bound = [n for n in args.bound_engines.split(",") if n.strip()]
+    absent = sorted({n.split("@")[0] for n in bound} - set(modules))
+    if absent:
+        ap.error(f"--bound-engines names {absent}, which --engines does not carry")
 
     full_grammar = DATASET_WORDS + LETTERS + NATO + COLOURS
     prov = provenance(args, modules)
@@ -1623,6 +1723,7 @@ def main():
             report,
             args.endpoint_clips,
             args.endpoint_pad_ms,
+            bound,
         )
     block_sizes = [int(v) for v in args.block_sizes.split(",") if v.strip()]
     if block_sizes:
@@ -1635,7 +1736,7 @@ def main():
     if sizes:
         grammar_size_pass(modules, args.model, clips, args.block_ms, lines, report, sizes, args.grammar_clips)
     twelve_class_pass(modules, args.model, clips, noise, args.block_ms, lines, report)
-    noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report)
+    noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report, bound)
     # [[rr:Benchmarks]]
     reading = Path(args.out + ".reading.md")
     if reading.exists():
