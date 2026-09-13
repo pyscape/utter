@@ -66,8 +66,13 @@ the same words.
 
 - `[sil]` now means what the README said it meant. Its lead and the
   trailing `[sil]` entry's span keep their readings in
-  `[[rr:TD-8#End of speech is the endpoint, and the trailing silence entry is its clock]]`;
-  a `[speech]` entry after a trailing silence is that silence ending.
+  `[[rr:TD-8#End of speech is the endpoint, and the trailing silence entry is its clock]]`.
+  A `[speech]` entry after a trailing silence is the decoder leaving
+  silence, which is where its own rules stop counting. A host whose
+  clock is the entry reads through a `[speech]` entry whose energy sits
+  at the floor, `[[rr:TD-8#The gate is the host's and is relative to the floor]]`:
+  the room read as a word's first phone. The states page measures that
+  clock.
 - On a noise floor the acoustic model reads as speech, a stream shows
   `[speech]` where it showed `[sil]`, and a host's quiet-room test must
   read the floor, `[[rr:TD-8#The runtime reports the floor]]`, not the

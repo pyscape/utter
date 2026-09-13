@@ -1344,7 +1344,7 @@ def noise_pass(modules, model, noise, block_ms, grammar, lines, report, bound=()
     lines.append("## Background noise under the full grammar")
     lines.append("")
     lines.append(
-        "| engine | grammar | noise minutes | partial blocks | blocks with a word at rank 0 | silence finals per minute | word blocks with the silence reading among the rivals |"
+        "| engine | grammar | noise minutes | partial blocks | blocks with a word at rank 0 | silence finals per minute | word blocks with a wordless reading among the rivals |"
     )
     lines.append("|---|---|---|---|---|---|---|")
     out = {}
