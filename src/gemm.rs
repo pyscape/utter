@@ -5,6 +5,13 @@
 //! path behind runtime detection and a portable path the compiler vectorizes for the rest.
 // [[rr:TD-2#Dependency policy]]
 
+/// The fold the AVX2 `hsum` performs, so the portable kernels land on the same bits: the two
+/// halves lane-wise, then pairwise. `[[rr:TD-3#Accumulation order is part of the contract]]`
+#[inline(always)]
+fn fold8(acc: &[f32; 8]) -> f32 {
+    ((acc[0] + acc[4]) + (acc[1] + acc[5])) + ((acc[2] + acc[6]) + (acc[3] + acc[7]))
+}
+
 #[inline(always)]
 fn dot4_portable(a: &[f32], b0: &[f32], b1: &[f32], b2: &[f32], b3: &[f32]) -> [f32; 4] {
     let k = a.len();
@@ -13,17 +20,19 @@ fn dot4_portable(a: &[f32], b0: &[f32], b1: &[f32], b2: &[f32], b3: &[f32]) -> [
     while i + 8 <= k {
         for l in 0..8 {
             let x = a[i + l];
-            acc[0][l] += x * b0[i + l];
-            acc[1][l] += x * b1[i + l];
-            acc[2][l] += x * b2[i + l];
-            acc[3][l] += x * b3[i + l];
+            acc[0][l] = x.mul_add(b0[i + l], acc[0][l]);
+            acc[1][l] = x.mul_add(b1[i + l], acc[1][l]);
+            acc[2][l] = x.mul_add(b2[i + l], acc[2][l]);
+            acc[3][l] = x.mul_add(b3[i + l], acc[3][l]);
         }
         i += 8;
     }
-    let mut out = [0.0f32; 4];
-    for j in 0..4 {
-        out[j] = acc[j].iter().sum();
-    }
+    let mut out = [
+        fold8(&acc[0]),
+        fold8(&acc[1]),
+        fold8(&acc[2]),
+        fold8(&acc[3]),
+    ];
     while i < k {
         out[0] += a[i] * b0[i];
         out[1] += a[i] * b1[i];
@@ -41,11 +50,11 @@ fn dot1_portable(a: &[f32], b: &[f32]) -> f32 {
     let mut i = 0;
     while i + 8 <= k {
         for l in 0..8 {
-            acc[l] += a[i + l] * b[i + l];
+            acc[l] = a[i + l].mul_add(b[i + l], acc[l]);
         }
         i += 8;
     }
-    let mut s: f32 = acc.iter().sum();
+    let mut s = fold8(&acc);
     while i < k {
         s += a[i] * b[i];
         i += 1;
@@ -348,6 +357,27 @@ mod tests {
                         c[i * n + j]
                     );
                 }
+            }
+        }
+    }
+
+    /// The portable kernels are the whole path off x86, and never run on a CI host with AVX2.
+    #[test]
+    fn the_portable_kernels_keep_the_contract() {
+        for &k in &[1280usize, 150, 37, 8, 3] {
+            let a: Vec<f32> = (0..k)
+                .map(|i| (((i * 7919) % 251) as f32 / 125.0) - 1.0)
+                .collect();
+            let b: Vec<f32> = (0..4 * k)
+                .map(|i| (((i * 104729 + 3) % 257) as f32 / 128.0) - 1.0)
+                .collect();
+            let rows: Vec<&[f32]> = (0..4).map(|j| &b[j * k..(j + 1) * k]).collect();
+            let want: Vec<f32> = rows.iter().map(|r| lane_tree(&a, r)).collect();
+            let got = dot4_portable(&a, rows[0], rows[1], rows[2], rows[3]);
+            for j in 0..4 {
+                assert_eq!(got[j].to_bits(), want[j].to_bits(), "k={k} dot4 row {j}");
+                let one = dot1_portable(&a, rows[j]);
+                assert_eq!(one.to_bits(), want[j].to_bits(), "k={k} dot1 row {j}");
             }
         }
     }
