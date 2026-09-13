@@ -772,3 +772,45 @@ fn a_final_says_what_closed_it_and_how_long_its_words_held() {
         }
     }
 }
+
+/// The batch decoder the gate-zero tool drives: best path over the whole utterance with a zero
+/// i-vector reads the clip's word, and a beam too narrow for the path reads nothing.
+#[test]
+fn batch_decoder_reads_the_clip() {
+    let Some(dir) = model_dir() else { return };
+    use utter::decode::BatchDecoder;
+    use utter::mfcc::Mfcc;
+    let model = Model::open(&dir).unwrap();
+    let graph = model
+        .grammar_graph(
+            &grammar(),
+            None,
+            utter::recognizer::DEFAULT_MAX_GRAPH_STATES,
+            |_| {},
+        )
+        .unwrap();
+    let samples: Vec<f32> = clip("seven").iter().map(|&s| f32::from(s)).collect();
+    let mut opts = model.mfcc_opts.clone();
+    opts.dither = 0.0;
+    let feats = Mfcc::new(&opts).compute(&samples);
+    let ivector = vec![0.0; model.net.ivector_dim];
+    let loglikes = model
+        .net
+        .forward(feats, &ivector, model.conf.frame_subsampling_factor);
+    let dec = BatchDecoder {
+        beam: model.conf.beam,
+        acoustic_scale: model.conf.acoustic_scale,
+        max_active: model.conf.max_active,
+    };
+    let (ids, cost) = dec.decode(&graph, &model.tm.tid2pdf, &loglikes);
+    let words: Vec<&str> = ids.iter().map(|&i| model.word(i)).collect();
+    assert_eq!(words, ["seven"], "cost {cost}");
+    assert!(cost.is_finite());
+    let narrow = BatchDecoder {
+        beam: 0.01,
+        max_active: 1,
+        ..dec
+    };
+    let (ids, _) = narrow.decode(&graph, &model.tm.tid2pdf, &loglikes);
+    assert!(ids.len() <= 1);
+}
