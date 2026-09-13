@@ -52,6 +52,7 @@ import hashlib
 import json
 import math
 import platform
+import random
 import subprocess
 import sys
 import tempfile
@@ -1454,13 +1455,9 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
     report["snr"] = dict(clips=len(chosen), levels=levels, results=out, paired=paired)
 
 
-def grammar_size_pass(modules, model, clips, block_ms, lines, report, sizes, count):
-    """How the figures move with the grammar, the one dial a host turns. The dataset's own 35
-    words are always in, so every clip stays decidable; the rest is filler."""
-    step = max(1, len(clips) // count)
-    chosen = clips[::step][:count]
-    pcms = [(label, read_pcm(path)) for label, path in chosen]
-    audio = sum(len(p) / 2 / RATE for _, p in pcms)
+def filler_pool(modules, model):
+    """Distractors this model's table knows, in sweep order: what a grammar is padded to size
+    with, so every clip stays decidable at every size."""
     probe = Engine("probe", next(iter(modules.values())), model, DATASET_WORDS)
     pool = []
     for w in LETTERS + NATO + COLOURS + SWEEP_EXTRA:
@@ -1468,6 +1465,17 @@ def grammar_size_pass(modules, model, clips, block_ms, lines, report, sizes, cou
             continue
         if probe.knows(w):
             pool.append(w)
+    return pool
+
+
+def grammar_size_pass(modules, model, clips, block_ms, lines, report, sizes, count):
+    """How the figures move with the grammar, the one dial a host turns. The dataset's own 35
+    words are always in, so every clip stays decidable; the rest is filler."""
+    step = max(1, len(clips) // count)
+    chosen = clips[::step][:count]
+    pcms = [(label, read_pcm(path)) for label, path in chosen]
+    audio = sum(len(p) / 2 / RATE for _, p in pcms)
+    pool = filler_pool(modules, model)
     out = {}
     note(f"grammar size: {len(sizes)} sizes x {len(chosen)} clips x {len(modules)} engines")
     lines.append("## Grammar size")
@@ -1611,6 +1619,364 @@ def preflight(modules, model, grammar, block_ms, clips, lines, report):
     lines.append("")
 
 
+WORDLESS_BASE_FLOOR = -50.0
+
+
+def floor_of(samples, window_ms=100, hop_ms=50, q=0.05):
+    """The floor the runtime reports, computed here over a whole recording so a sweep can be
+    built at a named level. [[rr:TD-8#The runtime reports the floor]]"""
+    n = RATE * window_ms // 1000
+    hop = RATE * hop_ms // 1000
+    levels = []
+    for i in range(0, len(samples) - n + 1, hop):
+        acc = 0
+        for v in samples[i : i + n]:
+            acc += v * v
+        rms = math.sqrt(acc / n)
+        levels.append(20 * math.log10(rms / 32768.0) if rms > 0 else -999.0)
+    return quantile(levels, q) if levels else -999.0
+
+
+def scaled_to_floor(pcm, target_dbfs):
+    """The same recording with its floor moved to `target_dbfs`, so a sweep over floor level is a
+    sweep over one property of one piece of audio. Saturates rather than wraps, as an ADC would."""
+    a = array.array("h")
+    a.frombytes(pcm)
+    have = floor_of(a)
+    if have <= -999.0:
+        return pcm
+    gain = 10.0 ** ((target_dbfs - have) / 20.0)
+    out = array.array("h", bytes(2 * len(a)))
+    for i, v in enumerate(a):
+        x = int(round(v * gain))
+        out[i] = -32768 if x < -32768 else (32767 if x > 32767 else x)
+    return out.tobytes()
+
+
+def wordless_rooms(noise, level, cache):
+    """The background recordings at one floor level; `level` None is digital silence of the same
+    length, which the floor's percentile treats apart from a room."""
+    key = "silence" if level is None else f"{level:g}"
+    if key not in cache:
+        raw = [(p.name, read_pcm(p)) for p in noise]
+        cache[key] = [(n, bytes(len(pcm)) if level is None else scaled_to_floor(pcm, level)) for n, pcm in raw]
+    return cache[key]
+
+
+def wordless_takes(clips, per_word=3):
+    """Clips chosen by the property the after-a-word condition turns on, the level of the word
+    that precedes the silence: the quietest, the median and the loudest clip of each dataset
+    word, never the first file of each."""
+    by_word = defaultdict(list)
+    for label, path in clips:
+        by_word[label].append(path)
+    out = []
+    for label in sorted(by_word):
+        rows = []
+        for path in by_word[label]:
+            a = array.array("h")
+            a.frombytes(read_pcm(path))
+            peak = max((abs(v) for v in a), default=0)
+            rows.append((20 * math.log10(peak / 32768.0) if peak else -999.0, str(path), label, path))
+        rows.sort()
+        for i in sorted({0, len(rows) // 2, len(rows) - 1})[:per_word]:
+            out.append((rows[i][2], rows[i][3], rows[i][0]))
+    return out
+
+
+def wordless_samples(kind, noise, takes, level, seed, tail_ms, cache):
+    """The audio a wordless pass is measured on. `cold` is each recording alone; `after a word` is
+    one spoken clip followed by a stretch of recording, so the phantom counted there is a word
+    beyond the one that was said."""
+    rooms = wordless_rooms(noise, level, cache)
+    if kind == "cold":
+        return [dict(key=f"cold/{n}", pcm=p, speech_end=0, spoken=[], samples=len(p) // 2) for n, p in rooms]
+    rng = random.Random(seed)
+    out = []
+    for i, (label, path, _peak) in enumerate(takes):
+        clip = read_pcm(path)
+        end = energy_end(clip)
+        name, room = rooms[i % len(rooms)]
+        n = int(rng.uniform(*tail_ms) * RATE / 1000)
+        start = rng.randrange(max(1, len(room) // 2 - n))
+        pcm = clip + room[2 * start : 2 * (start + n)]
+        out.append(
+            dict(
+                key=f"after/{path.parent.name}/{path.name}",
+                pcm=pcm,
+                speech_end=int((end if end is not None else len(clip) / 2 / RATE) * RATE),
+                spoken=[label],
+                samples=len(pcm) // 2,
+                source=name,
+            )
+        )
+    return out
+
+
+def wordless_run(eng, samples, block_ms, alternatives=4):
+    """One engine over one sample set, counting only what falls after the audio's own speech. A
+    phantom is rank 0 holding more words than were spoken so far in the segment: a word still held
+    from the clip is not one, and neither is a misrecognition of it, which is an accuracy figure
+    and is measured elsewhere. A final ends a segment and what was spoken resets with it, the
+    decoder's history going too."""
+    tot = Counter()
+    longest = 0
+    gate = []
+    per_sample = []
+    block = RATE * block_ms // 1000 * 2
+    for s in samples:
+        # Asking for the words under a partial changes which partial the stock wheel shows, to a
+        # lattice one that trails the audio, so the census is read off the plain partial on both
+        # engines. The gate below needs only what a final carries.
+        rec = eng.new(alternatives=alternatives)
+        spoken = list(s["spoken"])
+        fed = run = 0
+        row = Counter()
+        for i in range(0, len(s["pcm"]), block):
+            chunk = s["pcm"][i : i + block]
+            fed += len(chunk) // 2
+            if rec.AcceptWaveform(chunk):
+                spoken = wordless_final(json.loads(rec.Result()), spoken, fed, s, row, gate)
+                run = 0
+                continue
+            if fed <= s["speech_end"]:
+                continue
+            p = json.loads(rec.PartialResult())
+            row["blocks"] += 1
+            if len(words_of(p.get("partial", ""))) <= len(spoken):
+                run = 0
+                continue
+            row["word_blocks"] += 1
+            run += 1
+            longest = max(longest, run)
+            alts = p.get("partial_alternatives") or []
+            if any(len(words_of(a["text"])) > len(spoken) for a in alts[1:]):
+                row["rival_blocks"] += 1
+        wordless_final(json.loads(rec.FinalResult()), spoken, fed, s, row, gate)
+        row["nonspeech"] = max(0, s["samples"] - s["speech_end"])
+        tot.update(row)
+        per_sample.append(dict(key=s["key"], word_blocks=row["word_blocks"], phantom_finals=row["phantom_finals"]))
+    return dict(
+        blocks=tot["blocks"],
+        word_blocks=tot["word_blocks"],
+        rival_blocks=tot["rival_blocks"],
+        finals=tot["finals"],
+        phantom_finals=tot["phantom_finals"],
+        longest_run=longest,
+        minutes=tot["nonspeech"] / RATE / 60.0,
+        gate=gate,
+        per_sample=per_sample,
+    )
+
+
+def wordless_final(f, spoken, fed, s, row, gate):
+    """One final that closed after the audio's speech: whether it carries a word nobody said, and
+    the evidence TD-8 gives a host to judge that itself. Returns what is spoken from here on."""
+    if fed <= s["speech_end"]:
+        return list(spoken)
+    words = words_of(f.get("text", ""))
+    row["finals"] += 1
+    if len(words) > len(spoken):
+        row["phantom_finals"] += 1
+        floor = f.get("floor_dbfs")
+        said = [e for e in (f.get("result") or []) if not e["word"].startswith("[")]
+        for e in said[len(spoken) :]:
+            if floor is not None and "energy_dbfs" in e:
+                gate.append(dict(key=s["key"], energy=e["energy_dbfs"], floor=floor))
+    return []
+
+
+def wordless_header(lines, what):
+    lines.append("")
+    lines.append(
+        f"| {what} | condition | engine | non-speech minutes | blocks | word at rank 0 /min | "
+        "word among the rivals /min | finals with a word /min | longest run of blocks |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|---|")
+
+
+def wordless_row(name, condition, engine, tot):
+    m = tot["minutes"]
+    rival = "no alternatives" if engine == "vosk" else f"{tot['rival_blocks'] / m if m else float('nan'):.1f}"
+    return (
+        f"| {name} | {condition} | {engine} | {m:.1f} | {tot['blocks']} | "
+        f"{tot['word_blocks'] / m if m else float('nan'):.2f} | {rival} | "
+        f"{tot['phantom_finals'] / m if m else float('nan'):.2f} | {tot['longest_run']} |"
+    )
+
+
+def engine_takes_cost(eng, alternatives):
+    """Whether this engine's recognizer accepts an unknown-word cost at all."""
+    try:
+        eng.new(alternatives=alternatives)
+    except TypeError:
+        return False
+    return True
+
+
+def wordless_sweep(modules, model, sets, levels, kinds, block_ms, alternatives, lines, grammars):
+    """One table: every engine over every sample set under each named grammar, rows in the order
+    the table reads. The engine is built once per grammar, which loads the model once."""
+    out = {}
+    for name, grammar, cost in grammars:
+        for eng_name, mod in modules.items():
+            eng = Engine(eng_name, mod, model, grammar, unknown_cost=cost)
+            if cost is not None and not engine_takes_cost(eng, alternatives):
+                # The stock wheel takes no unknown-word cost, so it has a row only at the default.
+                continue
+            for level in levels:
+                for kind in kinds:
+                    tot = wordless_run(eng, sets[(level, kind)], block_ms, alternatives)
+                    label = name if len(levels) == 1 else ("digital silence" if level is None else f"{level:g} dBFS")
+                    out.setdefault(str(label), {})[f"{kind}/{eng_name}"] = {
+                        k: v for k, v in tot.items() if k not in ("gate", "per_sample")
+                    }
+                    out.setdefault("_paired", {})[(str(label), kind, eng_name)] = tot
+                    lines.append(wordless_row(label, kind, eng_name, tot))
+    return out
+
+
+def wordless_pass(modules, model, clips, noise, block_ms, grammar, lines, report, args):
+    """Words on wordless audio: how often a word appears where nothing was said, swept over the
+    property that decides it on the next microphone (the floor), over the dial a host turns
+    (grammar size), and under the reads a host is given,
+    `[[rr:TD-8#The gate is the host's and is relative to the floor]]`."""
+    cache = {}
+    takes = wordless_takes(clips)[: args.wordless_clips]
+    tail = tuple(float(v) for v in args.wordless_tail_ms.split(","))
+    levels = [None if v.strip() == "silence" else float(v) for v in args.wordless_floors.split(",") if v.strip()]
+    base = args.wordless_base_floor
+    kinds = ("cold", "after a word")
+    alts = args.wordless_alternatives
+    note(f"wordless: {len(levels)} floor levels x {len(kinds)} conditions, {len(takes)} takes after a word")
+    sets = {
+        (level, kind): wordless_samples(kind, noise, takes, level, args.wordless_seed, tail, cache)
+        for level in levels
+        for kind in kinds
+    }
+    out = {"takes": len(takes), "base_floor_dbfs": base}
+
+    lines.append("")
+    lines.append("## Words on wordless audio")
+    lines.append("")
+    lines.append(
+        f"Every figure here is counted on audio after the last thing anybody said: the background "
+        f"recordings alone, and {len(takes)} clips followed by "
+        f"{tail[0] / 1000:g} to {tail[1] / 1000:g} s of one recording, from the moment each clip's own "
+        f"energy ends. A word at rank 0 is counted when the partial holds more words than were "
+        f"spoken so far in the segment, so a word still held from the clip is not one, nor is a "
+        f"misrecognition of it, and a word beyond it is. The after-a-word takes are the quietest, "
+        f"median and loudest clip of "
+        f"every dataset word, chosen for the level of the word that precedes the silence. Rates are "
+        f"per minute of non-speech, and both engines see the same samples."
+    )
+
+    lines.append("")
+    lines.append("### By floor level")
+    lines.append("")
+    lines.append(
+        "The recordings scaled so their floor sits at each level, and digital silence of the same "
+        "length beside them, which the floor's percentile treats apart from a room."
+    )
+    wordless_header(lines, "floor")
+    by_floor = wordless_sweep(modules, model, sets, levels, kinds, block_ms, alts, lines, [(None, grammar, None)])
+    paired = by_floor.pop("_paired")
+    out["floor"] = by_floor
+
+    engines = list(modules)
+    if len(engines) == 2:
+        lines.append("")
+        base_label = "digital silence" if base is None else f"{base:g} dBFS"
+        mc = {}
+        for kind in kinds:
+            a = [r["word_blocks"] > 0 for r in paired[(base_label, kind, engines[0])]["per_sample"]]
+            b = [r["word_blocks"] > 0 for r in paired[(base_label, kind, engines[1])]["per_sample"]]
+            bb = sum(1 for x, y in zip(a, b) if x and not y)
+            cc = sum(1 for x, y in zip(a, b) if y and not x)
+            mc[kind] = dict(b=bb, c=cc, p=mcnemar(bb, cc))
+            lines.append(
+                f"Paired over the same samples at {base_label}, {kind}, a sample carrying any rank-0 "
+                f"word: {engines[0]} only {bb}, {engines[1]} only {cc}, exact two-sided "
+                f"p = {mc[kind]['p']:.3g}."
+            )
+        out["mcnemar_engines"] = mc
+
+    lines.append("")
+    lines.append("### By grammar size")
+    lines.append("")
+    lines.append(f"At a {base:g} dBFS floor, the 35 dataset words plus filler up to each size.")
+    wordless_header(lines, "entries")
+    pool = filler_pool(modules, model)
+    grammars = []
+    for size in [int(v) for v in args.grammar_sizes.split(",") if v.strip()]:
+        g = DATASET_WORDS + pool[: max(0, size - len(DATASET_WORDS))]
+        if all(len(g) != len(prev) for _, prev, _ in grammars):
+            grammars.append((len(g), g, None))
+    by_grammar = wordless_sweep(modules, model, sets, [base], kinds, block_ms, alts, lines, grammars)
+    by_grammar.pop("_paired")
+    out["grammar"] = by_grammar
+
+    lines.append("")
+    lines.append("### The unknown-word symbol")
+    lines.append("")
+    lines.append(
+        "At the same floor and the full grammar, `[unk]` admitted at each cost the private sweep "
+        "uses, `[[rr:The unknown-word symbol against silence phantoms]]`. The stock wheel takes no "
+        "cost, so it appears once, at its own default."
+    )
+    wordless_header(lines, "`[unk]` cost")
+    costs = [("stock", grammar + ["[unk]"], None)]
+    costs += [(f"{float(v):g}", grammar + ["[unk]"], float(v)) for v in args.wordless_unk_costs.split(",") if v.strip()]
+    by_cost = wordless_sweep(modules, model, sets, [base], kinds, block_ms, alts, lines, costs)
+    by_cost.pop("_paired")
+    out["unknown_cost"] = by_cost
+
+    lines.append("")
+    lines.append("### The floor gate a host applies")
+    lines.append("")
+    lines.append(
+        "The same finals with the runtime's own reads applied host-side: a final word is silence "
+        "when its `energy_dbfs` is within the margin of the `floor_dbfs` that final carries, and "
+        "the runtime never applies the margin. Only the runtime reports the two fields, so the "
+        "stock wheel has no row here. The McNemar pairs each sample before and after the gate."
+    )
+    lines.append("")
+    lines.append(
+        "| floor | condition | margin | finals with a word /min | after the gate /min | words caught | b / c / p |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
+    margins = [float(v) for v in args.wordless_margins.split(",") if v.strip()]
+    gate = {}
+    for level in levels:
+        label = "digital silence" if level is None else f"{level:g} dBFS"
+        for kind in kinds:
+            for eng_name in modules:
+                if eng_name == "vosk":
+                    continue
+                tot = paired[(label, kind, eng_name)]
+                m = tot["minutes"]
+                for margin in margins:
+                    kept = [r for r in tot["gate"] if r["energy"] > r["floor"] + margin]
+                    by_key = Counter(r["key"] for r in kept)
+                    before = [r["phantom_finals"] > 0 for r in tot["per_sample"]]
+                    after = [by_key.get(r["key"], 0) > 0 for r in tot["per_sample"]]
+                    bb = sum(1 for x, y in zip(before, after) if x and not y)
+                    cc = sum(1 for x, y in zip(before, after) if y and not x)
+                    p = mcnemar(bb, cc)
+                    gate.setdefault(label, {}).setdefault(kind, {})[f"{margin:g}"] = dict(
+                        words=len(tot["gate"]), caught=len(tot["gate"]) - len(kept), minutes=m, b=bb, c=cc, p=p
+                    )
+                    lines.append(
+                        f"| {label} | {kind} | {margin:g} dB | "
+                        f"{tot['phantom_finals'] / m if m else float('nan'):.2f} | "
+                        f"{len(kept) / m if m else float('nan'):.2f} | "
+                        f"{len(tot['gate']) - len(kept)} / {len(tot['gate'])} | {bb} / {cc} / {p:.3g} |"
+                    )
+    out["gate"] = gate
+    lines.append("")
+    report["wordless"] = out
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--trace-job":
         return trace_worker(sys.argv[2])
@@ -1648,6 +2014,27 @@ def main():
         "spelled MS or MS/NATS; empty to skip",
     )
     ap.add_argument("--endpoint-pad-ms", type=int, default=2000, help="silence appended so an endpoint can fire")
+    ap.add_argument(
+        "--wordless-clips", type=int, default=105, help="clips for the after-a-word condition, 0 to skip the pass"
+    )
+    ap.add_argument(
+        "--wordless-floors",
+        default="silence,-70,-60,-50,-40",
+        help="floor levels the recordings are scaled to, in dBFS",
+    )
+    ap.add_argument(
+        "--wordless-base-floor",
+        type=float,
+        default=WORDLESS_BASE_FLOOR,
+        help="the floor the grammar, [unk] and paired tables are read at",
+    )
+    ap.add_argument("--wordless-tail-ms", default="3000,5000", help="recording appended after a spoken clip, in ms")
+    ap.add_argument("--wordless-unk-costs", default="8,4,2,0,-2", help="unknown-word costs swept, empty to skip")
+    ap.add_argument("--wordless-margins", default="4,8,12", help="dB above the floor a host still calls silence")
+    ap.add_argument(
+        "--wordless-alternatives", type=int, default=4, help="partial alternatives carried, for the rival column"
+    )
+    ap.add_argument("--wordless-seed", type=int, default=20260912, help="seed for the tail lengths and offsets")
     ap.add_argument("--block-sizes", default="10,20,40,80,100", help="block-size sweep, empty to skip")
     ap.add_argument("--block-clips", type=int, default=400, help="clips per block size")
     args = ap.parse_args()
@@ -1737,6 +2124,8 @@ def main():
         grammar_size_pass(modules, args.model, clips, args.block_ms, lines, report, sizes, args.grammar_clips)
     twelve_class_pass(modules, args.model, clips, noise, args.block_ms, lines, report)
     noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report, bound)
+    if args.wordless_clips:
+        wordless_pass(modules, args.model, clips, noise, args.block_ms, full_grammar, lines, report, args)
     # [[rr:Benchmarks]]
     reading = Path(args.out + ".reading.md")
     if reading.exists():
