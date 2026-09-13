@@ -17,24 +17,41 @@ use std::io::Result;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// One of Kaldi's endpoint rules: an utterance ends when every condition below holds. Times
+/// are in seconds; a condition is off at `0.0` or infinity.
 #[derive(Clone, Debug)]
 pub struct EndpointRule {
+    /// The best path must contain a non-silence phone.
     pub must_contain_nonsilence: bool,
+    /// Silence at the end of the best path must have lasted this long.
     pub min_trailing_silence: f32,
+    /// The best final state's cost above the best token, in nats, must be under this.
     pub max_relative_cost: f32,
+    /// The utterance must have lasted this long.
     pub min_utterance_length: f32,
 }
 
+/// The model's `conf/model.conf`: Kaldi's decoder and endpoint options under their own names,
+/// with Vosk's defaults for any the file omits.
 #[derive(Clone, Debug)]
 pub struct ModelConf {
+    /// Fewest tokens the beam keeps per frame.
     pub min_active: usize,
+    /// Most tokens the beam keeps per frame.
     pub max_active: usize,
+    /// Decoding beam in nats.
     pub beam: f32,
+    /// Lattice beam in nats; read but unused, since no lattice is built.
     pub lattice_beam: f32,
+    /// Scale on the network's log-likelihoods.
     pub acoustic_scale: f32,
+    /// Input frames per output frame of the network.
     pub frame_subsampling_factor: usize,
+    /// Output frames the decoder advances per chunk.
     pub frames_per_chunk: usize,
+    /// Phone ids the endpoint rules count as silence.
     pub silence_phones: Vec<i32>,
+    /// Kaldi's five rules, `rule1` first.
     pub rules: [EndpointRule; 5],
 }
 
@@ -67,6 +84,7 @@ impl Default for ModelConf {
 }
 
 impl ModelConf {
+    /// Read a `model.conf`: `--key=value` lines, unknown keys and unparsable values ignored.
     pub fn parse(txt: &str) -> ModelConf {
         let mut c = ModelConf::default();
         for line in txt.lines() {
@@ -130,18 +148,23 @@ impl ModelConf {
     }
 }
 
-/// `word_boundary.int`: phone -> type.
+/// A phone's place in a word, from `word_boundary.int`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WordBoundary {
+    /// First phone of a word of several.
     Begin,
+    /// Last phone of a word of several.
     End,
+    /// A phone between a word's first and last.
     Internal,
+    /// The only phone of a one-phone word.
     Singleton,
+    /// Silence or noise; no word.
     Nonword,
 }
 
 /// How many compiled grammars a model keeps.
-/// `[[rr:TD-4#The model keeps the grammars most recently asked of it]]`
+// [[rr:TD-4#The model keeps the grammars most recently asked of it]]
 pub const CACHED_GRAPHS: usize = 4;
 
 #[derive(PartialEq, Eq, Hash)]
@@ -151,25 +174,45 @@ struct GraphKey {
     max_states: usize,
 }
 
+/// A model directory, opened once and shared by any number of recognizers. The parsed runtime
+/// (network, transition model, graph, i-vector extractor) is public for the crate's binaries
+/// and tests and left out of these docs.
 pub struct Model {
+    /// The directory the model was opened from.
     pub dir: PathBuf,
+    /// The decoder and endpoint options read from `conf/model.conf`.
     pub conf: ModelConf,
+    #[doc(hidden)]
     pub mfcc_opts: MfccOptions,
+    #[doc(hidden)]
     pub tm: TransitionModel,
+    #[doc(hidden)]
     pub net: Nnet3,
+    #[doc(hidden)]
     pub hcl: VectorFst,
+    #[doc(hidden)]
     pub relabel: HashMap<Label, Label>,
+    #[doc(hidden)]
     pub reach: Vec<Vec<(Label, Label)>>,
+    #[doc(hidden)]
     pub final_label: Label,
+    #[doc(hidden)]
     pub disambig: Vec<Label>,
+    /// The word table, indexed by word id.
     pub words: Vec<String>,
+    /// Word id by word; the inverse of [`words`](Self::words).
     pub word_ids: HashMap<String, i64>,
+    /// Each phone's place in a word.
     pub word_boundary: HashMap<i32, WordBoundary>,
+    #[doc(hidden)]
     pub ivector: Option<IvectorInfo>,
     graphs: Mutex<Vec<(GraphKey, Arc<VectorFst>)>>,
 }
 
 impl Model {
+    /// Read a Vosk model directory: `am/final.mdl`, `graph/`, `ivector/` when present, and the
+    /// two `conf/` files. Fails on a missing file or a network component this crate does not
+    /// implement.
     pub fn open(dir: &Path) -> Result<Model> {
         let conf = ModelConf::parse(&std::fs::read_to_string(dir.join("conf/model.conf"))?);
         let mfcc_opts =
@@ -252,7 +295,7 @@ impl Model {
     }
 
     /// The decoding graph for a grammar.
-    /// `[[rr:TD-4#The model keeps the grammars most recently asked of it]]`
+    // [[rr:TD-4#The model keeps the grammars most recently asked of it]]
     pub fn grammar_graph(
         &self,
         grammar: &[String],
@@ -329,6 +372,7 @@ impl Model {
         self.word_ids.get("[unk]").map(|&i| i as Label)
     }
 
+    /// The word with this id, or `""` when the table has none.
     pub fn word(&self, id: Label) -> &str {
         self.words
             .get(id as usize)

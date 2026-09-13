@@ -147,7 +147,7 @@ bindings maps one to one:
 
 - `Model::open(path)`; `Recognizer::new(&model, sample_rate, grammar)`.
 - `set_words`, `set_partial_words`, `set_alternatives(n)`,
-  `set_max_alternatives(n)`, `set_log_callback`.
+  `set_max_alternatives(n)`.
 - `accept(&[i16]) -> Step`: 16-bit mono PCM at the recognizer's rate;
   `Step` carries whether an endpoint fired and at which sample.
 - `partial()`, `alternatives()`, `result()`, `final_result()`: typed

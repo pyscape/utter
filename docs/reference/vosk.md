@@ -31,7 +31,7 @@ with the `vosk_` prefix replaced by `utter_`.
 | `SetSpkModel`, `SpkModel` | | | | Not included. No speaker vectors. |
 | `SetNLSML(on)` | | | | Not included. |
 | `SrtResult(stream)` | | | | Not included. |
-| `SetLogLevel(level)` | `SetLogLevel(level)`, does nothing | `set_log_callback(f)` | | Differs. Rust takes a callback for the decoder's messages; the Python function is kept so scripts run unchanged. |
+| `SetLogLevel(level)` | `SetLogLevel(level)`, does nothing | | | Not included. Nothing is logged; the Python function is kept so scripts run unchanged. |
 | `BatchModel`, `BatchRecognizer`, `GpuInit` | | | | Not included. No batch or GPU decoding. |
 
 Word times, on by `SetWords` and `SetPartialWords`, are Kaldi's output

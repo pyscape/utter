@@ -2,8 +2,7 @@
 //! partial results. Feed a [`Recognizer`] 16 kHz audio in small blocks and after every block it
 //! tells you the words it believes so far, the rival readings it is still weighing, how loud and
 //! how stable each word is, and when the speaker stopped.
-//!
-//! `[[rr:TD-2]]`
+// [[rr:TD-2]]
 //!
 //! # Quick start
 //!
@@ -51,6 +50,7 @@
 //! [guide]: https://github.com/pyscape/utter/blob/main/docs/guide/
 
 // Index loops over parallel slices read as the mathematics does; the lint's iterator forms do not.
+#![warn(missing_docs)]
 #![allow(
     clippy::needless_range_loop,
     clippy::too_many_arguments,
@@ -97,7 +97,7 @@ pub mod wav;
 
 /// The git revision of the checkout this crate was built from, with a `-dirty` suffix when
 /// tracked files had uncommitted edits, or `unknown` when there was no checkout to ask.
-/// `[[rr:build.rs#main]]`
+// [[rr:build.rs#main]]
 pub const REVISION: &str = env!("UTTER_REVISION");
 
 pub use model::Model;

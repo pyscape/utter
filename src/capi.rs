@@ -11,10 +11,12 @@ use std::ffi::{c_char, c_float, c_int, c_short, CStr, CString};
 use std::path::Path;
 use std::sync::Arc;
 
+/// A model handle; one per directory opened, shared by its recognizers.
 pub struct UtterModel {
     inner: Arc<Model>,
 }
 
+/// A recognizer handle. It keeps the model alive and owns the last result string it returned.
 pub struct UtterRecognizer {
     // Declared first so it drops before the model handle it borrows from.
     inner: Recognizer<'static>,
@@ -44,6 +46,7 @@ pub unsafe extern "C" fn utter_model_new(path: *const c_char) -> *mut UtterModel
     }
 }
 
+/// Free a model; null is ignored. Recognizers made from it keep it alive until they are freed.
 #[no_mangle]
 pub unsafe extern "C" fn utter_model_free(model: *mut UtterModel) {
     if !model.is_null() {
@@ -120,6 +123,7 @@ pub unsafe extern "C" fn utter_recognizer_new_grm_unk(
     new_recognizer(model, sample_rate, grammar, Some(unknown_cost))
 }
 
+/// Free a recognizer and the last result string it returned; null is ignored.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_free(rec: *mut UtterRecognizer) {
     if !rec.is_null() {
@@ -127,6 +131,7 @@ pub unsafe extern "C" fn utter_recognizer_free(rec: *mut UtterRecognizer) {
     }
 }
 
+/// libvosk's `vosk_recognizer_set_words`: word entries on finals when `on` is nonzero.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_set_words(rec: *mut UtterRecognizer, on: c_int) {
     if let Some(r) = unsafe { rec.as_mut() } {
@@ -134,6 +139,7 @@ pub unsafe extern "C" fn utter_recognizer_set_words(rec: *mut UtterRecognizer, o
     }
 }
 
+/// libvosk's `vosk_recognizer_set_partial_words`: word entries on partials when `on` is nonzero.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_set_partial_words(rec: *mut UtterRecognizer, on: c_int) {
     if let Some(r) = unsafe { rec.as_mut() } {
@@ -208,6 +214,8 @@ fn store(r: &mut UtterRecognizer, s: String) -> *const c_char {
     r.last.as_ptr()
 }
 
+/// libvosk's `vosk_recognizer_partial_result`: the partial as JSON, null on a null handle.
+/// Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-partial-result>.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_partial_result(
     rec: *mut UtterRecognizer,
@@ -219,6 +227,8 @@ pub unsafe extern "C" fn utter_recognizer_partial_result(
     store(r, s)
 }
 
+/// libvosk's `vosk_recognizer_result`: the final of the utterance so far as JSON, null on a
+/// null handle. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-final-result>.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_result(rec: *mut UtterRecognizer) -> *const c_char {
     let Some(r) = (unsafe { rec.as_mut() }) else {
@@ -228,6 +238,8 @@ pub unsafe extern "C" fn utter_recognizer_result(rec: *mut UtterRecognizer) -> *
     store(r, s)
 }
 
+/// libvosk's `vosk_recognizer_final_result`: flush the pipeline and return the final as JSON,
+/// null on a null handle. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-final-result>.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_final_result(rec: *mut UtterRecognizer) -> *const c_char {
     let Some(r) = (unsafe { rec.as_mut() }) else {
@@ -237,6 +249,7 @@ pub unsafe extern "C" fn utter_recognizer_final_result(rec: *mut UtterRecognizer
     store(r, s)
 }
 
+/// libvosk's `vosk_recognizer_reset`: end the utterance without a result.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_reset(rec: *mut UtterRecognizer) {
     if let Some(r) = unsafe { rec.as_mut() } {

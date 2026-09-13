@@ -34,11 +34,14 @@ pub struct Step {
     pub sample: u64,
 }
 
+/// A word of a path aligned to its frames.
 #[derive(Clone, Debug)]
 pub struct WordSpan {
+    /// The word's id in the model's table.
     pub word: Label,
-    /// Output frames within the current utterance, `[start, end)`.
+    /// First output frame of the word within the current utterance.
     pub start_frame: usize,
+    /// One past the word's last output frame.
     pub end_frame: usize,
 }
 
@@ -62,9 +65,10 @@ pub const SPEECH: &str = "[speech]";
 pub struct RecognizerOptions {
     /// Add the model's unknown-word symbol to the grammar with this cost on its arcs.
     pub unknown_cost: Option<f32>,
+    /// States the composed graph may reach before construction refuses the grammar.
     pub max_graph_states: usize,
     /// Weight for frames the decoder's best path calls silence; 1.0 turns it off.
-    /// `[[rr:i-vector: against the wheel's Kaldi, passed once its quiet-frame rule was matched]]`
+    // [[rr:i-vector: against the wheel's Kaldi, passed once its quiet-frame rule was matched]]
     pub silence_weight: f32,
     /// One endpoint rule of the host's beside the model's, off by default; the switch for
     /// experiments that call a final earlier than Kaldi's rules, at a parity cost G5 measures.
@@ -87,13 +91,18 @@ impl Default for RecognizerOptions {
 /// final's `endpoint` value: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-endpoint-value>.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Endpoint {
+    /// The model's rule of this number fired, `1` to `5`.
     Rule(u8),
+    /// The host's bound from [`set_endpoint_bound`](Recognizer::set_endpoint_bound) fired.
     Bound,
+    /// `final_result` flushed the pipeline.
     Flush,
+    /// The host called `result` with no rule fired.
     Host,
 }
 
 impl Endpoint {
+    /// The final's `endpoint` value: `rule1`..`rule5`, `bound`, `flush` or `host`.
     pub fn label(self) -> String {
         match self {
             Endpoint::Rule(n) => format!("rule{n}"),
@@ -107,6 +116,7 @@ impl Endpoint {
 /// What an entry of a word list spans.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryWord {
+    /// A word of the grammar, by id.
     Word(Label),
     /// A run of silence phones.
     Silence,
@@ -117,8 +127,11 @@ pub enum EntryWord {
 /// One entry of a word list.
 #[derive(Clone, Debug)]
 pub struct Entry {
+    /// What the entry spans.
     pub word: EntryWord,
+    /// First output frame of the entry within the current utterance.
     pub start_frame: usize,
+    /// One past the entry's last output frame.
     pub end_frame: usize,
 }
 
@@ -234,6 +247,10 @@ fn relation(words: &[Label], best: &[Label]) -> &'static str {
     }
 }
 
+/// A stream of audio decoded against one grammar. Construct with [`new`](Self::new), feed
+/// [`accept`](Self::accept), read [`partial`](Self::partial) between calls and
+/// [`result`](Self::result) when [`Step::endpoint`] is set. Every result is a JSON string:
+/// <https://github.com/pyscape/utter/blob/main/docs/reference/results.md>.
 pub struct Recognizer<'m> {
     model: &'m Model,
     graph: Arc<VectorFst>,
@@ -283,7 +300,6 @@ pub struct Recognizer<'m> {
     sw_traceback_frames: Option<usize>,
     stable_frames: Option<usize>,
     last_result: String,
-    log: Option<Box<dyn Fn(&str) + Send + Sync + 'm>>,
 }
 
 fn escape_json_number(v: f64) -> String {
@@ -325,6 +341,9 @@ impl<'m> Recognizer<'m> {
         Self::with_options(model, sample_rate, grammar, &RecognizerOptions::default())
     }
 
+    /// [`new`](Self::new) with [`RecognizerOptions`]. Fails on an empty grammar, one over
+    /// [`MAX_GRAMMAR_WORDS`] distinct words, or a composed graph over
+    /// [`max_graph_states`](RecognizerOptions::max_graph_states).
     pub fn with_options(
         model: &'m Model,
         sample_rate: f32,
@@ -391,10 +410,10 @@ impl<'m> Recognizer<'m> {
             sw_traceback_frames: None,
             stable_frames: None,
             last_result: String::new(),
-            log: None,
         })
     }
 
+    /// The compiled decoding graph, shared with any other recognizer on the same grammar.
     #[doc(hidden)]
     pub fn graph(&self) -> &VectorFst {
         &self.graph
@@ -445,6 +464,8 @@ impl<'m> Recognizer<'m> {
         (merges, self.readings_lost, self.readings_lost_close)
     }
 
+    /// Record, per chunk, the readings the decoder carries and how each moved against the
+    /// leader, for [`take_group_trace`](Self::take_group_trace). Off by default.
     #[doc(hidden)]
     pub fn set_trace_groups(&mut self, on: bool) {
         self.trace_groups = on;
@@ -464,9 +485,6 @@ impl<'m> Recognizer<'m> {
     /// Alternatives on finals, libvosk's `SetMaxAlternatives`; 0 keeps the plain shape.
     pub fn set_max_alternatives(&mut self, n: usize) {
         self.max_alternatives = n;
-    }
-    pub fn set_log_callback(&mut self, f: Box<dyn Fn(&str) + Send + Sync + 'm>) {
-        self.log = Some(f);
     }
 
     fn decoder_config(&self) -> DecoderConfig {
@@ -764,7 +782,7 @@ impl<'m> Recognizer<'m> {
     }
 
     /// The first of the model's rules that fires, else the host's bound if it does.
-    /// `[[rr:TD-11#Decision outcome]]`
+    // [[rr:TD-11#Decision outcome]]
     pub fn endpoint_reason(&self) -> Option<Endpoint> {
         let dec = self.decoder.as_ref()?;
         let n = dec.num_frames_decoded();
@@ -1326,6 +1344,7 @@ impl<'m> Recognizer<'m> {
         self.samples_round_start + (self.frame_offset + decoded) as u64 * self.frame_samples()
     }
 
+    /// Output frames decoded in the current utterance; 0 between utterances.
     pub fn num_frames_decoded(&self) -> usize {
         self.decoder
             .as_ref()
@@ -1333,6 +1352,7 @@ impl<'m> Recognizer<'m> {
             .unwrap_or(0)
     }
 
+    /// Tokens alive in the beam at the last decoded frame; 0 between utterances.
     pub fn num_active_tokens(&self) -> usize {
         self.decoder.as_ref().map(|d| d.num_active()).unwrap_or(0)
     }
