@@ -34,9 +34,12 @@ with the `vosk_` prefix replaced by `utter_`.
 | `SetLogLevel(level)` | `SetLogLevel(level)`, does nothing | `set_log_callback(f)` | | Differs. Rust takes a callback for the decoder's messages; the Python function is kept so scripts run unchanged. |
 | `BatchModel`, `BatchRecognizer`, `GpuInit` | | | | Not included. No batch or GPU decoding. |
 
-Word times, on by `SetWords` and `SetPartialWords`, are Kaldi's frame
-times and match the wheel's. A recognizer is not shared between threads
-in either library.
+Word times, on by `SetWords` and `SetPartialWords`, are Kaldi's output
+frame times, multiples of 30 ms. On finals they match the wheel's to
+within one frame on 98.8% of words over the public Speech Commands
+split, the start on 99.9%; the
+[word-times](../benchmarks/word-times.md) page has the measurement. A
+recognizer is not shared between threads in either library.
 
 ## What utter adds
 

@@ -279,6 +279,7 @@ each paired against the stock Vosk wheel on identical audio, live in
 | [speech-commands.md](docs/benchmarks/speech-commands.md) | Accuracy under a command grammar, agreement with Vosk, first-appearance and endpoint latency, block size, compute, noise, grammar size, and words appearing on audio where nothing was said |
 | [partial-trust.md](docs/benchmarks/partial-trust.md) | Whether a partial word will hold: the gap as a calibrated probability, against entropy, energy and the motion of each reading's lead, every rule fitted on the validation split and charged in milliseconds of delay |
 | [partial-states.md](docs/benchmarks/partial-states.md) | What the readings say about silence and the next word, on words spliced into streams: end of speech, the preview an extending reading gives, and what the endpoint bound does to real finals |
+| [word-times.md](docs/benchmarks/word-times.md) | Whether the word times on finals are the wheel's: every word paired across the engines, exact and within one 30 ms frame |
 
 Headline figures from the Speech Commands page:
 
