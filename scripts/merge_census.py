@@ -60,7 +60,7 @@ def main():
                 "--census",
             ] + [str(p) for p in batch]
             proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            for path, line in zip(batch, proc.stdout.splitlines()):
+            for path, line in zip(batch, proc.stdout.splitlines(), strict=True):
                 take = json.loads(line)
                 rows[f"{path.parent.name}/{path.name}"] = take["census"]
             sc.note(f"census: {i + len(batch)}/{len(clips)} clips")

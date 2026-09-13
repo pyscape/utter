@@ -371,8 +371,8 @@ def page(r, names, corpus_label, model_name):
     for frac, per in r["paired"].items():
         if len(names) == 2:
             a, b = per[names[0]], per[names[1]]
-            bb = sum(1 for x, y in zip(a, b) if x and not y)
-            cc = sum(1 for x, y in zip(a, b) if y and not x)
+            bb = sum(1 for x, y in zip(a, b, strict=True) if x and not y)
+            cc = sum(1 for x, y in zip(a, b, strict=True) if y and not x)
             lines.append(
                 f"- the grammar, {frac}: {names[0]} only {bb}, {names[1]} only {cc}, exact "
                 f"two-sided p = {mcnemar(bb, cc):.3g}."

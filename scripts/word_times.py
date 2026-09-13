@@ -140,14 +140,14 @@ def main():
             empty_both += 1
             continue
         same_sequence += 1
-        for (_, sa, ea), (_, sb, eb) in zip(a, b):
+        for (_, sa, ea), (_, sb, eb) in zip(a, b, strict=True):
             starts.append((sb - sa) * 1000.0)
             ends.append((eb - ea) * 1000.0)
         if (i + 1) % 1000 == 0:
             note(f"{i + 1} / {len(clips)} clips")
 
     paired = len(starts)
-    both = [max(abs(s), abs(e)) for s, e in zip(starts, ends)]
+    both = [max(abs(s), abs(e)) for s, e in zip(starts, ends, strict=True)]
     report = {
         "split": args.split,
         "clips": len(clips),

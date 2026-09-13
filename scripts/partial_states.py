@@ -556,7 +556,7 @@ def group_counts(stream, per_advance, w_ms):
     """Per-utterance confusion counts, so a bootstrap can resample utterances."""
     labels = stream["labels"][w_ms]
     out = defaultdict(empty_counts)
-    for utt, label, call in zip(stream["utt"], labels, block_calls(stream["blocks"], per_advance)):
+    for utt, label, call in zip(stream["utt"], labels, block_calls(stream["blocks"], per_advance), strict=True):
         if call is not None:
             tally(out[utt], label, call)
     return out
@@ -631,7 +631,7 @@ def alarms(streams, per_advance_by_stream, kind, block_ms):
             else [(0, s["samples"])]
         )
         prev = None
-        for b, call in zip(s["blocks"], cb):
+        for b, call in zip(s["blocks"], cb, strict=True):
             if not any(lo <= b["fed"] < hi for lo, hi in spans):
                 prev = None
                 continue
@@ -687,14 +687,14 @@ def eos_by_gap_length(streams, bound_ms, ext_delta, edges=(100, 200, 300, 400, 5
     """At one bound, the share of pauses taken for a finish by the length of the pause that was
     built, since the headline share is a function of that distribution and nothing else."""
     rows = {}
-    for lo, hi in zip(edges, edges[1:]):
+    for lo, hi in zip(edges, edges[1:], strict=False):
         rows[f"{lo}-{hi}"] = dict(n=0, mistaken=0, mistaken_motion=0)
     for s_ in streams:
         for g in s_["gaps"]:
             if g["kind"] != "pause":
                 continue
             ms = g["samples"] / SAMPLES_PER_MS
-            key = next((f"{lo}-{hi}" for lo, hi in zip(edges, edges[1:]) if lo <= ms < hi), None)
+            key = next((f"{lo}-{hi}" for lo, hi in zip(edges, edges[1:], strict=False) if lo <= ms < hi), None)
             if key is None:
                 continue
             w = s_["words"][g["after"]]
@@ -729,7 +729,7 @@ def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
     tot = Counter()
     hits = Counter()
     lead = []
-    by_pause = {f"{lo}-{hi}": dict(n=0, mistaken=0) for lo, hi in zip(edges, edges[1:])}
+    by_pause = {f"{lo}-{hi}": dict(n=0, mistaken=0) for lo, hi in zip(edges, edges[1:], strict=False)}
     finals = words_in_finals = unshown = 0
     by_rule = Counter()
     samples = 0
@@ -751,7 +751,14 @@ def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
                     lead.append((hit - lo_s) / SAMPLES_PER_MS)
             if g["kind"] == "pause":
                 ms = g["samples"] / SAMPLES_PER_MS
-                key = next((k for k, (lo, hi) in zip(by_pause, zip(edges, edges[1:])) if lo <= ms < hi), None)
+                key = next(
+                    (
+                        k
+                        for k, (lo, hi) in zip(by_pause, zip(edges, edges[1:], strict=False), strict=True)
+                        if lo <= ms < hi
+                    ),
+                    None,
+                )
                 if key is not None:
                     by_pause[key]["n"] += 1
                     by_pause[key]["mistaken"] += hit is not None
@@ -994,7 +1001,7 @@ def rank_auc(pairs):
         for k in range(i, j):
             ranks[k] = (i + j - 1) / 2 + 1
         i = j
-    rank_sum = sum(rk for rk, (_, y) in zip(ranks, xs) if y)
+    rank_sum = sum(rk for rk, (_, y) in zip(ranks, xs, strict=True) if y)
     return (rank_sum - pos * (pos + 1) / 2) / (pos * neg)
 
 
@@ -1474,13 +1481,13 @@ def mean_metric(index):
 def mcnemar_pair(a, b):
     """Discordant counts and the exact two-sided p: only_b is where the second rule alone is
     right."""
-    only_a = sum(1 for x, y in zip(a, b) if x and not y)
-    only_b = sum(1 for x, y in zip(a, b) if y and not x)
+    only_a = sum(1 for x, y in zip(a, b, strict=True) if x and not y)
+    only_b = sum(1 for x, y in zip(a, b, strict=True) if y and not x)
     return dict(
-        both=sum(1 for x, y in zip(a, b) if x and y),
+        both=sum(1 for x, y in zip(a, b, strict=True) if x and y),
         only_a=only_a,
         only_b=only_b,
-        neither=sum(1 for x, y in zip(a, b) if not x and not y),
+        neither=sum(1 for x, y in zip(a, b, strict=True) if not x and not y),
         p=sc.mcnemar(only_a, only_b),
     )
 
@@ -1570,7 +1577,7 @@ def decode_split(
 def advance_intervals(streams):
     out = []
     for s in streams:
-        for a, b in zip(s["states"], s["states"][1:]):
+        for a, b in zip(s["states"], s["states"][1:], strict=False):
             if a["seg"] == b["seg"]:
                 out.append((b["fed"] - a["fed"]) / SAMPLES_PER_MS)
     return out
@@ -2294,13 +2301,18 @@ def main():
     report["B_mcnemar"] = mcnemar_pair(ok0, ok1)
     report["B_mcnemar_gaining"] = mcnemar_pair(ok0, okg)
     call0 = [r["arrive_ms"] - r["onset_ms"] for r in unit]
-    call1 = [(r["ext_ms"] - r["onset_ms"]) if r["preview_ms"] is not None else c for r, c in zip(unit, call0)]
-    callg = [(r["gext_ms"] - r["onset_ms"]) if r["gaining_preview_ms"] is not None else c for r, c in zip(unit, call0)]
+    call1 = [
+        (r["ext_ms"] - r["onset_ms"]) if r["preview_ms"] is not None else c for r, c in zip(unit, call0, strict=True)
+    ]
+    callg = [
+        (r["gext_ms"] - r["onset_ms"]) if r["gaining_preview_ms"] is not None else c
+        for r, c in zip(unit, call0, strict=True)
+    ]
     report["B_bootstrap_call_ms"] = bootstrap_diff(
-        list(zip(call0, call1)), lambda g: mean_metric(1)(g) - mean_metric(0)(g)
+        list(zip(call0, call1, strict=True)), lambda g: mean_metric(1)(g) - mean_metric(0)(g)
     )
     report["B_bootstrap_call_ms_gaining"] = bootstrap_diff(
-        list(zip(call0, callg)), lambda g: mean_metric(1)(g) - mean_metric(0)(g)
+        list(zip(call0, callg, strict=True)), lambda g: mean_metric(1)(g) - mean_metric(0)(g)
     )
     report["B_gaining"] = dict(
         with_gaining=sum(1 for r in unit if r["gaining_preview_ms"] is not None),

@@ -96,7 +96,7 @@ def auc(pairs):
         for k in range(i, j):
             ranks[k] = (i + j - 1) / 2 + 1
         i = j
-    rank_sum = sum(r for r, (_, y) in zip(ranks, xs) if y)
+    rank_sum = sum(r for r, (_, y) in zip(ranks, xs, strict=True) if y)
     return (rank_sum - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg))
 
 
@@ -328,7 +328,7 @@ def decode(clips, eng, block_ms, alternatives):
         if states:
             diag["first_advance_ms"].append(states[0]["fed"] / SAMPLES_PER_MS)
             diag["gaps_after_start"] += sum(1 for _, r, _ in series[states[0]["block"] :] if not r)
-        for a, b in zip(states, states[1:]):
+        for a, b in zip(states, states[1:], strict=False):
             diag["intervals"].append((b["fed"] - a["fed"]) / SAMPLES_PER_MS)
         if not sight:
             continue
@@ -426,8 +426,8 @@ def logistic_fit(rows, ys, l2=1e-3, iters=60):
     for _ in range(iters):
         g = [-l2 * v for v in b]
         H = [[l2 if i == j else 0.0 for j in range(k)] for i in range(k)]
-        for x, y in zip(rows, ys):
-            z = sum(bi * xi for bi, xi in zip(b, x))
+        for x, y in zip(rows, ys, strict=True):
+            z = sum(bi * xi for bi, xi in zip(b, x, strict=True))
             p = sigmoid(z)
             w = p * (1 - p)
             r = (1.0 if y else 0.0) - p
@@ -438,7 +438,7 @@ def logistic_fit(rows, ys, l2=1e-3, iters=60):
         step = solve(H, g)
         if step is None:
             break
-        b = [bi + si for bi, si in zip(b, step)]
+        b = [bi + si for bi, si in zip(b, step, strict=True)]
         if max(abs(s) for s in step) < 1e-9:
             break
     return b
@@ -448,8 +448,8 @@ def fit(cols, ys):
     """Coefficients and the in-sample AUC of a logistic fit; the columns get an intercept here."""
     rows = [[1.0] + list(c) for c in cols]
     b = logistic_fit(rows, ys)
-    scores = [sum(bi * xi for bi, xi in zip(b, x)) for x in rows]
-    return b, auc(list(zip(scores, ys)))
+    scores = [sum(bi * xi for bi, xi in zip(b, x, strict=True)) for x in rows]
+    return b, auc(list(zip(scores, ys, strict=True)))
 
 
 def ece(pairs, edges):
@@ -568,7 +568,7 @@ COEF_ORDER = {
 
 def fit_cols(entries, ys, cols):
     rows = [[1.0] + cols(e) for e in entries if e["gap"] is not None]
-    ok = [y for e, y in zip(entries, ys) if e["gap"] is not None]
+    ok = [y for e, y in zip(entries, ys, strict=True) if e["gap"] is not None]
     return logistic_fit(rows, ok)
 
 
@@ -588,7 +588,7 @@ def fitted_trust(cols, coef):
         if e["gap"] is None:
             return 1.0
         x = [1.0] + cols(e)
-        return 1.0 - sigmoid(sum(c * v for c, v in zip(coef, x)))
+        return 1.0 - sigmoid(sum(c * v for c, v in zip(coef, x, strict=True)))
 
     return trust
 
@@ -950,7 +950,7 @@ def hold_section(feats, best, base, lines, fig):
     if all(c[2] == 0.0 for c in cols):
         cols = [c[:2] for c in cols]
     b = logistic_fit([[1.0] + c for c in cols], ys)
-    score = [sum(bi * xi for bi, xi in zip(b, [1.0] + c)) for c in cols]
+    score = [sum(bi * xi for bi, xi in zip(b, [1.0] + c, strict=True)) for c in cols]
     order = sorted(range(n), key=lambda i: -score[i])
     lines += [
         f"The best of those fits is gap + {label} (AUC {fmt(best[0], 3)} against {fmt(base, 3)} "
@@ -1129,12 +1129,12 @@ def census_section(feats, census, lines, fig):
         r = sum(1 for f in g if not f["survived"])
         return r, f"{r} / {len(g)} ({100 * r / (len(g) or 1):.1f}%)"
 
-    with_lc = [f for f, c in zip(have, lost_close) if c]
-    without_lc = [f for f, c in zip(have, lost_close) if not c]
+    with_lc = [f for f, c in zip(have, lost_close, strict=True) if c]
+    without_lc = [f for f, c in zip(have, lost_close, strict=True) if not c]
     cuts = [sc.quantile(merges, q) for q in (0.25, 0.5, 0.75)]
     bands = []
-    for lo, hi in zip([0.0, *cuts], [*cuts, float("inf")]):
-        g = [f for f, c in zip(have, merges) if lo <= c < hi]
+    for lo, hi in zip([0.0, *cuts], [*cuts, float("inf")], strict=True):
+        g = [f for f, c in zip(have, merges, strict=True) if lo <= c < hi]
         if g:
             bands.append((lo, hi, g))
     lines += [
@@ -1249,7 +1249,7 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
 
     scores = {k: rule_score(feats, trust[k], start[k], as_run=(k in ("R2", "H"))) for k in trust}
     scores["R2 reading alone"] = rule_score(feats, trust["R2"], 1)
-    aucs = {k: auc(list(zip(v, ys))) for k, v in scores.items()}
+    aucs = {k: auc(list(zip(v, ys, strict=True))) for k, v in scores.items()}
     a0, a1, a2, a2r = aucs["R0"], aucs["R1"], aucs["R2"], aucs["R2 reading alone"]
 
     lines += [
@@ -1323,8 +1323,10 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
         d, lo, hi, m = paired_bootstrap(scores[a], scores[b], ys)
         lines.append(f"| {name} | {m} | {fmt(d, 4)} | {fmt(lo, 4)} to {fmt(hi, 4)} |")
         fig["rules"]["bootstrap"][name] = dict(n=m, diff=d, lo=lo, hi=hi)
-    half_auc = auc(list(zip(rule_score(odd, fitted_trust(rule_cols, coef_half), 0), [not f["survived"] for f in odd])))
-    in_auc = auc(list(zip(rule_score(feats, fitted_trust(rule_cols, coef_in), 0), ys)))
+    half_auc = auc(
+        list(zip(rule_score(odd, fitted_trust(rule_cols, coef_half), 0), [not f["survived"] for f in odd], strict=True))
+    )
+    in_auc = auc(list(zip(rule_score(feats, fitted_trust(rule_cols, coef_in), 0), ys, strict=True)))
     lines += [
         "",
         f"Where the R1 coefficients come from moves it little: fit on {fit_name} it scores "
@@ -1349,7 +1351,7 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
     ]
     fig["rules"]["calibration"] = {}
     for name in ("R0", "B1", "B2", "R1", "R1e", "R2"):
-        pr = [(1.0 - p, f["survived"]) for p, f in zip(scores[name], feats) if p is not None]
+        pr = [(1.0 - p, f["survived"]) for p, f in zip(scores[name], feats, strict=True) if p is not None]
         e, bins = ece(pr, TRUST_EDGES)
         for (lo, hi), m, mean_p, obs in bins:
             hi_label = "1" if hi > 1 else f"{hi:g}"
@@ -1421,7 +1423,7 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
         for bar in BARS:
             r = rule_run(feats, trust[name], bar, start[name])
             runs[(name, bar)] = r
-            good_never = sum(1 for f, ok in zip(feats, r["correct"]) if f["survived"] and not ok)
+            good_never = sum(1 for f, ok in zip(feats, r["correct"], strict=True) if f["survived"] and not ok)
             lines.append(
                 f"| {name} | {bar:.2f} | {r['caught']} / {revised} ({100 * r['caught'] / revised:.0f}%) | "
                 f"{mean(r['delays']):.0f} | {sc.quantile(r['delays'], 0.5):.0f} | "
@@ -1462,7 +1464,7 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
         ok = sum(1 for c in r["correct"] if c)
         rev = sum(1 for f in on if not f["survived"])
         good_on = len(on) - rev
-        never_good = sum(1 for f, c in zip(on, r["correct"]) if f["survived"] and not c)
+        never_good = sum(1 for f, c in zip(on, r["correct"], strict=True) if f["survived"] and not c)
         lines.append(
             f"| {name} | {len(on)} | {ok} / {len(on)} ({100 * ok / len(on):.1f}%) | "
             f"{r['caught']} / {rev} ({100 * r['caught'] / (rev or 1):.0f}%) | "
@@ -1487,15 +1489,15 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
     ]
     for name in ("B1", "B2", "R1", "R1e", "R2"):
         r = runs[(name, OPERATING_TRUST)]
-        b = sum(1 for x, y in zip(base["correct"], r["correct"]) if x and not y)
-        c = sum(1 for x, y in zip(base["correct"], r["correct"]) if y and not x)
+        b = sum(1 for x, y in zip(base["correct"], r["correct"], strict=True) if x and not y)
+        c = sum(1 for x, y in zip(base["correct"], r["correct"], strict=True) if y and not x)
         pv = sc.mcnemar(b, c)
         lines.append(f"| R0 against {name} | {b} | {c} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |")
         fig["rules"]["operating_point"][f"mcnemar_R0_{name}"] = dict(b=b, c=c, p=pv)
     r1_op = runs[("R1", OPERATING_TRUST)]
     b1_op = runs[("B1", OPERATING_TRUST)]
-    b = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"]) if x and not y)
-    c = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"]) if y and not x)
+    b = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"], strict=True) if x and not y)
+    c = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"], strict=True) if y and not x)
     pv = sc.mcnemar(b, c)
     lines.append(f"| B1 against R1, the motion's own share | {b} | {c} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |")
     fig["rules"]["operating_point"]["mcnemar_B1_R1"] = dict(b=b, c=c, p=pv)

@@ -282,7 +282,7 @@ def finals_at(eng, clips, block_ms, n):
 
 
 def moved_against(base, got):
-    return sum(1 for a, b in zip(base, got) if a != b)
+    return sum(1 for a, b in zip(base, got, strict=True) if a != b)
 
 
 def conf_read_check(modules, model_dir, probe_model, scale, clips, block_ms, grammar, n, lines, report):

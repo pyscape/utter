@@ -26,7 +26,7 @@ def one_word_apart(a, b):
     if a == b:
         return False
     if len(a) == len(b):
-        return sum(x != y for x, y in zip(a, b)) == 1
+        return sum(x != y for x, y in zip(a, b, strict=True)) == 1
     if abs(len(a) - len(b)) != 1:
         return False
     short, long = (a, b) if len(a) < len(b) else (b, a)

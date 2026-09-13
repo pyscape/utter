@@ -691,7 +691,7 @@ def significance_table(clips, results, lines, report):
     out["all words"] = dict(only_a=overall[1], only_b=overall[2], p=overall[3], holm=None)
     lines.append(f"| all words | {overall[1]} | {overall[2]} | {overall[3]:.3f} | |")
     shown = 0
-    for (scope, only_a, only_b, p), q in sorted(zip(words, adjusted), key=lambda z: z[0][3]):
+    for (scope, only_a, only_b, p), q in sorted(zip(words, adjusted, strict=True), key=lambda z: z[0][3]):
         out[scope] = dict(only_a=only_a, only_b=only_b, p=p, holm=q)
         if p < 0.05:
             lines.append(f"| {scope} | {only_a} | {only_b} | {p:.3f} | {q:.3f} |")
@@ -991,7 +991,7 @@ def determinism_pass(modules, model, clips, block_ms, grammar, lines, report, co
     for name in modules:
         moved = {"partials": [], "finals": []}
         a, b = first.get(name) or [], second.get(name) or []
-        for (_, path), x, y in zip(chosen, a, b):
+        for (_, path), x, y in zip(chosen, a, b, strict=False):  # a failed process leaves no traces
             if x[0] != y[0]:
                 moved["partials"].append(str(path))
             if x[1] != y[1]:
@@ -1254,7 +1254,7 @@ def block_size_pass(modules, model, clips, grammar, lines, report, sizes, count)
             lat = []
             decode = 0.0
             firsts = []
-            for (label, pcm), end in zip(pcms, ends):
+            for (label, pcm), end in zip(pcms, ends, strict=True):
                 words, first, _, _, (_, t_dec) = run_clip(eng, pcm, ms, label)
                 ok += words == [label]
                 decode += t_dec
@@ -1263,7 +1263,10 @@ def block_size_pass(modules, model, clips, grammar, lines, report, sizes, count)
                     lat.append((first - end) * 1000.0)
             if ms == finest:
                 at_finest[name] = firsts
-            both = [(x, y) for x, y in zip(firsts, at_finest.get(name, [])) if x is not None and y is not None]
+            # Empty until the finest size has run.
+            both = [
+                (x, y) for x, y in zip(firsts, at_finest.get(name, []), strict=False) if x is not None and y is not None
+            ]
             shifted = [round((x - y) * 1000.0) for x, y in both]
             out[ms][name] = dict(
                 correct=ok,
@@ -1482,8 +1485,8 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
         lines.append("|---|---|---|---|")
         for level in [*levels, "clean"]:
             ma, mb = outcome[a][level], outcome[b][level]
-            only_a = sum(1 for x, y in zip(ma, mb) if x and not y)
-            only_b = sum(1 for x, y in zip(ma, mb) if y and not x)
+            only_a = sum(1 for x, y in zip(ma, mb, strict=True) if x and not y)
+            only_b = sum(1 for x, y in zip(ma, mb, strict=True) if y and not x)
             pv = mcnemar(only_a, only_b)
             paired[str(level)] = dict(only_a=only_a, only_b=only_b, p=pv)
             label = f"{level} dB" if level != "clean" else "clean"
@@ -1928,8 +1931,8 @@ def wordless_pass(modules, model, clips, noise, block_ms, grammar, lines, report
         for kind in kinds:
             a = [r["word_blocks"] > 0 for r in paired[(base_label, kind, engines[0])]["per_sample"]]
             b = [r["word_blocks"] > 0 for r in paired[(base_label, kind, engines[1])]["per_sample"]]
-            bb = sum(1 for x, y in zip(a, b) if x and not y)
-            cc = sum(1 for x, y in zip(a, b) if y and not x)
+            bb = sum(1 for x, y in zip(a, b, strict=True) if x and not y)
+            cc = sum(1 for x, y in zip(a, b, strict=True) if y and not x)
             mc[kind] = dict(b=bb, c=cc, p=mcnemar(bb, cc))
             lines.append(
                 f"Paired over the same samples at {base_label}, {kind}, a sample carrying any rank-0 "
@@ -1997,8 +2000,8 @@ def wordless_pass(modules, model, clips, noise, block_ms, grammar, lines, report
                     by_key = Counter(r["key"] for r in kept)
                     before = [r["phantom_finals"] > 0 for r in tot["per_sample"]]
                     after = [by_key.get(r["key"], 0) > 0 for r in tot["per_sample"]]
-                    bb = sum(1 for x, y in zip(before, after) if x and not y)
-                    cc = sum(1 for x, y in zip(before, after) if y and not x)
+                    bb = sum(1 for x, y in zip(before, after, strict=True) if x and not y)
+                    cc = sum(1 for x, y in zip(before, after, strict=True) if y and not x)
                     p = mcnemar(bb, cc)
                     gate.setdefault(label, {}).setdefault(kind, {})[f"{margin:g}"] = dict(
                         words=len(tot["gate"]), caught=len(tot["gate"]) - len(kept), minutes=m, b=bb, c=cc, p=p

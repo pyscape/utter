@@ -107,7 +107,8 @@ def score(args):
         step_ms = r["block_ms"]
         rp, hp = r["partials"], h["partials"]
         tb = te = 0
-        for a, b in zip(rp, hp):
+        # The two runs are separate files; nothing here guarantees they stopped on the same block.
+        for a, b in zip(rp, hp, strict=False):
             if a is None or b is None:
                 continue
             tb += 1
@@ -150,7 +151,8 @@ def score(args):
             subs += sub
             # word times on matched words
             if rw == hw:
-                for a, b in zip(s["result"].get("result", []), hs[best]["result"].get("result", [])):
+                # Equal word sequences, but a bracketed token can leave one side an entry longer.
+                for a, b in zip(s["result"].get("result", []), hs[best]["result"].get("result", []), strict=False):
                     word_pairs += 1
                     if abs(a["start"] - b["start"]) <= 0.03 + 1e-6 and abs(a["end"] - b["end"]) <= 0.03 + 1e-6:
                         word_within += 1
