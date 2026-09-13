@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/pyscape/utter/actions/workflows/ci.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/ci.yml)
 [![docs](https://github.com/pyscape/utter/actions/workflows/docs.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/docs.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![crates.io](https://img.shields.io/crates/v/utter.svg)](https://crates.io/crates/utter)
+[![PyPI](https://img.shields.io/pypi/v/utterpy.svg)](https://pypi.org/project/utterpy/)
+[![License: MIT AND Apache-2.0](https://img.shields.io/badge/license-MIT%20AND%20Apache--2.0-blue.svg)](LICENSE)
 
 A pure-Rust streaming speech recognizer for [Vosk](https://alphacephei.com/vosk/)
 models, built for applications that act on partial results. Feed it
@@ -64,10 +66,13 @@ checked block-for-block against the stock Vosk wheel on the same audio.
 
 ## Status
 
-**Pre-alpha.** Not yet published to crates.io or PyPI. The streaming
-path is complete and measured: front end, i-vector adaptation, chunked
-neural network, decoder, partials with alternatives and word times,
-endpointing, a C ABI and a Python binding.
+**0.0.1**, the first release: `utter` on crates.io, `utterpy` on PyPI.
+The streaming path is complete and measured: front end, i-vector
+adaptation, chunked neural network, decoder, partials with alternatives
+and word times, endpointing, a C ABI and a Python binding. The API
+keeps the vosk wheel's shape; the keys it adds are in the
+[results reference](docs/reference/results.md). Expect breaking changes
+before 0.1.
 
 On the public Speech Commands benchmark it matches the stock Vosk
 wheel: 91.8% against 91.5% accuracy on 11,005 clips, finals agreeing
@@ -86,14 +91,12 @@ layout and should work but have not been checked.
 
 ### Python
 
-The Python package is [utterpy](https://github.com/pyscape/utterpy),
-built with [maturin](https://www.maturin.rs/). Its API mirrors the
-`vosk` package so existing code keeps working:
+The Python package is [utterpy](https://github.com/pyscape/utterpy).
+Its API mirrors the `vosk` package so existing code keeps working, and
+the wheel ships type stubs:
 
 ```bash
-git clone https://github.com/pyscape/utterpy && cd utterpy
-python -m venv .venv && .venv/bin/pip install maturin
-.venv/bin/maturin develop --release
+pip install utterpy
 ```
 
 ```python
@@ -118,7 +121,7 @@ print("final:", rec.FinalResult())
 
 ```toml
 [dependencies]
-utter = { git = "https://github.com/pyscape/utter" }
+utter = "0.0.1"
 ```
 
 ```rust
@@ -151,7 +154,8 @@ CI builds, so it cannot drift from the API.
 
 ### C
 
-`cargo build --release` also produces a `cdylib`. The header is
+`cargo build --release` also produces a shared library, `libutter.so`,
+`libutter.dylib` or `utter.dll` under `target/release`. The header is
 [include/utter.h](include/utter.h):
 
 ```c
@@ -171,6 +175,14 @@ puts(utter_recognizer_final_result(rec));
 ```
 
 All three return the same JSON strings.
+
+Build a C host against the header and the library, and keep the
+library on the loader's path at run time:
+
+```bash
+cc host.c -I include -L target/release -lutter -o host
+LD_LIBRARY_PATH=target/release ./host
+```
 
 ## What a partial tells you
 
@@ -254,6 +266,15 @@ Not included, by design:
 - RNNLM or ARPA rescoring, speaker vectors, batch or GPU decoding.
 
 ## Models
+
+Models are downloaded from
+[alphacephei.com/vosk/models](https://alphacephei.com/vosk/models) and
+unpacked into a directory the examples open by name:
+
+```bash
+curl -LO https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+unzip vosk-model-small-en-us-0.15.zip
+```
 
 Any Vosk small model with the standard layout: `am/final.mdl`,
 `graph/HCLr.fst`, `graph/words.txt`, `graph/disambig_tid.int`,
@@ -351,5 +372,6 @@ The Kaldi model reader, MFCC and nnet3 forward pass started from
 as source with its notices kept. Kaldi and OpenFst were read for the
 semantics this crate reproduces; no code from either is included.
 
-utter is MIT licensed, see [LICENSE](LICENSE); the crate declares MIT AND Apache-2.0 because the vendored
-files keep their own headers and license.
+utter is MIT licensed, see [LICENSE](LICENSE). The crate declares
+MIT AND Apache-2.0 because the vendored files keep their own headers
+and license.
