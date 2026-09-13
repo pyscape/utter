@@ -1,0 +1,27 @@
+name: dependabot
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    # A patch or minor bump merges itself once the ruleset is satisfied: CI green, branch
+    # current. A major bump of an action can change its inputs, so it waits for a person.
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a  # v2.5.0
+        id: metadata
+      - if: >-
+          contains(fromJSON('["version-update:semver-patch", "version-update:semver-minor"]'),
+          steps.metadata.outputs.update-type)
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
