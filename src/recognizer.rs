@@ -395,6 +395,7 @@ impl<'m> Recognizer<'m> {
         })
     }
 
+    #[doc(hidden)]
     pub fn graph(&self) -> &VectorFst {
         &self.graph
     }
@@ -407,7 +408,7 @@ impl<'m> Recognizer<'m> {
     pub fn set_partial_words(&mut self, on: bool) {
         self.partial_words = on;
     }
-    /// The host's endpoint bound, `RecognizerOptions::endpoint_rule`: a final once the trailing
+    /// The host's endpoint bound, [`RecognizerOptions::endpoint_rule`]: a final once the trailing
     /// silence reaches `trailing_ms`, unless `extending_veto_nats` is set and a reading that
     /// extends the partial by a further word is within that many nats of it. The span cannot see
     /// a word beginning, since the word's label is not yet on the best path while the silence
@@ -427,6 +428,7 @@ impl<'m> Recognizer<'m> {
     }
 
     /// Off by default; it never touches a decision.
+    #[doc(hidden)]
     pub fn set_census(&mut self, on: bool) {
         self.census = on;
         if let Some(d) = self.decoder.as_mut() {
@@ -436,17 +438,20 @@ impl<'m> Recognizer<'m> {
 
     /// Local close collisions, readings lost between chunks, and those of them that were
     /// within `CENSUS_NATS` of the leader when last seen.
+    #[doc(hidden)]
     pub fn census_counts(&self) -> (u64, u64, u64) {
         let merges =
             self.merges_carried + self.decoder.as_ref().map(|d| d.merges_close).unwrap_or(0);
         (merges, self.readings_lost, self.readings_lost_close)
     }
 
+    #[doc(hidden)]
     pub fn set_trace_groups(&mut self, on: bool) {
         self.trace_groups = on;
     }
 
     /// One JSON object per chunk decoded.
+    #[doc(hidden)]
     pub fn take_group_trace(&mut self) -> Vec<String> {
         std::mem::take(&mut self.group_trace)
     }
@@ -887,6 +892,7 @@ impl<'m> Recognizer<'m> {
     }
 
     /// Align a path's words to its phone segments through `word_boundary.int`.
+    #[doc(hidden)]
     pub fn align(&self, path: &Path) -> Vec<WordSpan> {
         let wb = &self.model.word_boundary;
         let mut spans = Vec::new();
@@ -1055,6 +1061,7 @@ impl<'m> Recognizer<'m> {
     /// phones as a `[sil]` entry. Leading silence before the first word is not an entry, except
     /// when the path has no word at all, where the whole run is. Word phones after the last
     /// aligned word are a `[speech]` entry: a word begun and not yet named.
+    #[doc(hidden)]
     pub fn entries(&self, path: &Path) -> Vec<Entry> {
         let spans = self.align(path);
         let sil = &self.model.conf.silence_phones;
