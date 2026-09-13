@@ -32,13 +32,20 @@ finish arrives about 200 ms sooner, median 866 to 660 ms and p90 1001
 to 799 ms on the built streams and 870 to 660 ms on single-word clips;
 the same finishes are called, 732 of 750; no word is lost or split on
 800 single-word clips and three fewer are lost on the streams. The
-cost is pauses inside an utterance taken for its end: 64.6% of built
-pauses under the stock rules, 82.9% under the bound, and the added
-share is largest, 23 to 28 points, on pauses shorter than the half
-second the model's own rule waits. The 8 nat veto gives back a few
-points of that for 20 ms of latency
+cost is pauses inside an utterance taken for its end. An ended pause
+does not drop a word: the recognizer emits a final for the words so
+far and the next word arrives in the next final, so "alpha seven"
+reaches the host as two finals instead of one, and the words no final
+covers stay at 2% with or without the bound. It does split phrases:
+64.6% of built pauses are ended under the stock rules, 82.9% under the
+bound, and the added share is largest, 23 to 28 points, on pauses
+shorter than the half second the model's own rule waits. The 8 nat
+veto gives back a few points of that for 20 ms of latency
 `[[rr:The same stretches, from the finals the runtime emitted]]`
-`[[rr:Endpoint latency]]`. The pauses there are built uniform from
+`[[rr:Endpoint latency]]`. A host that acts on single words pays
+nothing for this; a host that needs a whole phrase in one final either
+joins consecutive finals itself or leaves the bound unset, which is
+the default and is byte-identical to the stock rules. The pauses there are built uniform from
 100 to 800 ms, so the mistake rate is a property of that distribution;
 on real speech it depends on how your speakers pause, and a host whose
 utterances carry several words should read the states page's
