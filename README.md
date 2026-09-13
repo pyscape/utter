@@ -351,5 +351,5 @@ The Kaldi model reader, MFCC and nnet3 forward pass started from
 as source with its notices kept. Kaldi and OpenFst were read for the
 semantics this crate reproduces; no code from either is included.
 
-utter is MIT licensed. See [LICENSE](LICENSE). Vendored Apache-2.0
-files keep their own headers.
+utter is MIT licensed, see [LICENSE](LICENSE); the crate declares MIT AND Apache-2.0 because the vendored
+files keep their own headers and license.

@@ -15,7 +15,7 @@ nine blocks after their own span went quiet, and every one of them
 followed speech in the same take: all of them with a word before them,
 more than half within half a second of it. They do not sort by floor,
 which spans three levels among so few, and they do not appear at all
-until a word has been said. That is the owner's case, and it is a stale
+until a word has been said. That is the case in question, and it is a stale
 word rather than an invented one: the runtime reports it with its span
 and its energy and withholds nothing (`[[rr:TD-8#A word on a quiet block
 was spoken and is reported]]`), and the margin that removes it is the
