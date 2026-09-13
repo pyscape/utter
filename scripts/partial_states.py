@@ -329,8 +329,8 @@ def build_state(fed, seg, p, readings, prev, first_seen, parity=None):
         words0=w0,
         lead=lead,
         delta=delta,
-        # How long the harness has seen the sequence among the reported readings, for the hover
-        # measurement alone: TD-9 rejected an age on a reading and no field carries this.
+        # For the hover measurement alone; no field carries it.
+        # [[rr:TD-9#Considered options]]
         age={t: (fed - first_seen[t]) / SAMPLES_PER_MS for t in texts},
         relation=rel,
         extends=extends,

@@ -276,8 +276,8 @@ def features_at(st, vanished):
             dict(text=t, conf=c, relation=st["relation"][t], lead=st["lead"][t], lead_delta=st["delta"].get(t))
             for t, c in r
         ],
-        # The same three figures as the harness alone derives them, for the availability table:
-        # the runtime's history reaches groups the reported readings never showed.
+        # The same three figures as the harness alone derives them, for the availability table.
+        # [[rr:TD-9#Readings are read once per decoding advance]]
         derived=dict(
             lead_delta0=st["derived_delta"].get(st["top"]),
             lead_delta1=st["derived_delta"].get(rank1),
@@ -1487,8 +1487,7 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
     lines.append(f"| B1 against R1, the motion's own share | {b} | {c} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |")
     fig["rules"]["operating_point"]["mcnemar_B1_R1"] = dict(b=b, c=c, p=pv)
 
-    # The frozen operating points: the targets come from the fitting split, the figures from the
-    # scored one, so the bar is never chosen on the clips that judge it.
+    # [[rr:TD-9#The benchmark is paired, held out, and charged in milliseconds]]
     fit_base = rule_run(fit_feats, gap_trust, OPERATING_TRUST, 0)
     fit_target_delay = mean(fit_base["delays"])
     fit_target_caught = fit_base["caught"] / max(1, len(fit_feats))
