@@ -1,6 +1,6 @@
 # Reading a partial's trust
 
-Run 2026-09-13 00:21:31Z, utter 71e57bf, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 71e57bf779540c3eb4c11e05bc38644206c2789c, the checkout's HEAD.
+Run 2026-09-13 01:13:46Z, utter 76cf75d+dirty, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 76cf75d44a7752d0b07b178dc49082a32fac0a96, **not** the checkout as it stands (76cf75d+dirty).
 
 utterpy over the Speech Commands testing split, 9230 clips whose first word appeared in a partial that carried a runner-up, 92-entry grammar, 40 ms blocks, 5 alternatives, every coefficient and bar fitted on the validation split. Measured by `scripts/partial_trust.py`.
 
