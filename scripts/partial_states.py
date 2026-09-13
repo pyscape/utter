@@ -202,12 +202,27 @@ class Truth:
 # --- the readings -----------------------------------------------------------------------------
 
 
+# The two labels of the reading with no word on it, [[rr:TD-10#Decision outcome]]. The harness
+# keys the empty reading by one label so its history runs across the flip, as the runtime's
+# does, and counts the flips here.
+WORDLESS = ("[sil]", "[speech]")
+SPEECH_LABELS = {"advances": 0, "rank0": 0, "entries": 0}
+
+
+def canon(text):
+    return "[sil]" if text in WORDLESS else text
+
+
 def beam_readings(p):
-    return tuple((e["text"], e["confidence"]) for e in (p.get("partial_alternatives") or []))
+    alts = p.get("partial_alternatives") or []
+    SPEECH_LABELS["advances"] += 1
+    SPEECH_LABELS["rank0"] += bool(alts) and alts[0]["text"] == "[speech]"
+    SPEECH_LABELS["entries"] += any(e["word"] == "[speech]" for e in p.get("partial_result") or [])
+    return tuple((canon(e["text"]), e["confidence"]) for e in alts)
 
 
 def word_list(text):
-    return [w for w in text.split() if w != "[sil]"]
+    return [w for w in text.split() if w not in WORDLESS]
 
 
 def reading_leads(readings):
@@ -236,7 +251,7 @@ def runtime_motion(p):
     alts = p.get("partial_alternatives") or []
     if not alts or "lead_delta" not in alts[0]:
         return None
-    return {e["text"]: (e["relation"], e["lead_delta"]) for e in alts}
+    return {canon(e["text"]): (e["relation"], e["lead_delta"]) for e in alts}
 
 
 # Four printed confidences enter a reconstructed delta, each rounded to six decimals, and the
@@ -276,7 +291,7 @@ def trailing_sil(p):
 
 def last_word_entry(p):
     for e in reversed(p.get("partial_result") or []):
-        if e["word"] != "[sil]":
+        if e["word"] not in WORDLESS:
             return e
     return None
 
@@ -288,9 +303,9 @@ def inner_sil_spans(p):
     out = {}
     seen = 0
     for k, entry in enumerate(e):
-        if entry["word"] != "[sil]":
+        if entry["word"] not in WORDLESS:
             seen += 1
-        elif 0 < k < len(e) - 1 and e[k + 1]["word"] != "[sil]" and seen:
+        elif 0 < k < len(e) - 1 and e[k + 1]["word"] not in WORDLESS and seen:
             out[seen - 1] = (entry["end_sample"] - entry["start_sample"]) / SAMPLES_PER_MS
     return out
 
@@ -2742,6 +2757,12 @@ def page(r, a, chosen):
         f"{RUNTIME_TOL:.0e}; {par['runtime_only']} more carried one from the runtime alone, a "
         "reading entering the reported list whose history the harness never saw "
         "(`[[rr:TD-9#Readings are read once per decoding advance]]`).",
+        "",
+        "The reading with no word on it is `[sil]` on silence phones and `[speech]` inside a "
+        "word's phones (`[[rr:TD-10#Decision outcome]]`); every figure below keys it as one "
+        f"reading, and its history runs across the label. Over every partial read here it stood "
+        f"at rank 0 as `[speech]` on {SPEECH_LABELS['rank0']} of {SPEECH_LABELS['advances']} "
+        f"blocks, and a `[speech]` entry closed the word list on {SPEECH_LABELS['entries']}.",
         "",
         "A Speech Commands clip holds one word, so it holds no transition between words and no "
         "finish. The streams here are built from the clips: utterances of one to five words, "

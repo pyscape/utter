@@ -559,3 +559,57 @@ fn first_group_of(record: &str) -> String {
     let end = rest.find('}').expect("group ends");
     rest[..=end].to_string()
 }
+
+/// `[[rr:TD-10#Decision outcome]]`: a wordless reading is `[sil]` or `[speech]`, never empty,
+/// and the text agrees with the tail of the word list.
+#[test]
+fn a_wordless_reading_names_what_its_tail_is() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let mut state = 20260913u32;
+    let mut hiss: Vec<i16> = (0..32000)
+        .map(|_| {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            ((state >> 16) as i32 % 601 - 300) as i16
+        })
+        .collect();
+    hiss.extend(clip("yes"));
+    for samples in [clip("no"), clip("seven"), hiss] {
+        let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+        rec.set_partial_words(true);
+        rec.set_alternatives(3);
+        let (partials, finals) = decode(&mut rec, &samples);
+        for p in partials.iter().chain(finals.iter()) {
+            let text = text_of_key(
+                p,
+                if p.contains("\"partial\": ") {
+                    "\"partial\": "
+                } else {
+                    "\"text\": "
+                },
+            );
+            assert!(!text.is_empty(), "{p}");
+            let Some(i) = p.find("\"partial_result\": [") else {
+                continue;
+            };
+            let list = &p[i..];
+            let last = list
+                .rfind("\"word\": ")
+                .map(|k| text_of_key(&list[k..], "\"word\": "));
+            let speech_entries = list.matches("\"word\": \"[speech]\"").count();
+            assert!(speech_entries <= 1, "{p}");
+            match text.as_str() {
+                "[speech]" => assert_eq!(last.as_deref(), Some("[speech]"), "{p}"),
+                "[sil]" => assert_ne!(last.as_deref(), Some("[speech]"), "{p}"),
+                _ => {}
+            }
+            if speech_entries == 1 {
+                assert_eq!(
+                    last.as_deref(),
+                    Some("[speech]"),
+                    "a speech entry is last: {p}"
+                );
+            }
+        }
+    }
+}

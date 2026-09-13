@@ -306,6 +306,10 @@ def words_of(text):
     return [w for w in text.split() if not (w.startswith("[") and w.endswith("]"))]
 
 
+# The two readings of a path with no word on it. [[rr:TD-10#Decision outcome]]
+WORDLESS = ("[sil]", "[speech]")
+
+
 def pct(a, b):
     return 100.0 * a / b if b else float("nan")
 
@@ -1360,7 +1364,7 @@ def noise_pass(modules, model, noise, block_ms, grammar, lines, report, bound=()
                     if words_of(p.get("partial", "")):
                         counts["words"] += 1
                         alts = p.get("partial_alternatives") or []
-                        if any(a["text"] == "[sil]" for a in alts[1:]):
+                        if any(a["text"] in WORDLESS for a in alts[1:]):
                             counts["rival"] += 1
 
                 # [[rr:TD-8#Measurements count a word whose own span carries no speech]]

@@ -137,9 +137,9 @@ away from the oracle and is a record of its own, as
 
 ### A word on a quiet block was spoken and is reported
 
-The partial reads `[sil]` with an empty word list while the best path
-holds neither a word nor a silence phone, which on a quiet room is most
-of the time. A word at rank 0 on a quiet block is held from earlier in
+The partial reads `[speech]` with a `[speech]` entry while the best
+path holds a word's phones and no word, which on a quiet room is most
+of the time, `[[rr:TD-10#Decision outcome]]`. A word at rank 0 on a quiet block is held from earlier in
 the utterance or has just ended; it is reported with its span, its
 energy and its hold, and is never withheld. `[sil]` entries between and
 after words carry the pause's span and energy, `[[rr:entries]]`; the
@@ -150,7 +150,7 @@ rival is the contest for a word at the moment it appears.
 Kaldi's rules in `[[rr:TD-2#Inputs: configuration]]` close a silent
 stretch either after 5 s of silence phones with no word or at the 20 s
 cap with one word spanning the utterance, `[[rr:endpoint_detected]]`.
-Both stay. The wordless final's text reads `[sil]` under
+Both stay. The wordless final's text reads `[sil]` or `[speech]` under
 `[[rr:TD-2#Silence and unknown speech announce themselves]]` where
 libvosk's reads the empty string; a host that compares finals to
 libvosk's removes bracketed tokens first, as the gates do.

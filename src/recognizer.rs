@@ -53,6 +53,9 @@ pub const MAX_GRAMMAR_WORDS: usize = 300;
 
 /// The token a reading with no word carries.
 pub const SIL: &str = "[sil]";
+/// The reading of a best path that carries no word and ends inside a word's phones: a word has
+/// begun that the grammar cannot yet tell apart from its neighbours.
+pub const SPEECH: &str = "[speech]";
 
 /// Construction options beyond libvosk's.
 #[derive(Clone, Debug)]
@@ -79,11 +82,20 @@ impl Default for RecognizerOptions {
     }
 }
 
-/// One entry of a word list: a word span or a run of silence phones.
+/// What an entry of a word list spans.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryWord {
+    Word(Label),
+    /// A run of silence phones.
+    Silence,
+    /// The phones of a word the path has entered and not yet named.
+    Speech,
+}
+
+/// One entry of a word list.
 #[derive(Clone, Debug)]
 pub struct Entry {
-    /// Word id, or `None` for silence.
-    pub word: Option<Label>,
+    pub word: EntryWord,
     pub start_frame: usize,
     pub end_frame: usize,
 }
@@ -163,11 +175,11 @@ impl Reading {
 /// with the count of groups that left the beam and the count of those that were close.
 fn roll_history(
     history: &mut HashMap<Vec<Label>, Reading>,
-    groups: &[(Vec<Label>, f32, Option<f32>)],
+    groups: &[(Vec<Label>, f32, Option<f32>, i32)],
 ) -> (Vec<Option<f32>>, (u64, u64)) {
     let mut next: HashMap<Vec<Label>, Reading> = HashMap::with_capacity(groups.len());
     let mut deltas = Vec::with_capacity(groups.len());
-    for (words, _, lead) in groups {
+    for (words, _, lead, _) in groups {
         // [[rr:TD-9#Every reading carries its lead's motion]]
         let lead_prev = history.remove(words).and_then(|h| h.lead_now);
         let r = Reading {
@@ -591,7 +603,7 @@ impl<'m> Recognizer<'m> {
             let groups = dec.grouped(false);
             // Without final costs the rank is the cost, so the best other cost is the first
             // group's, or the second's for the first group itself.
-            let leads: Vec<(Vec<Label>, f32, Option<f32>)> = groups
+            let leads: Vec<(Vec<Label>, f32, Option<f32>, i32)> = groups
                 .iter()
                 .enumerate()
                 .map(|(i, g)| {
@@ -600,7 +612,7 @@ impl<'m> Recognizer<'m> {
                         (0, _) => Some(groups[1].cost - g.cost),
                         _ => Some(groups[0].cost - g.cost),
                     };
-                    (g.words.clone(), g.cost, lead)
+                    (g.words.clone(), g.cost, lead, g.token.phone)
                 })
                 .collect();
             let paths = dec.trace_groups(&groups, n);
@@ -646,7 +658,7 @@ impl<'m> Recognizer<'m> {
         &mut self,
         decoded: usize,
         sample: u64,
-        groups: &[(Vec<Label>, f32, Option<f32>)],
+        groups: &[(Vec<Label>, f32, Option<f32>, i32)],
         deltas: &[Option<f32>],
     ) {
         let best: &[Label] = groups.first().map(|g| g.0.as_slice()).unwrap_or(&[]);
@@ -655,12 +667,12 @@ impl<'m> Recognizer<'m> {
             self.frame_offset + decoded,
             sample
         );
-        for (i, (words, cost, lead)) in groups.iter().enumerate() {
+        for (i, (words, cost, lead, phone)) in groups.iter().enumerate() {
             if i > 0 {
                 out.push_str(", ");
             }
             out.push_str("{\"text\": ");
-            write_string(&mut out, &self.text_of(words));
+            write_string(&mut out, &self.text_of(words, Some(*phone)));
             out.push_str(&format!(
                 ", \"confidence\": {}, \"relation\": \"{}\", \"lead\": {}, \"lead_delta\": {}}}",
                 escape_json_number(-(*cost as f64)),
@@ -772,7 +784,11 @@ impl<'m> Recognizer<'m> {
         let Some(tokens) = self.best_path.as_ref().map(|path| {
             self.entries(path)
                 .iter()
-                .map(|e| e.word.unwrap_or(-1))
+                .map(|e| match e.word {
+                    EntryWord::Word(w) => w,
+                    EntryWord::Silence => -1,
+                    EntryWord::Speech => -2,
+                })
                 .collect::<Vec<Label>>()
         }) else {
             return;
@@ -857,7 +873,7 @@ impl<'m> Recognizer<'m> {
         self.align(path)
             .into_iter()
             .map(|s| Entry {
-                word: Some(s.word),
+                word: EntryWord::Word(s.word),
                 start_frame: s.start_frame,
                 end_frame: s.end_frame,
             })
@@ -911,7 +927,14 @@ impl<'m> Recognizer<'m> {
             escape_json_number(self.seconds(span.start_frame))
         ));
         out.push_str("\"word\": ");
-        write_string(out, span.word.map(|w| self.model.word(w)).unwrap_or(SIL));
+        write_string(
+            out,
+            match span.word {
+                EntryWord::Word(w) => self.model.word(w),
+                EntryWord::Silence => SIL,
+                EntryWord::Speech => SPEECH,
+            },
+        );
         out.push_str(&format!(", \"start_sample\": {ss}, \"end_sample\": {es}"));
         if with_evidence {
             out.push_str(&format!(
@@ -929,9 +952,23 @@ impl<'m> Recognizer<'m> {
         }
     }
 
-    fn text_of(&self, words: &[Label]) -> String {
+    /// Whether a phone belongs to a word rather than to silence, by `word_boundary.int`.
+    fn is_word_phone(&self, phone: i32) -> bool {
+        !matches!(
+            self.model.word_boundary.get(&phone),
+            None | Some(WordBoundary::Nonword)
+        )
+    }
+
+    /// The text of a reading: its words, or `[speech]` for a wordless path that ends inside a
+    /// word's phones, or `[sil]`.
+    fn text_of(&self, words: &[Label], last_phone: Option<i32>) -> String {
         if words.is_empty() {
-            return SIL.to_string();
+            return if last_phone.is_some_and(|p| self.is_word_phone(p)) {
+                SPEECH.to_string()
+            } else {
+                SIL.to_string()
+            };
         }
         words
             .iter()
@@ -940,9 +977,14 @@ impl<'m> Recognizer<'m> {
             .join(" ")
     }
 
+    fn text_of_path(&self, path: &Path) -> String {
+        self.text_of(&path.words, path.phones.last().map(|s| s.phone))
+    }
+
     /// The word list of a path: aligned words, and between or after them every run of silence
     /// phones as a `[sil]` entry. Leading silence before the first word is not an entry, except
-    /// when the path has no word at all, where the whole run is.
+    /// when the path has no word at all, where the whole run is. Word phones after the last
+    /// aligned word are a `[speech]` entry: a word begun and not yet named.
     pub fn entries(&self, path: &Path) -> Vec<Entry> {
         let spans = self.align(path);
         let sil = &self.model.conf.silence_phones;
@@ -962,7 +1004,7 @@ impl<'m> Recognizer<'m> {
             while ri < runs.len() && runs[ri].1 <= span.start_frame {
                 if first_word_start.map(|f| runs[ri].0 >= f).unwrap_or(true) || !out.is_empty() {
                     out.push(Entry {
-                        word: None,
+                        word: EntryWord::Silence,
                         start_frame: runs[ri].0,
                         end_frame: runs[ri].1,
                     });
@@ -974,18 +1016,34 @@ impl<'m> Recognizer<'m> {
                 ri += 1;
             }
             out.push(Entry {
-                word: Some(span.word),
+                word: EntryWord::Word(span.word),
                 start_frame: span.start_frame,
                 end_frame: span.end_frame,
             });
         }
         while ri < runs.len() {
             out.push(Entry {
-                word: None,
+                word: EntryWord::Silence,
                 start_frame: runs[ri].0,
                 end_frame: runs[ri].1,
             });
             ri += 1;
+        }
+        let covered = spans.last().map(|s| s.end_frame).unwrap_or(0);
+        let tail = path
+            .phones
+            .iter()
+            .rev()
+            .take_while(|seg| seg.start >= covered && self.is_word_phone(seg.phone))
+            .fold(None, |acc: Option<(usize, usize)>, seg| {
+                Some((seg.start, acc.map_or(seg.end, |a| a.1)))
+            });
+        if let Some((start, end)) = tail {
+            out.push(Entry {
+                word: EntryWord::Speech,
+                start_frame: start,
+                end_frame: end,
+            });
         }
         out
     }
@@ -1020,7 +1078,7 @@ impl<'m> Recognizer<'m> {
         };
         let now = self.samples_round_start + self.samples_processed;
         let mut out = String::from("{\"partial\": ");
-        write_string(&mut out, &self.text_of(&path.words));
+        write_string(&mut out, &self.text_of_path(path));
         if self.partial_alternatives > 0 {
             out.push_str(", \"partial_alternatives\": [");
             let empty: Vec<Path> = Vec::new();
@@ -1031,7 +1089,7 @@ impl<'m> Recognizer<'m> {
                     out.push_str(", ");
                 }
                 out.push_str("{\"text\": ");
-                write_string(&mut out, &self.text_of(&alt.words));
+                write_string(&mut out, &self.text_of_path(alt));
                 out.push_str(&format!(
                     ", \"confidence\": {}",
                     escape_json_number(-(alt.cost as f64))
@@ -1109,7 +1167,7 @@ impl<'m> Recognizer<'m> {
                     out.push_str("], ");
                 }
                 out.push_str("\"text\": ");
-                write_string(&mut out, &self.text_of(&alt.words));
+                write_string(&mut out, &self.text_of_path(alt));
                 out.push('}');
             }
             out.push(']');
@@ -1130,7 +1188,7 @@ impl<'m> Recognizer<'m> {
             out.push_str("], ");
         }
         out.push_str("\"text\": ");
-        write_string(&mut out, &self.text_of(&path.words));
+        write_string(&mut out, &self.text_of_path(&path));
         self.push_floor(&mut out);
         out.push('}');
         out
@@ -1262,8 +1320,8 @@ mod tests {
         assert!((f.dbfs().unwrap() + 60.0).abs() < 1.0, "{:?}", f.dbfs());
     }
 
-    fn group(words: &[Label], cost: f32, lead: Option<f32>) -> (Vec<Label>, f32, Option<f32>) {
-        (words.to_vec(), cost, lead)
+    fn group(words: &[Label], cost: f32, lead: Option<f32>) -> (Vec<Label>, f32, Option<f32>, i32) {
+        (words.to_vec(), cost, lead, 0)
     }
 
     #[test]

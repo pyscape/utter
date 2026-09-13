@@ -103,8 +103,21 @@ def auc(pairs):
 # ---------------------------------------------------------------- the decode
 
 
+# [[rr:TD-10#Decision outcome]]: the empty reading is keyed by one label so its history runs
+# across the flip from `[sil]` to `[speech]`, as the runtime's does.
+WORDLESS = ("[sil]", "[speech]")
+SPEECH_LABELS = {"blocks": 0, "rank0": 0}
+
+
+def canon(text):
+    return "[sil]" if text in WORDLESS else text
+
+
 def readings_of(p):
-    return tuple((e["text"], e["confidence"]) for e in (p.get("partial_alternatives") or []))
+    alts = p.get("partial_alternatives") or []
+    SPEECH_LABELS["blocks"] += 1
+    SPEECH_LABELS["rank0"] += bool(alts) and alts[0]["text"] == "[speech]"
+    return tuple((canon(e["text"]), e["confidence"]) for e in alts)
 
 
 def leads_of(readings):
@@ -143,7 +156,7 @@ def runtime_motion(p):
     alts = p.get("partial_alternatives") or []
     if not alts or "lead_delta" not in alts[0]:
         return None
-    return {e["text"]: (e["relation"], e["lead_delta"]) for e in alts}
+    return {canon(e["text"]): (e["relation"], e["lead_delta"]) for e in alts}
 
 
 def check_motion(rt, derived, top, parity):
@@ -1688,6 +1701,11 @@ def build_page(feats, diag, fit_feats, fit_name, split, block_ms, alternatives, 
         f"partial that carried a runner-up, 92-entry grammar, {block_ms} ms blocks, "
         f"{alternatives} alternatives, every coefficient and bar fitted on {fit_name}. Measured by "
         "`scripts/partial_trust.py`.",
+        "",
+        "The reading with no word on it is `[sil]` on silence phones and `[speech]` inside a "
+        "word's phones (`[[rr:TD-10#Decision outcome]]`); the figures key it as one reading. It "
+        f"led as `[speech]` on {SPEECH_LABELS['rank0']} of the {SPEECH_LABELS['blocks']} blocks "
+        "read here.",
         "",
         f"The first word a host sees is revised before the utterance ends on {revised} of {n} "
         f"({100 * revised / n:.1f}%). A host that wants to act early needs to know, at the moment a "

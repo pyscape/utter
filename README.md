@@ -215,7 +215,8 @@ for Vosk keeps working; the new keys are added after the old ones.
 | `energy_dbfs` | The loudness of the audio under the word. | Tell a spoken word from one the decoder read into a quiet room. |
 | `floor_dbfs` | The room's noise floor over the last ten seconds. | Set your silence threshold relative to this, so it travels between microphones. |
 | `start_sample`, `end_sample` | The word's span in samples of the audio you fed. | One clock shared with your own code; nothing to align. |
-| `[sil]` | The reading carries no word. | Instead of an empty string or a word forced onto silence, you see that the decoder heard nothing. |
+| `[sil]` | The reading carries no word and sits on silence. | Instead of an empty string or a word forced onto silence, you see that the decoder heard nothing. |
+| `[speech]` | The reading carries no word, but the path has entered a word's phones that the grammar cannot yet tell apart. | A word is forming. On a noise floor the model hears as speech, this is what a quiet room reads; check `floor_dbfs` before calling it silence. |
 
 Finals carry the same `energy_dbfs` on every word, including the words
 of each alternative when you ask for more than one, and `floor_dbfs`
@@ -223,7 +224,8 @@ beside the text.
 
 A note on the trailing `[sil]` entry: it ends at the last frame the
 decoder has processed, not at the last sample you fed, so it runs one
-chunk behind the audio. If you add your own threshold to that span,
+chunk behind the audio. A `[speech]` entry after it is the silence
+ending. If you add your own threshold to that span,
 you are adding it to a clock that lags.
 
 Turning on partial words in stock Vosk switches it to a lattice-based
@@ -271,7 +273,9 @@ often visible one advance before the partial grows, though its identity
 is right only about one time in six at that point.
 
 **Is the room quiet?** The `[sil]` reading leads and its `lead_delta`
-hovers near zero.
+hovers near zero. A leading `[speech]` reading on a quiet room is the
+noise floor read as the start of a word; the floor, not the label,
+settles it.
 
 **Might the last word not be there?** The best `prefix` reading's lead
 is the evidence against the tail. It is a competing sequence, not a

@@ -175,8 +175,9 @@ JSON, partial, keys in this order:
 `partial_alternatives` is present when alternatives were requested; rank
 0 is always the best path and its text equals `partial`.
 `partial_result` is present when partial words are on. A reading is
-never an empty string: a best path with no word on it reads `[sil]`
-(see "Silence and unknown speech announce themselves"). Final and
+never an empty string: a best path with no word on it reads `[sil]`,
+or `[speech]` once it has entered a word's phones (see "Silence and
+unknown speech announce themselves" and `[[rr:TD-10#Decision outcome]]`). Final and
 `alternatives` shapes keep libvosk's key layout; `conf` on final words
 is emitted as 1.0 and documented as a constant, since no lattice
 posterior exists.
@@ -423,20 +424,23 @@ carries an unknown-word symbol, `[unk]` in Vosk models, that a grammar
 may include so out-of-vocabulary speech decodes to it instead of to the
 closest word. They are different things and are reported differently.
 
-- **`[sil]` is the reading of a best path that carries no word.** The
-  `partial` text is then `[sil]`, never the empty string and never a
-  vocabulary word the beam happened to prefer. In the alternatives, the
-  group whose word sequence is empty is labelled `[sil]` and ranked on
-  its cost like any other group, so on silence rank 0 reads `[sil]` and
-  the rivals stand behind it.
+- **`[sil]` is the reading of a best path that carries no word and
+  ends on silence phones.** The `partial` text is then `[sil]`, never
+  the empty string and never a vocabulary word the beam happened to
+  prefer. A wordless path that has entered a word's phones reads
+  `[speech]` instead, `[[rr:TD-10#Decision outcome]]`. In the
+  alternatives, the group whose word sequence is empty carries the same
+  label and is ranked on its cost like any other group, so on silence
+  rank 0 reads `[sil]` and the rivals stand behind it.
 - **Every run of silence phones on the best path that lies between
   words or after the last word is an entry in `partial_result`** with
   the token `[sil]`, its interval in samples and seconds, its energy in
   dBFS and its `stable_ms`, so a pause has a duration the host can
-  read. The `partial` text lists words only, plus `[sil]` when there is
-  no word; silence entries between words appear in the word list, not
-  in the text, so a host that parses the text as words sees exactly the
-  words.
+  read. Word phones after the last aligned word are one `[speech]`
+  entry, last in the list. The `partial` text lists words only, plus
+  `[sil]` or `[speech]` when there is no word; silence and speech
+  entries appear in the word list, not in the text, so a host that
+  parses the text as words sees exactly the words.
 - **`[unk]` is a word.** When the grammar includes the model's
   unknown-word symbol it decodes, ranks, aligns and reports like any
   other word, with its interval and energy; a reading that is only
