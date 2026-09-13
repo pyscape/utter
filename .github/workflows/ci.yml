@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install ruff yamllint==1.38.0 mypy==2.3.1
+      - run: pip install --require-hashes -r .github/requirements/lint.txt
       - run: ruff check scripts && ruff format --check scripts
       - run: mypy
       - name: The C header compiles as C and C++

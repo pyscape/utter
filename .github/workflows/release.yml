@@ -53,7 +53,7 @@ jobs:
         run: cargo build --release --lib --bin stream
       - if: matrix.glibc_target
         run: |
-          pip install cargo-zigbuild==0.23.4
+          pip install --require-hashes -r .github/requirements/release.txt
           cargo zigbuild --release --lib --bin stream --target "${{ matrix.glibc_target }}.2.28"
           for b in "${{ matrix.lib }}" "target/${{ matrix.glibc_target }}/release/stream"; do
             strip --strip-debug "$b"
