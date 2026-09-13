@@ -25,12 +25,16 @@ jobs:
           - os: windows-11-arm
             lib: target/release/utter.dll
             name: utter-windows-arm64
+          # The macOS entries run the tests on each architecture; the universal job below
+          # ships one library for both.
           - os: macos-latest
             lib: target/release/libutter.dylib
             name: utter-macos-arm64
+            archive: false
           - os: macos-15-intel
             lib: target/release/libutter.dylib
             name: utter-macos-x86_64
+            archive: false
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
@@ -40,24 +44,64 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           test "v$version" = "${GITHUB_REF_NAME}"
       - run: cargo test --release
-      - run: cargo build --release --lib --bin stream
-      - shell: bash
+      - if: matrix.archive != false
+        run: cargo build --release --lib --bin stream
+      - if: matrix.archive != false
+        shell: bash
         run: |
           mkdir "${{ matrix.name }}"
           cp "${{ matrix.lib }}" include/utter.h LICENSE "${{ matrix.name }}/"
           cp target/release/stream${{ runner.os == 'Windows' && '.exe' || '' }} "${{ matrix.name }}/"
           cp third_party/Vosk-Rust/LICENSE "${{ matrix.name }}/LICENSE-Apache-2.0"
           cp third_party/Vosk-Rust/NOTICE "${{ matrix.name }}/NOTICE"
-          tar -czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
-      - uses: actions/upload-artifact@v7
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a -bso0 "${{ matrix.name }}.zip" "${{ matrix.name }}"
+          else
+            tar -czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
+          fi
+      - if: matrix.archive != false
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.tar.gz
+          path: |
+            ${{ matrix.name }}.tar.gz
+            ${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  macos-universal:
+    # One library and one stream tool for both Mac architectures, signed ad hoc: Apple Silicon
+    # loads no unsigned code at all, and without a paid Developer ID an ad-hoc signature is the
+    # most a download can carry. Gatekeeper still quarantines a browser download; the README's
+    # C section gives the xattr line that clears it.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install && rustup target add x86_64-apple-darwin
+      - run: |
+          cargo build --release --lib --bin stream --target aarch64-apple-darwin
+          cargo build --release --lib --bin stream --target x86_64-apple-darwin
+      - run: |
+          mkdir utter-macos-universal
+          for f in libutter.dylib stream; do
+            lipo -create -output "utter-macos-universal/$f" \
+              "target/aarch64-apple-darwin/release/$f" "target/x86_64-apple-darwin/release/$f"
+            codesign --sign - --force --timestamp=none "utter-macos-universal/$f"
+            codesign --verify --verbose "utter-macos-universal/$f"
+            lipo -info "utter-macos-universal/$f"
+          done
+          cp include/utter.h LICENSE utter-macos-universal/
+          cp third_party/Vosk-Rust/LICENSE utter-macos-universal/LICENSE-Apache-2.0
+          cp third_party/Vosk-Rust/NOTICE utter-macos-universal/NOTICE
+          tar -czf utter-macos-universal.tar.gz utter-macos-universal
+      - uses: actions/upload-artifact@v7
+        with:
+          name: utter-macos-universal
+          path: utter-macos-universal.tar.gz
 
   publish:
     # crates.io trusted publishing: the crate on crates.io names this repository and workflow as
     # its publisher, and the action trades the job's OIDC token for a short-lived registry token.
-    needs: [libraries]
+    needs: [libraries, macos-universal]
     runs-on: ubuntu-latest
     environment: crates-io
     permissions:

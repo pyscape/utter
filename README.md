@@ -184,6 +184,12 @@ cc host.c -I include -L target/release -lutter -o host
 LD_LIBRARY_PATH=target/release ./host
 ```
 
+The [releases](https://github.com/pyscape/utter/releases) carry the
+library, the `stream` tool and the header for Linux, Windows and
+macOS. The macOS build is universal and signed ad hoc, not notarized;
+a copy that came through a browser is quarantined until
+`xattr -d com.apple.quarantine libutter.dylib` clears it.
+
 ## What a partial tells you
 
 The stock Vosk partial is a line of text:
