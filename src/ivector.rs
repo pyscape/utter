@@ -272,24 +272,30 @@ impl IvectorExtractor {
         let _w_vec = r.read_double_vec()?;
         r.expect_token("<M>")?;
         let size = r.read_dim()?;
-        let mut m = Vec::with_capacity(size);
+        // Grown as the matrices parse: the count alone buys no allocation.
+        let mut m = Vec::new();
         for _ in 0..size {
             m.push(r.read_double_matrix()?);
         }
         r.expect_token("<SigmaInv>")?;
-        let mut sigma_inv = Vec::with_capacity(size);
+        let mut sigma_inv = Vec::new();
         for _ in 0..size {
             sigma_inv.push(r.read_packed_double()?);
         }
         r.expect_token("<IvectorOffset>")?;
         let prior_offset = r.read_f64()?;
         r.expect_token("</IvectorExtractor>")?;
-        let (d, s) = (m[0].0, m[0].1);
+        let &(d, s, _) = m
+            .first()
+            .ok_or_else(|| err("i-vector extractor has no <M>"))?;
         let mut sigma_inv_m = Vec::with_capacity(size);
         let mut u = Vec::with_capacity(size);
         for i in 0..size {
-            let (_, _, mi) = &m[i];
+            let (md, ms, mi) = &m[i];
             let (sd, si) = &sigma_inv[i];
+            if *md != d || *ms != s {
+                return Err(err("M dimension mismatch"));
+            }
             if *sd != d {
                 return Err(err("SigmaInv dimension mismatch"));
             }

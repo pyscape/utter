@@ -13,6 +13,11 @@ pub struct KaldiReader<R: Read> {
     r: R,
 }
 
+fn cells(rows: usize, cols: usize) -> Result<usize> {
+    rows.checked_mul(cols)
+        .ok_or_else(|| err("matrix dimensions overflow the address space"))
+}
+
 pub fn err(msg: &str) -> Error {
     Error::new(ErrorKind::InvalidData, msg.to_string())
 }
@@ -107,10 +112,23 @@ impl<R: Read> KaldiReader<R> {
         }
     }
 
+    /// `count` elements of `width` bytes, grown as the bytes arrive rather than sized from the
+    /// count: a length field alone then buys no allocation the stream cannot fill.
+    fn read_bounded(&mut self, count: usize, width: usize) -> Result<Vec<u8>> {
+        let want = count
+            .checked_mul(width)
+            .ok_or_else(|| err("length overflows the address space"))?;
+        let mut buf = Vec::new();
+        let got = self.r.by_ref().take(want as u64).read_to_end(&mut buf)?;
+        if got != want {
+            return Err(err("unexpected end of Kaldi stream"));
+        }
+        Ok(buf)
+    }
+
     pub fn read_i32_vec(&mut self) -> Result<Vec<i32>> {
         let n = self.read_dim()?;
-        let mut buf = vec![0u8; n * 4];
-        self.r.read_exact(&mut buf)?;
+        let buf = self.read_bounded(n, 4)?;
         Ok(buf
             .as_chunks::<4>()
             .0
@@ -120,8 +138,7 @@ impl<R: Read> KaldiReader<R> {
     }
 
     fn read_f32_raw(&mut self, count: usize) -> Result<Vec<f32>> {
-        let mut buf = vec![0u8; count * 4];
-        self.r.read_exact(&mut buf)?;
+        let buf = self.read_bounded(count, 4)?;
         Ok(buf
             .as_chunks::<4>()
             .0
@@ -131,8 +148,7 @@ impl<R: Read> KaldiReader<R> {
     }
 
     fn read_f64_raw(&mut self, count: usize) -> Result<Vec<f64>> {
-        let mut buf = vec![0u8; count * 8];
-        self.r.read_exact(&mut buf)?;
+        let buf = self.read_bounded(count, 8)?;
         Ok(buf
             .as_chunks::<8>()
             .0
@@ -152,7 +168,7 @@ impl<R: Read> KaldiReader<R> {
         self.expect_token("FM")?;
         let rows = self.read_dim()?;
         let cols = self.read_dim()?;
-        let data = self.read_f32_raw(rows * cols)?;
+        let data = self.read_f32_raw(cells(rows, cols)?)?;
         Ok((rows, cols, data))
     }
 
@@ -166,7 +182,7 @@ impl<R: Read> KaldiReader<R> {
         self.expect_token("DM")?;
         let rows = self.read_dim()?;
         let cols = self.read_dim()?;
-        let data = self.read_f64_raw(rows * cols)?;
+        let data = self.read_f64_raw(cells(rows, cols)?)?;
         Ok((rows, cols, data))
     }
 
@@ -175,7 +191,7 @@ impl<R: Read> KaldiReader<R> {
     pub fn read_packed_double(&mut self) -> Result<(usize, Vec<f64>)> {
         self.expect_token("DP")?;
         let dim = self.read_dim()?;
-        let data = self.read_f64_raw(dim * (dim + 1) / 2)?;
+        let data = self.read_f64_raw(cells(dim, dim + 1)? / 2)?;
         Ok((dim, data))
     }
 }

@@ -190,14 +190,19 @@ impl SymbolTable {
     pub fn symbol_to_id(&self) -> HashMap<String, i64> {
         self.symbols.iter().cloned().collect()
     }
-    /// OpenFst's text form: `symbol id` per line.
+    /// OpenFst's text form: `symbol id` per line. A line whose id is not one this table can
+    /// number is dropped, as a line that does not parse is: the ids go on to size a vector,
+    /// and a table of n lines numbers its symbols within n.
     pub fn parse_text(txt: &str) -> SymbolTable {
+        let limit = i64::try_from(txt.lines().count()).unwrap_or(i64::MAX);
         let mut symbols = Vec::new();
         for line in txt.lines() {
             let mut it = line.split_whitespace();
             if let (Some(w), Some(i)) = (it.next(), it.next()) {
                 if let Ok(id) = i.parse::<i64>() {
-                    symbols.push((w.to_string(), id));
+                    if (0..limit).contains(&id) {
+                        symbols.push((w.to_string(), id));
+                    }
                 }
             }
         }
@@ -266,6 +271,18 @@ impl<'a> Cur<'a> {
         let n = usize::try_from(n).map_err(|_| err("negative string length"))?;
         Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
     }
+    /// A count read from the file sizes an allocation, so it has to fit in what is left to
+    /// read: `bytes_each` is the smallest record the count stands for.
+    fn count(&self, n: i64, bytes_each: usize) -> Result<usize> {
+        let n = usize::try_from(n).map_err(|_| err("negative count in FST file"))?;
+        let fits = n
+            .checked_mul(bytes_each)
+            .is_some_and(|need| need <= self.b.len().saturating_sub(self.p));
+        if !fits {
+            return Err(err("FST file claims more records than it holds"));
+        }
+        Ok(n)
+    }
     fn align(&mut self) {
         let rem = self.p % FILE_ALIGN;
         if rem != 0 {
@@ -297,10 +314,16 @@ fn read_symbol_table(c: &mut Cur) -> Result<SymbolTable> {
     let name = c.string()?;
     let _available_key = c.i64()?;
     let size = c.i64()?;
-    let mut symbols = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+    let size = c.count(size, 12)?;
+    let mut symbols = Vec::with_capacity(size);
     for _ in 0..size {
         let s = c.string()?;
         let k = c.i64()?;
+        // The tables this runtime reads number their symbols from zero; an id outside that
+        // range would size the id-to-symbol vector from the file alone.
+        if k < 0 || usize::try_from(k).is_ok_and(|k| k >= size) {
+            return Err(err("symbol id outside the table"));
+        }
         symbols.push((s, k));
     }
     Ok(SymbolTable { name, symbols })
@@ -311,8 +334,8 @@ fn read_const_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
     if aligned {
         c.align();
     }
-    let ns = usize::try_from(h.num_states).unwrap_or(0);
-    let na = usize::try_from(h.num_arcs).unwrap_or(0);
+    let ns = c.count(h.num_states, 20)?;
+    let na = c.count(h.num_arcs, 16)?;
     let mut fst = VectorFst {
         start: StateId::try_from(h.start).unwrap_or(NO_STATE),
         states: Vec::with_capacity(ns),
@@ -324,6 +347,9 @@ fn read_const_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
         let narcs = c.u32()? as usize;
         let _niepsilons = c.u32()?;
         let _noepsilons = c.u32()?;
+        if pos + narcs > na {
+            return Err(err("ConstFst arc span out of range"));
+        }
         spans.push((pos, narcs));
         fst.states.push(State {
             final_weight: w,
@@ -335,9 +361,6 @@ fn read_const_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
     }
     let arcs_bytes = c.take(na * 16)?;
     for (s, &(pos, narcs)) in spans.iter().enumerate() {
-        if pos + narcs > na {
-            return Err(err("ConstFst arc span out of range"));
-        }
         let st = &mut fst.states[s];
         for a in pos..pos + narcs {
             let b = &arcs_bytes[a * 16..a * 16 + 16];
@@ -349,6 +372,7 @@ fn read_const_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
             });
         }
     }
+    check_state_ids(&fst)?;
     Ok(fst)
 }
 
@@ -358,7 +382,8 @@ fn read_label_reachable(c: &mut Cur) -> Result<LabelReachable> {
     let mut label2index = HashMap::new();
     if keep_relabel_data {
         let n = c.i64()?;
-        label2index.reserve(usize::try_from(n).unwrap_or(0));
+        let n = c.count(n, 8)?;
+        label2index.reserve(n);
         for _ in 0..n {
             let k = c.i32()?;
             let v = c.i32()?;
@@ -366,10 +391,16 @@ fn read_label_reachable(c: &mut Cur) -> Result<LabelReachable> {
         }
     }
     let final_label = c.i32()?;
-    let num_interval_sets = usize::try_from(c.i64()?).unwrap_or(0);
+    let num_interval_sets = {
+        let n = c.i64()?;
+        c.count(n, 12)?
+    };
     let mut intervals = Vec::with_capacity(num_interval_sets);
     for _ in 0..num_interval_sets {
-        let m = usize::try_from(c.i64()?).unwrap_or(0);
+        let m = {
+            let n = c.i64()?;
+            c.count(n, 8)?
+        };
         let mut set = Vec::with_capacity(m);
         for _ in 0..m {
             let begin = c.i32()?;
@@ -385,6 +416,21 @@ fn read_label_reachable(c: &mut Cur) -> Result<LabelReachable> {
         label2index,
         intervals,
     })
+}
+
+/// Arcs and the start index the state vector, so a file naming a state it does not have would
+/// be an out-of-bounds read the first time the graph is walked.
+fn check_state_ids(fst: &VectorFst) -> Result<()> {
+    let n = fst.states.len();
+    if fst.start != NO_STATE && fst.start as usize >= n {
+        return Err(err("FST start state is not one of its states"));
+    }
+    for st in &fst.states {
+        if st.arcs.iter().any(|a| a.nextstate as usize >= n) {
+            return Err(err("FST arc points past the last state"));
+        }
+    }
+    Ok(())
 }
 
 /// Read an OpenFst binary file: `const` and `vector` bodies, and `olabel_lookahead` wrapping a
@@ -452,14 +498,17 @@ pub fn read_fst_bytes(bytes: &[u8]) -> Result<FstFile> {
 }
 
 fn read_vector_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
-    let ns = usize::try_from(h.num_states).unwrap_or(0);
+    let ns = c.count(h.num_states, 12)?;
     let mut fst = VectorFst {
         start: StateId::try_from(h.start).unwrap_or(NO_STATE),
         states: Vec::with_capacity(ns),
     };
     for _ in 0..ns {
         let w = c.f32()?;
-        let narcs = usize::try_from(c.i64()?).unwrap_or(0);
+        let narcs = {
+            let n = c.i64()?;
+            c.count(n, 16)?
+        };
         let mut arcs = Vec::with_capacity(narcs);
         for _ in 0..narcs {
             arcs.push(Arc {
@@ -474,6 +523,7 @@ fn read_vector_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
             arcs,
         });
     }
+    check_state_ids(&fst)?;
     Ok(fst)
 }
 

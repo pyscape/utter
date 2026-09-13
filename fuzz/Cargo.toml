@@ -1,0 +1,59 @@
+[package]
+name = "utter-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Its own workspace, so the library's lock file stays at one package and its tarball at none.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.utter]
+path = ".."
+
+[[bin]]
+name = "kaldi_reader"
+path = "fuzz_targets/kaldi_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fst_reader"
+path = "fuzz_targets/fst_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_array"
+path = "fuzz_targets/json_array.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transition_model"
+path = "fuzz_targets/transition_model.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ivector"
+path = "fuzz_targets/ivector.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "audio"
+path = "fuzz_targets/audio.rs"
+test = false
+doc = false
+bench = false
