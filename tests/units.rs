@@ -3,8 +3,10 @@
 
 use std::sync::Arc;
 use utter::decoder::{Decoder, DecoderConfig};
-use utter::fst::{Arc as FstArc, VectorFst};
+use utter::fst::{read_fst_bytes, Arc as FstArc, SymbolTable, VectorFst};
+use utter::ivector::IvectorExtractor;
 use utter::kaldi_io::{parse_text_matrix, KaldiReader};
+use utter::transition_model::TransitionModel;
 
 fn arc(i: i32, o: i32, w: f32, n: u32) -> FstArc {
     FstArc {
@@ -210,4 +212,133 @@ fn silence_weighting_deltas() {
         .map(|&(f, _)| f)
         .collect();
     assert_eq!(up, vec![3, 4, 5, 6, 7, 8]);
+}
+
+// What the fuzz targets reached: a count or length the file states and the reader believed, an
+// arithmetic step on a field at the end of its range, and an index the file chooses into a
+// vector the reader built.
+
+fn i32_field(v: i32) -> Vec<u8> {
+    let mut b = vec![4u8];
+    b.extend_from_slice(&v.to_le_bytes());
+    b
+}
+
+fn after_binary(
+    bytes: &[u8],
+    f: impl Fn(&mut KaldiReader<&[u8]>) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let mut r = KaldiReader::new(bytes);
+    r.expect_binary()?;
+    f(&mut r)
+}
+
+#[test]
+fn a_kaldi_length_buys_no_more_than_the_bytes_behind_it() {
+    let mut fv = b"\0BFV ".to_vec();
+    fv.extend_from_slice(&i32_field(i32::MAX));
+    assert!(after_binary(&fv, |r| r.read_float_vec().map(|_| ())).is_err());
+
+    let mut fm = b"\0BFM ".to_vec();
+    fm.extend_from_slice(&i32_field(0x4000_0000));
+    fm.extend_from_slice(&i32_field(0x4000_0000));
+    assert!(after_binary(&fm, |r| r.read_float_matrix().map(|_| ())).is_err());
+
+    let mut dp = b"\0BDP ".to_vec();
+    dp.extend_from_slice(&i32_field(i32::MAX));
+    assert!(after_binary(&dp, |r| r.read_packed_double().map(|_| ())).is_err());
+
+    let mut iv = b"\0B".to_vec();
+    iv.extend_from_slice(&i32_field(i32::MAX));
+    assert!(after_binary(&iv, |r| r.read_i32_vec().map(|_| ())).is_err());
+}
+
+#[test]
+fn a_transition_model_claims_no_more_tuples_than_it_holds() {
+    let mut huge = b"<Tuples> ".to_vec();
+    huge.extend_from_slice(&i32_field(i32::MAX));
+    assert!(TransitionModel::parse(&huge).is_err());
+
+    let mut extreme = b"<Tuples> ".to_vec();
+    extreme.extend_from_slice(&i32_field(1));
+    for field in [1, 0, i32::MAX, i32::MAX] {
+        extreme.extend_from_slice(&i32_field(field));
+    }
+    let tm = TransitionModel::parse(&extreme).unwrap();
+    assert_eq!(tm.num_tids(), 2);
+
+    let mut negative = b"<Tuples> ".to_vec();
+    negative.extend_from_slice(&i32_field(1));
+    for field in [1, 0, -1, 0] {
+        negative.extend_from_slice(&i32_field(field));
+    }
+    assert!(TransitionModel::parse(&negative).is_err());
+}
+
+#[test]
+fn an_ivector_extractor_without_matrices_is_an_error() {
+    let mut b = b"\0B<IvectorExtractor> <w> DM ".to_vec();
+    b.extend_from_slice(&i32_field(0));
+    b.extend_from_slice(&i32_field(0));
+    b.extend_from_slice(b"<w_vec> DV ");
+    b.extend_from_slice(&i32_field(0));
+    b.extend_from_slice(b"<M> ");
+    b.extend_from_slice(&i32_field(0));
+    b.extend_from_slice(b"<SigmaInv> <IvectorOffset> ");
+    b.push(8);
+    b.extend_from_slice(&100.0f64.to_le_bytes());
+    b.extend_from_slice(b"</IvectorExtractor> ");
+    assert!(IvectorExtractor::parse(&b).is_err());
+}
+
+fn fst_header(fst_type: &[u8], flags: i32, start: i64, num_states: i64, num_arcs: i64) -> Vec<u8> {
+    let mut b = 2_125_659_606i32.to_le_bytes().to_vec();
+    for token in [fst_type, b"standard"] {
+        b.extend_from_slice(&i32::try_from(token.len()).unwrap().to_le_bytes());
+        b.extend_from_slice(token);
+    }
+    b.extend_from_slice(&2i32.to_le_bytes());
+    b.extend_from_slice(&flags.to_le_bytes());
+    b.extend_from_slice(&0u64.to_le_bytes());
+    for field in [start, num_states, num_arcs] {
+        b.extend_from_slice(&field.to_le_bytes());
+    }
+    b
+}
+
+#[test]
+fn an_fst_states_what_it_holds_and_points_only_inside_it() {
+    assert!(read_fst_bytes(&fst_header(b"const", 0, 0, i64::MAX, 1)).is_err());
+    assert!(read_fst_bytes(&fst_header(b"vector", 0, 0, i64::MAX, 1)).is_err());
+
+    let mut arc_count = fst_header(b"const", 0, 0, 1, i64::MAX);
+    arc_count.extend_from_slice(&[0u8; 20]);
+    assert!(read_fst_bytes(&arc_count).is_err());
+
+    // One state, one arc, and the arc names a state the file does not have.
+    let mut past_the_end = fst_header(b"vector", 0, 0, 1, 1);
+    past_the_end.extend_from_slice(&f32::INFINITY.to_le_bytes());
+    past_the_end.extend_from_slice(&1i64.to_le_bytes());
+    past_the_end.extend_from_slice(&1i32.to_le_bytes());
+    past_the_end.extend_from_slice(&1i32.to_le_bytes());
+    past_the_end.extend_from_slice(&0f32.to_le_bytes());
+    past_the_end.extend_from_slice(&7u32.to_le_bytes());
+    assert!(read_fst_bytes(&past_the_end).is_err());
+
+    // "< 222222222": one line, and an id that would have sized a vector of 222 million names.
+    let text = SymbolTable::parse_text("< 222222222\n");
+    assert!(text.id_to_symbol().is_empty());
+    assert_eq!(
+        SymbolTable::parse_text("<eps> 0\none 1\n")
+            .id_to_symbol()
+            .len(),
+        2
+    );
+
+    let mut symbols = fst_header(b"vector", 1, 0, 0, 0);
+    symbols.extend_from_slice(&2_125_658_996i32.to_le_bytes());
+    symbols.extend_from_slice(&0i32.to_le_bytes());
+    symbols.extend_from_slice(&i64::MAX.to_le_bytes());
+    symbols.extend_from_slice(&i64::MAX.to_le_bytes());
+    assert!(read_fst_bytes(&symbols).is_err());
 }

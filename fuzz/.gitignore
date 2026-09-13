@@ -1,0 +1,7 @@
+target
+artifacts
+coverage
+Cargo.lock
+# The seed corpus is committed; what a run adds to it is not.
+corpus/*/*
+!corpus/*/seed_*

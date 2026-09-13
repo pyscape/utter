@@ -13,6 +13,7 @@ categories = ["multimedia::audio", "science"]
 # gate and benchmark pages and the scripts that write them stay in the repository.
 exclude = [
   "/docs",
+  "/fuzz",
   "/usecases",
   "/scripts",
   "/.github",

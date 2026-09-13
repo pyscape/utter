@@ -23,8 +23,14 @@ impl TransitionModel {
     pub fn parse(data: &[u8]) -> Result<TransitionModel> {
         let marker = b"<Tuples> ";
         let pos = find(data, marker, 0).ok_or_else(|| err("no <Tuples>"))? + marker.len();
-        let mut kr = KaldiReader::new(&data[pos..]);
+        let tail = &data[pos..];
+        let mut kr = KaldiReader::new(tail);
         let n = kr.read_dim()?;
+        // Each tuple is four size-byte-prefixed i32s; the tables are twice as long as the
+        // count, so a count the file cannot back would size them from the file alone.
+        if n.checked_mul(20).is_none_or(|need| need > tail.len()) {
+            return Err(err("more tuples than the transition model holds"));
+        }
         let mut tid2pdf = vec![-1i32; 2 * n + 1];
         let mut tid2phone = vec![0i32; 2 * n + 1];
         let mut num_pdfs = 0i32;
@@ -33,7 +39,12 @@ impl TransitionModel {
             let _hmm_state = kr.read_i32()?;
             let fwd = kr.read_i32()?;
             let slf = kr.read_i32()?;
-            num_pdfs = num_pdfs.max(fwd + 1).max(slf + 1);
+            if fwd < 0 || slf < 0 {
+                return Err(err("negative pdf id in a transition tuple"));
+            }
+            num_pdfs = num_pdfs
+                .max(fwd.saturating_add(1))
+                .max(slf.saturating_add(1));
             tid2pdf[2 * i + 1] = slf;
             tid2pdf[2 * i + 2] = fwd;
             tid2phone[2 * i + 1] = phone;
