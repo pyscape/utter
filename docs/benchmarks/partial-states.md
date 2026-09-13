@@ -1,10 +1,12 @@
 # Silence direction and word transitions on a built stream
 
-Run 2026-09-13 09:07:29Z, utter 0362249, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 036224951bac5ce49c585266b500c1894e187dc7, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
+Run 2026-09-13 14:50:44Z, utter 2b76479, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty, **not** the checkout as it stands (2b76479). Pages under `docs` were modified at the time of the run.
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 40 ms blocks, 8 partial alternatives, partial words on, seed 20260912. Measured by `scripts/partial_states.py`.
 
 Every reading's `relation` and `lead_delta` below are the runtime's own, read off the partial. The harness derives them again from its series as a check: over the streams decoded here 220372 readings carried a delta from both and all 220372 agreed, the largest disagreement 3.0e-06 nats against a tolerance of 2e-05; 79875 more carried one from the runtime alone, a reading entering the reported list whose history the harness never saw (`[[rr:TD-9#Readings are read once per decoding advance]]`).
+
+The reading with no word on it is `[sil]` on silence phones and `[speech]` inside a word's phones (`[[rr:TD-10#Decision outcome]]`); every figure below keys it as one reading, and its history runs across the label. Over every partial read here it stood at rank 0 as `[speech]` on 88030 of 305669 blocks, and a `[speech]` entry closed the word list on 89698.
 
 A Speech Commands clip holds one word, so it holds no transition between words and no finish. The streams here are built from the clips: utterances of one to five words, pauses of 100-800 ms between the words of an utterance, finishes of 2-3 s between utterances, and every gap cut in rotation from the dataset's own six background recordings, scaled to about -50 dBFS RMS rather than written as digital zeros, which the floor tracker treats apart (`[[rr:TD-8#The runtime reports the floor]]`). Every word's position and every gap's length are therefore exact, and each word's onset and offset are the first and last 10 ms frame within 20 dB of its clip's peak, which owes nothing to the decoder.
 
