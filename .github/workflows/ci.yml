@@ -28,6 +28,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --release --all-targets -- -D warnings
       - uses: EmbarkStudios/cargo-deny-action@v2.1.1
+      - name: A breaking change to the public API needs a version bump past the published crate
+        uses: obi1kenobi/cargo-semver-checks-action@v2.9
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
