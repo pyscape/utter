@@ -48,11 +48,18 @@ jobs:
           cp target/release/stream${{ runner.os == 'Windows' && '.exe' || '' }} "${{ matrix.name }}/"
           cp third_party/Vosk-Rust/LICENSE "${{ matrix.name }}/LICENSE-Apache-2.0"
           cp third_party/Vosk-Rust/NOTICE "${{ matrix.name }}/NOTICE"
-          tar -czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a -bso0 "${{ matrix.name }}.zip" "${{ matrix.name }}"
+          else
+            tar -czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.tar.gz
+          path: |
+            ${{ matrix.name }}.tar.gz
+            ${{ matrix.name }}.zip
+          if-no-files-found: error
 
   publish:
     # crates.io trusted publishing: the crate on crates.io names this repository and workflow as
