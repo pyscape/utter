@@ -1,12 +1,12 @@
 {
  "provenance": {
-  "date": "2026-09-13 14:50:44Z",
-  "utter_revision": "2b76479",
+  "date": "2026-09-13 17:12:30Z",
+  "utter_revision": "11fbe89",
   "source_dirty": false,
-  "docs_dirty": true,
+  "docs_dirty": false,
   "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
-  "wheel_revision": "d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty",
-  "wheel_matches_head": false,
+  "wheel_revision": "11fbe8924c91fae89e2ccf7984bc2d4a93a234a4",
+  "wheel_matches_head": true,
   "engines": {
    "utterpy": "0.0.1",
    "vosk": "0.3.45"
@@ -96,7 +96,7 @@
    "minutes": 78.57144583333334
   }
  },
- "decode_seconds": 206.21377486200072,
+ "decode_seconds": 188.8036255808547,
  "fit": {
   "bound_ms": 500,
   "sil_delta": -8.0,
@@ -9515,6 +9515,11 @@
    },
    "finals": 61,
    "finals_with_a_word": 6,
+   "finals_never_shown": 6,
+   "worded_finals_by_endpoint": {
+    "rule5": 5,
+    "flush": 1
+   },
    "minutes": 6.656636458333334
   }
  },
@@ -9724,6 +9729,11 @@
   },
   "finals": 2071,
   "finals_with_a_word": 1996,
+  "finals_never_shown": 3,
+  "worded_finals_by_endpoint": {
+   "rule2": 1995,
+   "flush": 1
+  },
   "finals_per_min": 26.358176027370416,
   "minutes": 78.57144583333334,
   "words": 2208,
