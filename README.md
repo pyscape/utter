@@ -1,6 +1,7 @@
 # utter
 
 [![CI](https://github.com/pyscape/utter/actions/workflows/ci.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/ci.yml)
+[![docs](https://github.com/pyscape/utter/actions/workflows/docs.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/docs.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A pure-Rust streaming speech recognizer for [Vosk](https://alphacephei.com/vosk/)

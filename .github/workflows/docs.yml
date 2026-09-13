@@ -1,0 +1,25 @@
+name: docs
+
+on:
+  push:
+    branches: [main, pre-alpha]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rustdoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - name: The crate docs build with no broken links
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rustdoc
+          path: target/doc

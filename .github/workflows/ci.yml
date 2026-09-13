@@ -22,10 +22,6 @@ jobs:
         run: rustup toolchain install
       - run: cargo fmt --check
       - run: cargo clippy --release --all-targets -- -D warnings
-      - name: The crate docs build with no broken links
-        run: cargo doc --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
       - uses: EmbarkStudios/cargo-deny-action@v2.1.1
       - uses: actions/setup-python@v7
         with:
