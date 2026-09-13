@@ -21,6 +21,7 @@ exclude = [
   "/rust-toolchain.toml",
   "/.markdownlint-cli2.jsonc",
   "/.rr.toml",
+  "/.taplo.toml",
   "/.typos.toml",
   "/.yamllint.yaml",
   "/deny.toml",
