@@ -1,8 +1,10 @@
 # Security
 
 Report a vulnerability through GitHub's private reporting on this
-repository: Security, then Report a vulnerability. It reaches the
-maintainer alone and is not visible until a fix is published.
+repository, at
+<https://github.com/pyscape/utter/security/advisories/new>. It
+reaches the maintainer alone and is not visible until a fix is
+published.
 
 The runtime reads model files and audio from the host. A model file or
 audio that makes it panic, read out of bounds or allocate without bound
