@@ -38,6 +38,11 @@ fn relax(
     }
 }
 
+/// Back pointers are i32; an arena that large would not fit in memory.
+fn tok_id(i: usize) -> i32 {
+    i32::try_from(i).expect("token arena exceeds i32")
+}
+
 impl BatchDecoder {
     fn epsilon_closure(
         &self,
@@ -56,7 +61,7 @@ impl BatchDecoder {
                 .map(|a| (a.nextstate, base + a.weight, a.olabel))
                 .collect();
             for (ns, cost, word) in updates {
-                if relax(arena, active, ns, cost, ti as i32, word) {
+                if relax(arena, active, ns, cost, tok_id(ti), word) {
                     queue.push(ns);
                 }
             }
@@ -75,6 +80,9 @@ impl BatchDecoder {
     }
 
     /// Best word sequence and its cost with final weights; `loglikes` rows are output frames.
+    // Transition ids and pdf ids are non-negative; a negative one indexes past the slice and
+    // panics either way.
+    #[allow(clippy::cast_sign_loss)]
     pub fn decode(&self, fst: &VectorFst, tid2pdf: &[i32], loglikes: &Mat) -> (Vec<Label>, f32) {
         if fst.start == NO_STATE {
             return (vec![], f32::INFINITY);
@@ -107,7 +115,7 @@ impl BatchDecoder {
                         &mut next,
                         a.nextstate,
                         cost,
-                        ti as i32,
+                        tok_id(ti),
                         a.olabel,
                     );
                 }
@@ -126,7 +134,7 @@ impl BatchDecoder {
                 let c = arena[ti].cost + fw;
                 if c < best_cost {
                     best_cost = c;
-                    best_ti = ti as i32;
+                    best_ti = tok_id(ti);
                 }
             }
         }
@@ -134,14 +142,14 @@ impl BatchDecoder {
             for &ti in active.values() {
                 if arena[ti].cost < best_cost {
                     best_cost = arena[ti].cost;
-                    best_ti = ti as i32;
+                    best_ti = tok_id(ti);
                 }
             }
         }
         let mut words = Vec::new();
         let mut t = best_ti;
-        while t >= 0 {
-            let tok = arena[t as usize];
+        while let Ok(i) = usize::try_from(t) {
+            let tok = arena[i];
             if tok.word != 0 {
                 words.push(tok.word);
             }

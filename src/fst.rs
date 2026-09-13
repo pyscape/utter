@@ -11,6 +11,13 @@ pub type StateId = u32;
 pub type Label = i32;
 pub const NO_STATE: StateId = u32::MAX;
 
+/// A state index as a state id. `NO_STATE` is the last u32, so the count stops one short of it.
+pub fn state_id(i: usize) -> StateId {
+    let id = StateId::try_from(i).unwrap_or(NO_STATE);
+    assert!(id != NO_STATE, "FST has too many states for a u32 id");
+    id
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Arc {
     pub ilabel: Label,
@@ -47,7 +54,7 @@ impl VectorFst {
             final_weight: f32::INFINITY,
             arcs: Vec::new(),
         });
-        (self.states.len() - 1) as StateId
+        state_id(self.states.len() - 1)
     }
     pub fn add_arc(&mut self, s: StateId, arc: Arc) {
         self.states[s as usize].arcs.push(arc);
@@ -87,13 +94,13 @@ impl VectorFst {
         let mut preds: Vec<Vec<StateId>> = vec![Vec::new(); n];
         for (s, st) in self.states.iter().enumerate() {
             for a in &st.arcs {
-                preds[a.nextstate as usize].push(s as StateId);
+                preds[a.nextstate as usize].push(state_id(s));
             }
         }
         let mut coaccessible = vec![false; n];
         let mut stack: Vec<StateId> = (0..n)
             .filter(|&s| self.states[s].final_weight.is_finite())
-            .map(|s| s as StateId)
+            .map(state_id)
             .collect();
         for &s in &stack {
             coaccessible[s as usize] = true;
@@ -172,10 +179,10 @@ impl SymbolTable {
     /// `id -> symbol`, sized to the largest key plus one.
     pub fn id_to_symbol(&self) -> Vec<String> {
         let n = self.symbols.iter().map(|(_, k)| *k).max().unwrap_or(-1) + 1;
-        let mut v = vec![String::new(); n.max(0) as usize];
+        let mut v = vec![String::new(); usize::try_from(n).unwrap_or(0)];
         for (s, k) in &self.symbols {
-            if *k >= 0 {
-                v[*k as usize] = s.clone();
+            if let Ok(k) = usize::try_from(*k) {
+                v[k] = s.clone();
             }
         }
         v
@@ -256,10 +263,8 @@ impl<'a> Cur<'a> {
     }
     fn string(&mut self) -> Result<String> {
         let n = self.i32()?;
-        if n < 0 {
-            return Err(err("negative string length"));
-        }
-        Ok(String::from_utf8_lossy(self.take(n as usize)?).into_owned())
+        let n = usize::try_from(n).map_err(|_| err("negative string length"))?;
+        Ok(String::from_utf8_lossy(self.take(n)?).into_owned())
     }
     fn align(&mut self) {
         let rem = self.p % FILE_ALIGN;
@@ -292,7 +297,7 @@ fn read_symbol_table(c: &mut Cur) -> Result<SymbolTable> {
     let name = c.string()?;
     let _available_key = c.i64()?;
     let size = c.i64()?;
-    let mut symbols = Vec::with_capacity(size.max(0) as usize);
+    let mut symbols = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
     for _ in 0..size {
         let s = c.string()?;
         let k = c.i64()?;
@@ -306,14 +311,10 @@ fn read_const_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
     if aligned {
         c.align();
     }
-    let ns = h.num_states.max(0) as usize;
-    let na = h.num_arcs.max(0) as usize;
+    let ns = usize::try_from(h.num_states).unwrap_or(0);
+    let na = usize::try_from(h.num_arcs).unwrap_or(0);
     let mut fst = VectorFst {
-        start: if h.start < 0 {
-            NO_STATE
-        } else {
-            h.start as StateId
-        },
+        start: StateId::try_from(h.start).unwrap_or(NO_STATE),
         states: Vec::with_capacity(ns),
     };
     let mut spans = Vec::with_capacity(ns);
@@ -357,7 +358,7 @@ fn read_label_reachable(c: &mut Cur) -> Result<LabelReachable> {
     let mut label2index = HashMap::new();
     if keep_relabel_data {
         let n = c.i64()?;
-        label2index.reserve(n.max(0) as usize);
+        label2index.reserve(usize::try_from(n).unwrap_or(0));
         for _ in 0..n {
             let k = c.i32()?;
             let v = c.i32()?;
@@ -365,10 +366,10 @@ fn read_label_reachable(c: &mut Cur) -> Result<LabelReachable> {
         }
     }
     let final_label = c.i32()?;
-    let num_interval_sets = c.i64()?.max(0) as usize;
+    let num_interval_sets = usize::try_from(c.i64()?).unwrap_or(0);
     let mut intervals = Vec::with_capacity(num_interval_sets);
     for _ in 0..num_interval_sets {
-        let m = c.i64()?.max(0) as usize;
+        let m = usize::try_from(c.i64()?).unwrap_or(0);
         let mut set = Vec::with_capacity(m);
         for _ in 0..m {
             let begin = c.i32()?;
@@ -451,18 +452,14 @@ pub fn read_fst_bytes(bytes: &[u8]) -> Result<FstFile> {
 }
 
 fn read_vector_body(c: &mut Cur, h: &FstHeader) -> Result<VectorFst> {
-    let ns = h.num_states.max(0) as usize;
+    let ns = usize::try_from(h.num_states).unwrap_or(0);
     let mut fst = VectorFst {
-        start: if h.start < 0 {
-            NO_STATE
-        } else {
-            h.start as StateId
-        },
+        start: StateId::try_from(h.start).unwrap_or(NO_STATE),
         states: Vec::with_capacity(ns),
     };
     for _ in 0..ns {
         let w = c.f32()?;
-        let narcs = c.i64()?.max(0) as usize;
+        let narcs = usize::try_from(c.i64()?).unwrap_or(0);
         let mut arcs = Vec::with_capacity(narcs);
         for _ in 0..narcs {
             arcs.push(Arc {

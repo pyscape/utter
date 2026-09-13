@@ -22,3 +22,7 @@ target
 
 # rr index
 .ref-cache/
+
+# Python bytecode
+__pycache__/
+*.pyc

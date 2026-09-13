@@ -15,25 +15,43 @@ use crate::transition_model::TransitionModel;
 use std::collections::HashMap;
 use std::io::Result;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
+/// One of Kaldi's endpoint rules: an utterance ends when every condition below holds. Times
+/// are in seconds; a condition is off at `0.0` or infinity.
 #[derive(Clone, Debug)]
 pub struct EndpointRule {
+    /// The best path must contain a non-silence phone.
     pub must_contain_nonsilence: bool,
+    /// Silence at the end of the best path must have lasted this long.
     pub min_trailing_silence: f32,
+    /// The best final state's cost above the best token, in nats, must be under this.
     pub max_relative_cost: f32,
+    /// The utterance must have lasted this long.
     pub min_utterance_length: f32,
 }
 
+/// The model's `conf/model.conf`: Kaldi's decoder and endpoint options under their own names,
+/// with Vosk's defaults for any the file omits.
 #[derive(Clone, Debug)]
 pub struct ModelConf {
+    /// Fewest tokens the beam keeps per frame.
     pub min_active: usize,
+    /// Most tokens the beam keeps per frame.
     pub max_active: usize,
+    /// Decoding beam in nats.
     pub beam: f32,
+    /// Lattice beam in nats; read but unused, since no lattice is built.
     pub lattice_beam: f32,
+    /// Scale on the network's log-likelihoods.
     pub acoustic_scale: f32,
+    /// Input frames per output frame of the network.
     pub frame_subsampling_factor: usize,
+    /// Output frames the decoder advances per chunk.
     pub frames_per_chunk: usize,
+    /// Phone ids the endpoint rules count as silence.
     pub silence_phones: Vec<i32>,
+    /// Kaldi's five rules, `rule1` first.
     pub rules: [EndpointRule; 5],
 }
 
@@ -66,6 +84,7 @@ impl Default for ModelConf {
 }
 
 impl ModelConf {
+    /// Read a `model.conf`: `--key=value` lines, unknown keys and unparsable values ignored.
     pub fn parse(txt: &str) -> ModelConf {
         let mut c = ModelConf::default();
         for line in txt.lines() {
@@ -129,34 +148,71 @@ impl ModelConf {
     }
 }
 
-/// `word_boundary.int`: phone -> type.
+/// A phone's place in a word, from `word_boundary.int`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WordBoundary {
+    /// First phone of a word of several.
     Begin,
+    /// Last phone of a word of several.
     End,
+    /// A phone between a word's first and last.
     Internal,
+    /// The only phone of a one-phone word.
     Singleton,
+    /// Silence or noise; no word.
     Nonword,
 }
 
+/// How many compiled grammars a model keeps.
+// [[rr:TD-4#The model keeps the grammars most recently asked of it]]
+pub const CACHED_GRAPHS: usize = 4;
+
+#[derive(PartialEq, Eq, Hash)]
+struct GraphKey {
+    grammar: Vec<String>,
+    unknown_cost: Option<u32>,
+    max_states: usize,
+}
+
+/// A model directory, opened once and shared by any number of recognizers. The parsed runtime
+/// (network, transition model, graph, i-vector extractor) is public for the crate's binaries
+/// and tests and left out of these docs.
 pub struct Model {
+    /// The directory the model was opened from.
     pub dir: PathBuf,
+    /// The decoder and endpoint options read from `conf/model.conf`.
     pub conf: ModelConf,
+    #[doc(hidden)]
     pub mfcc_opts: MfccOptions,
+    #[doc(hidden)]
     pub tm: TransitionModel,
+    #[doc(hidden)]
     pub net: Nnet3,
+    #[doc(hidden)]
     pub hcl: VectorFst,
+    #[doc(hidden)]
     pub relabel: HashMap<Label, Label>,
+    #[doc(hidden)]
     pub reach: Vec<Vec<(Label, Label)>>,
+    #[doc(hidden)]
     pub final_label: Label,
+    #[doc(hidden)]
     pub disambig: Vec<Label>,
+    /// The word table, indexed by word id.
     pub words: Vec<String>,
+    /// Word id by word; the inverse of [`words`](Self::words).
     pub word_ids: HashMap<String, i64>,
+    /// Each phone's place in a word.
     pub word_boundary: HashMap<i32, WordBoundary>,
+    #[doc(hidden)]
     pub ivector: Option<IvectorInfo>,
+    graphs: Mutex<Vec<(GraphKey, Arc<VectorFst>)>>,
 }
 
 impl Model {
+    /// Read a Vosk model directory: `am/final.mdl`, `graph/`, `ivector/` when present, and the
+    /// two `conf/` files. Fails on a missing file or a network component this crate does not
+    /// implement.
     pub fn open(dir: &Path) -> Result<Model> {
         let conf = ModelConf::parse(&std::fs::read_to_string(dir.join("conf/model.conf"))?);
         let mfcc_opts =
@@ -164,6 +220,15 @@ impl Model {
         let mdl = std::fs::read(dir.join("am/final.mdl"))?;
         let tm = TransitionModel::parse(&mdl)?;
         let net = Nnet3::parse(&mdl);
+        // An unimplemented component would otherwise pass its input through and the model
+        // would decode to nothing resembling speech.
+        let missing = net.unsupported();
+        if !missing.is_empty() {
+            return Err(err(&format!(
+                "the network uses component types this runtime does not implement: {}",
+                missing.join(", ")
+            )));
+        }
         let hclr = read_fst_file(&dir.join("graph/HCLr.fst"))?;
         let addon = hclr
             .addon
@@ -225,7 +290,38 @@ impl Model {
             word_ids,
             word_boundary,
             ivector,
+            graphs: Mutex::new(Vec::new()),
         })
+    }
+
+    /// The decoding graph for a grammar.
+    // [[rr:TD-4#The model keeps the grammars most recently asked of it]]
+    pub fn grammar_graph(
+        &self,
+        grammar: &[String],
+        unknown_cost: Option<f32>,
+        max_states: usize,
+        warn: impl FnMut(String),
+    ) -> Result<Arc<VectorFst>> {
+        let key = GraphKey {
+            grammar: grammar.to_vec(),
+            unknown_cost: unknown_cost.map(f32::to_bits),
+            max_states,
+        };
+        // [[rr:TD-4#The lock spans the composition]]
+        let mut cache = self.graphs.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = cache.iter().position(|(k, _)| *k == key) {
+            let hit = cache.remove(i);
+            let graph = hit.1.clone();
+            cache.push(hit);
+            return Ok(graph);
+        }
+        let graph = Arc::new(self.compile_grammar(grammar, unknown_cost, max_states, warn)?);
+        if cache.len() >= CACHED_GRAPHS {
+            cache.remove(0);
+        }
+        cache.push((key, graph.clone()));
+        Ok(graph)
     }
 
     /// Compile a grammar to the decoding graph: bigram, lookahead composition, erase the
@@ -247,7 +343,7 @@ impl Model {
         if let (Some(cost), Some(&id)) = (unknown_cost, self.word_ids.get(unk)) {
             for st in g.states.iter_mut() {
                 for a in st.arcs.iter_mut() {
-                    if a.ilabel == id as i32 {
+                    if i64::from(a.ilabel) == id {
                         a.weight += cost;
                     }
                 }
@@ -273,12 +369,16 @@ impl Model {
 
     /// The model's unknown-word symbol id, when the word table has one.
     pub fn unknown_word(&self) -> Option<Label> {
-        self.word_ids.get("[unk]").map(|&i| i as Label)
+        self.word_ids
+            .get("[unk]")
+            .and_then(|&i| Label::try_from(i).ok())
     }
 
+    /// The word with this id, or `""` when the table has none.
     pub fn word(&self, id: Label) -> &str {
-        self.words
-            .get(id as usize)
+        usize::try_from(id)
+            .ok()
+            .and_then(|i| self.words.get(i))
             .map(String::as_str)
             .unwrap_or("")
     }

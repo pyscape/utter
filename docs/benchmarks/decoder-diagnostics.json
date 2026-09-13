@@ -1,0 +1,465 @@
+{
+ "split": "testing",
+ "clips": 11005,
+ "block_ms": 40,
+ "alternatives": 10,
+ "grammar_size": 92,
+ "out": "docs/benchmarks/decoder-diagnostics",
+ "provenance": {
+  "date": "2026-09-13 15:47:21Z",
+  "utter_revision": "afbe98e",
+  "source_dirty": false,
+  "docs_dirty": true,
+  "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
+  "wheel_revision": "d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty",
+  "wheel_matches_head": false,
+  "engines": {
+   "vosk": "0.3.45",
+   "utterpy": "0.0.1"
+  },
+  "model": "vosk-model-small-en-us-0.15",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
+  "python": "3.14.4",
+  "block_ms": 40
+ },
+ "preflight": {
+  "vosk": {
+   "ok": true,
+   "model_load_s": 0.1730312870349735,
+   "first_ctor_ms": 0.3978761378675699
+  },
+  "utterpy": {
+   "ok": true,
+   "model_load_s": 0.12671395996585488,
+   "first_ctor_ms": 20.981192821636796
+  }
+ },
+ "oracle": {
+  "sighting": {
+   "vosk": {
+    "at": {
+     "1": {
+      "present": 7921,
+      "total": 11005
+     }
+    },
+    "rank0": 7921,
+    "rank1": null,
+    "rank_2_and_below": null,
+    "median_rank": null,
+    "one_reading_only": true
+   },
+   "utterpy": {
+    "at": {
+     "1": {
+      "present": 7936,
+      "total": 11005
+     },
+     "5": {
+      "present": 8978,
+      "total": 11005
+     },
+     "10": {
+      "present": 9117,
+      "total": 11005
+     }
+    },
+    "rank0": 7936,
+    "rank1": 539,
+    "rank_2_and_below": 642,
+    "median_rank": 0,
+    "one_reading_only": false
+   }
+  },
+  "paired": {
+   "sighting_1": {
+    "both": 7880,
+    "only_a": 41,
+    "only_b": 56,
+    "p": 0.15481578503443275,
+    "engines": [
+     "vosk",
+     "utterpy"
+    ],
+    "clips": 11005
+   },
+   "final_1": {
+    "both": 10053,
+    "only_a": 18,
+    "only_b": 49,
+    "p": 0.00019429778641480997,
+    "engines": [
+     "vosk",
+     "utterpy"
+    ],
+    "clips": 11005
+   },
+   "final_5": {
+    "both": 10321,
+    "only_a": 7,
+    "only_b": 205,
+    "p": 1.0865787032013994e-51,
+    "engines": [
+     "vosk",
+     "utterpy"
+    ],
+    "clips": 11005
+   },
+   "final_10": {
+    "both": 10322,
+    "only_a": 7,
+    "only_b": 236,
+    "p": 1.3263122592220474e-60,
+    "engines": [
+     "vosk",
+     "utterpy"
+    ],
+    "clips": 11005
+   }
+  },
+  "final": {
+   "vosk": {
+    "at": {
+     "1": {
+      "present": 10071,
+      "total": 11005
+     },
+     "5": {
+      "present": 10328,
+      "total": 11005
+     },
+     "10": {
+      "present": 10329,
+      "total": 11005
+     }
+    },
+    "rank0": 10071,
+    "rank1": 211,
+    "rank_2_and_below": 47,
+    "median_rank": 0,
+    "one_reading_only": false
+   },
+   "utterpy": {
+    "at": {
+     "1": {
+      "present": 10102,
+      "total": 11005
+     },
+     "5": {
+      "present": 10526,
+      "total": 11005
+     },
+     "10": {
+      "present": 10558,
+      "total": 11005
+     }
+    },
+    "rank0": 10102,
+    "rank1": 292,
+    "rank_2_and_below": 164,
+    "median_rank": 0,
+    "one_reading_only": false
+   }
+  }
+ },
+ "nbest_check": {
+  "against": "speech-commands.clips.jsonl",
+  "engines": {
+   "vosk": {
+    "same": 10984,
+    "clips": 11005
+   },
+   "utterpy": {
+    "same": 11005,
+    "clips": 11005
+   }
+  }
+ },
+ "oracle_wide": {
+  "sighting": {
+   "vosk": {
+    "at": {
+     "1": {
+      "present": 7916,
+      "total": 11005
+     }
+    },
+    "rank0": 7916,
+    "rank1": null,
+    "rank_2_and_below": null,
+    "median_rank": null,
+    "one_reading_only": true
+   },
+   "utterpy": {
+    "at": {
+     "1": {
+      "present": 7936,
+      "total": 11005
+     },
+     "5": {
+      "present": 8978,
+      "total": 11005
+     },
+     "10": {
+      "present": 9117,
+      "total": 11005
+     }
+    },
+    "rank0": 7936,
+    "rank1": 539,
+    "rank_2_and_below": 642,
+    "median_rank": 0,
+    "one_reading_only": false
+   }
+  },
+  "paired": {
+   "sighting_1": {
+    "both": 7882,
+    "only_a": 34,
+    "only_b": 54,
+    "p": 0.04221061162240621,
+    "engines": [
+     "vosk",
+     "utterpy"
+    ],
+    "clips": 11005
+   },
+   "final_1": {
+    "both": 10054,
+    "only_a": 19,
+    "only_b": 48,
+    "p": 0.0005216127568115073,
+    "engines": [
+     "vosk",
+     "utterpy"
+    ],
+    "clips": 11005
+   },
+   "final_5": {
+    "both": 10322,
+    "only_a": 8,
+    "only_b": 204,
+    "p": 2.79888563397671e-50,
+    "engines": [
+     "vosk",
+     "utterpy"
+    ],
+    "clips": 11005
+   },
+   "final_10": {
+    "both": 10323,
+    "only_a": 8,
+    "only_b": 236,
+    "p": 2.0314156524749815e-59,
+    "engines": [
+     "vosk",
+     "utterpy"
+    ],
+    "clips": 11005
+   }
+  },
+  "final": {
+   "vosk": {
+    "at": {
+     "1": {
+      "present": 10073,
+      "total": 11005
+     },
+     "5": {
+      "present": 10330,
+      "total": 11005
+     },
+     "10": {
+      "present": 10331,
+      "total": 11005
+     }
+    },
+    "rank0": 10073,
+    "rank1": 212,
+    "rank_2_and_below": 46,
+    "median_rank": 0,
+    "one_reading_only": false
+   },
+   "utterpy": {
+    "at": {
+     "1": {
+      "present": 10102,
+      "total": 11005
+     },
+     "5": {
+      "present": 10526,
+      "total": 11005
+     },
+     "10": {
+      "present": 10559,
+      "total": 11005
+     }
+    },
+    "rank0": 10102,
+    "rank1": 292,
+    "rank_2_and_below": 165,
+    "median_rank": 0,
+    "one_reading_only": false
+   }
+  }
+ },
+ "beam": {
+  "clips": {
+   "vosk": {
+    "clips": 11005,
+    "changed": 16,
+    "became_right": 7,
+    "became_wrong": 5,
+    "wrong_to_wrong": 4,
+    "correct_stock": 10071,
+    "correct_wide": 10073,
+    "mcnemar": 0.7744140624999997
+   },
+   "utterpy": {
+    "clips": 11005,
+    "changed": 0,
+    "became_right": 0,
+    "became_wrong": 0,
+    "wrong_to_wrong": 0,
+    "correct_stock": 10102,
+    "correct_wide": 10102,
+    "mcnemar": 1.0
+   }
+  },
+  "conf": {
+   "to": {
+    "beam": "18.0",
+    "max-active": "20000"
+   },
+   "stock": {
+    "min-active": "200",
+    "max-active": "3000",
+    "beam": "10.0",
+    "lattice-beam": "2.0",
+    "acoustic-scale": "1.0",
+    "frame-subsampling-factor": "3",
+    "endpoint.silence-phones": "1:2:3:4:5:6:7:8:9:10",
+    "endpoint.rule2.min-trailing-silence": "0.5",
+    "endpoint.rule3.min-trailing-silence": "0.75",
+    "endpoint.rule4.min-trailing-silence": "1.0"
+   },
+   "wide": {
+    "min-active": "200",
+    "lattice-beam": "2.0",
+    "acoustic-scale": "1.0",
+    "frame-subsampling-factor": "3",
+    "endpoint.silence-phones": "1:2:3:4:5:6:7:8:9:10",
+    "endpoint.rule2.min-trailing-silence": "0.5",
+    "endpoint.rule3.min-trailing-silence": "0.75",
+    "endpoint.rule4.min-trailing-silence": "1.0",
+    "beam": "18.0",
+    "max-active": "20000"
+   },
+   "from": {
+    "beam": "10.0",
+    "max-active": "3000"
+   }
+  },
+  "vosk_params": {
+   "vosk stock": "beam=10 max-active=3000 lattice-beam=2",
+   "vosk wide": "beam=18 max-active=20000 lattice-beam=2"
+  },
+  "compute": {
+   "stock": {
+    "vosk": {
+     "rtf": 0.012437389551187545,
+     "ms_p50": 0.04908093251287937,
+     "ms_p95": 2.8511888813227415,
+     "ms_p99": 3.346818033605814,
+     "seconds": 295.3100625
+    },
+    "utterpy": {
+     "rtf": 0.010680488327388745,
+     "ms_p50": 0.04222290590405464,
+     "ms_p95": 2.4364758282899857,
+     "ms_p99": 2.6914309710264206,
+     "seconds": 295.3100625
+    }
+   },
+   "wide": {
+    "vosk": {
+     "rtf": 0.015420105167021449,
+     "ms_p50": 0.05390588194131851,
+     "ms_p95": 3.626297926530242,
+     "ms_p99": 4.804827971383929,
+     "seconds": 295.3100625
+    },
+    "utterpy": {
+     "rtf": 0.012085983347129245,
+     "ms_p50": 0.043517909944057465,
+     "ms_p95": 2.808447927236557,
+     "ms_p99": 3.1396031845360994,
+     "seconds": 295.3100625
+    }
+   }
+  }
+ },
+ "beam_sweep": {
+  "beams": [
+   0.5,
+   2.0,
+   5.0,
+   13.0,
+   18.0
+  ],
+  "max_active": 20000,
+  "clips": 800,
+  "engines": {
+   "vosk": {
+    "0.5": 1,
+    "2": 1,
+    "5": 1,
+    "13": 0,
+    "18": 0
+   },
+   "utterpy": {
+    "0.5": 0,
+    "2": 0,
+    "5": 0,
+    "13": 0,
+    "18": 0
+   }
+  }
+ },
+ "conf_read": {
+  "acoustic_scale": {
+   "from": "1.0",
+   "to": "0.1"
+  },
+  "engines": {
+   "vosk": {
+    "changed": 193,
+    "clips": 200
+   },
+   "utterpy": {
+    "changed": 192,
+    "clips": 200
+   }
+  }
+ },
+ "attribution": {
+  "source": "partial-trust.clips.jsonl",
+  "sightings": 9230,
+  "revisions": 1147,
+  "no_advance_followed": 436,
+  "with_an_advance": 711,
+  "buckets": {
+   "the next advance settled it": 684,
+   "present at the sighting, ranked below": 4,
+   "absent at the sighting, arrived later": 14,
+   "no word led the last advance": 9
+  },
+  "settled_was_the_clips_word": {
+   "the next advance settled it": 619,
+   "present at the sighting, ranked below": 4,
+   "absent at the sighting, arrived later": 14,
+   "no word led the last advance": 0
+  },
+  "last_advance_agrees_with_final": 8771
+ }
+}

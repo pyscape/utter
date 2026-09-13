@@ -9,7 +9,7 @@ Gate: `[[rr:TD-2#Verification and acceptance]]`, G0.
 - Grammar: the first consumer's grammar, a few dozen single-word entries, composed offline
   through `Model::compile_grammar` (12,281 states, 32,537 arcs, 8 ms).
 - Corpus: a consumer replay set of 33 takes, 16 kHz mono,
-  about 90 minutes of audio.
+  about 29 minutes of audio.
 - Oracle: `vosk` 0.3.45 wheel through `scripts/g0.py oracle`, fed 40 ms
   blocks, dither 0 through a `conf/mfcc.conf` sibling; every final's
   words per take concatenated.

@@ -45,6 +45,18 @@ struct Key {
     fl: Label,
 }
 
+/// What the lookahead over G's arcs from a state finds, through the reachability set of one
+/// HCLr state.
+/// `[[rr:TD-5#Decision outcome]]`
+#[derive(Clone, Copy)]
+struct Look {
+    reachable: bool,
+    /// The single reachable G arc, when there is exactly one and no final to reach.
+    prefix: Option<Arc>,
+    /// Log-sum of the reachable arcs, met with the final weight; read only without a prefix.
+    lweight: f32,
+}
+
 fn member(set: &[(Label, Label)], label: Label) -> bool {
     // intervals are sorted and disjoint
     let mut lo = 0;
@@ -65,6 +77,8 @@ fn member(set: &[(Label, Label)], label: Label) -> bool {
 
 /// `reach`: per HCLr state, the reachable output labels as sorted `[begin, end)` intervals,
 /// and the label that stands for a reachable final state.
+// The lookahead weight is summed in f64 and stored in the graph's f32 arc weight.
+#[allow(clippy::cast_possible_truncation)]
 pub fn compose(
     hcl: &VectorFst,
     g: &VectorFst,
@@ -80,19 +94,20 @@ pub fn compose(
         return Err(ComposeError("graph carries no reachability data".into()));
     }
     let mut index: HashMap<Key, StateId> = HashMap::new();
-    let mut queue: Vec<Key> = Vec::new();
+    let mut looks: HashMap<u64, Look> = HashMap::new();
+    let mut queue: Vec<(Key, StateId)> = Vec::new();
     fn intern(
         index: &mut HashMap<Key, StateId>,
         key: Key,
         out: &mut VectorFst,
-        queue: &mut Vec<Key>,
+        queue: &mut Vec<(Key, StateId)>,
     ) -> StateId {
         if let Some(&s) = index.get(&key) {
             return s;
         }
         let s = out.add_state();
         index.insert(key, s);
-        queue.push(key);
+        queue.push((key, s));
         s
     }
     let start_key = Key {
@@ -104,13 +119,12 @@ pub fn compose(
     };
     out.start = intern(&mut index, start_key, &mut out, &mut queue);
 
-    while let Some(key) = queue.pop() {
+    while let Some((key, cur)) = queue.pop() {
         if out.num_states() > max_states {
             return Err(ComposeError(format!(
                 "composition exceeds {max_states} states"
             )));
         }
-        let cur = index[&key];
         let Key {
             s1,
             s2,
@@ -193,31 +207,54 @@ pub fn compose(
                     continue;
                 }
                 let new_alt: u8 = if noeps2 { 0 } else { 1 };
-                let set = &reach[a1.nextstate as usize];
-                // Lookahead over G's arcs from s2: which are reachable, their log-sum weight,
-                // and the single reachable arc when there is exactly one.
-                let mut first: Option<usize> = None;
-                let mut last: usize = 0;
-                let mut lsum = f64::INFINITY;
-                for (pos, a2) in st2.arcs.iter().enumerate() {
-                    if a2.ilabel != 0 && member(set, a2.ilabel) {
-                        if first.is_none() {
-                            first = Some(pos);
+                let look_key = ((a1.nextstate as u64) << 32) | (s2 as u64);
+                let look = match looks.get(&look_key) {
+                    Some(&l) => l,
+                    None => {
+                        let set = &reach[a1.nextstate as usize];
+                        let mut first: Option<usize> = None;
+                        let mut last: usize = 0;
+                        let mut lsum = f64::INFINITY;
+                        for (pos, a2) in st2.arcs.iter().enumerate() {
+                            if a2.ilabel != 0 && member(set, a2.ilabel) {
+                                if first.is_none() {
+                                    first = Some(pos);
+                                }
+                                last = pos + 1;
+                                lsum = log_plus(lsum, a2.weight as f64);
+                            }
                         }
-                        last = pos + 1;
-                        lsum = log_plus(lsum, a2.weight as f64);
+                        let reach_final = g_final && member(set, final_label);
+                        let reach_arc = first.is_some();
+                        let prefix = match first {
+                            Some(b) if last - b == 1 && !reach_final => Some(st2.arcs[b]),
+                            _ => None,
+                        };
+                        let mut lweight = if reach_arc {
+                            lsum as f32
+                        } else {
+                            f32::INFINITY
+                        };
+                        if reach_final {
+                            lweight = if reach_arc {
+                                lweight.min(st2.final_weight)
+                            } else {
+                                st2.final_weight
+                            };
+                        }
+                        let l = Look {
+                            reachable: reach_arc || reach_final,
+                            prefix,
+                            lweight,
+                        };
+                        looks.insert(look_key, l);
+                        l
                     }
-                }
-                let reach_final = g_final && member(set, final_label);
-                let reach_arc = first.is_some();
-                if !(reach_arc || reach_final) {
+                };
+                if !look.reachable {
                     continue;
                 }
-                let prefix = match first {
-                    Some(b) if last - b == 1 && !reach_final => Some(st2.arcs[b]),
-                    _ => None,
-                };
-                if let Some(larc) = prefix {
+                if let Some(larc) = look.prefix {
                     // Weight lookahead is skipped when a prefix is found: the lookahead weight
                     // is One, the earlier pushed weight is refunded, and G's arc is charged.
                     let weight = a1.weight + (0.0 - fw) + larc.weight;
@@ -243,18 +280,7 @@ pub fn compose(
                         },
                     );
                 } else {
-                    let mut lweight = if reach_arc {
-                        lsum as f32
-                    } else {
-                        f32::INFINITY
-                    };
-                    if reach_final {
-                        lweight = if reach_arc {
-                            lweight.min(st2.final_weight)
-                        } else {
-                            st2.final_weight
-                        };
-                    }
+                    let lweight = look.lweight;
                     let weight = a1.weight + lweight - fw;
                     let ns = intern(
                         &mut index,

@@ -1,22 +1,24 @@
 # Technical decision template
 
-Copy the block below into `docs/td/NNNN-short-slug.md` and fill every
-section. Keep the heading shape exactly; rr keys the record on it.
+Copy the block below into `docs/td/NNNN-short-slug.md`. Keep the
+heading shape exactly; rr keys the record on it. Decision outcome is
+the only required section: it is the record. Write the others when
+they carry something a reader cannot get from the outcome, and leave
+them out when they do not.
 
-```
+```markdown
 # TD-N: Title in one line
 
-- Status: Proposed
-- Date: YYYY-MM-DD
 - Tags: comma, separated
 
-## Context and problem statement
+## Context
 
 What is true today and why it forces a choice.
 
 ## Decision drivers
 
-- Each constraint or quality that the options are judged against.
+- Only when the options are judged against something the context does
+  not already state.
 
 ## Considered options
 

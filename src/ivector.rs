@@ -4,6 +4,9 @@
 //! and the i-vector estimated by conjugate gradient, most recent estimate for every frame.
 // [[rr:TD-2#Front end: the i-vector branch]]
 
+// Frame counts and dimensions take part in the f64 statistics arithmetic.
+#![allow(clippy::cast_precision_loss)]
+
 use crate::kaldi_io::{err, parse_text_matrix, KaldiReader};
 use std::io::Result;
 
@@ -11,11 +14,16 @@ pub struct DiagGmm {
     pub dim: usize,
     pub num_gauss: usize,
     gconsts: Vec<f32>,
-    means_invvars: Vec<f32>,
-    inv_vars: Vec<f32>,
+    /// Kaldi's parameters transposed to `[dim][num_gauss]`. A frame then accumulates every
+    /// Gaussian at once, one dimension at a time, which is the order the per-Gaussian dot
+    /// product summed in and so gives the same float.
+    means_invvars_t: Vec<f32>,
+    inv_vars_t: Vec<f32>,
 }
 
 impl DiagGmm {
+    // The gconsts are summed in f64 and kept, as Kaldi keeps them, in f32.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn parse(bytes: &[u8]) -> Result<DiagGmm> {
         let mut r = KaldiReader::new(bytes);
         r.expect_binary()?;
@@ -48,28 +56,42 @@ impl DiagGmm {
                 gc as f32
             })
             .collect();
+        let mut means_invvars_t = vec![0.0f32; d * g];
+        let mut inv_vars_t = vec![0.0f32; d * g];
+        for m in 0..g {
+            for k in 0..d {
+                means_invvars_t[k * g + m] = means_invvars[m * d + k];
+                inv_vars_t[k * g + m] = inv_vars[m * d + k];
+            }
+        }
         Ok(DiagGmm {
             dim: d,
             num_gauss: g,
             gconsts,
-            means_invvars,
-            inv_vars,
+            means_invvars_t,
+            inv_vars_t,
         })
     }
 
-    pub fn loglikes(&self, x: &[f32], out: &mut [f32]) {
-        let d = self.dim;
-        let sq: Vec<f32> = x.iter().map(|v| v * v).collect();
-        for m in 0..self.num_gauss {
-            let mi = &self.means_invvars[m * d..(m + 1) * d];
-            let iv = &self.inv_vars[m * d..(m + 1) * d];
-            let mut a = 0.0f32;
-            let mut b = 0.0f32;
-            for k in 0..d {
-                a += mi[k] * x[k];
-                b += iv[k] * sq[k];
+    pub fn loglikes(&self, x: &[f32], out: &mut [f32], scratch: &mut Vec<f32>) {
+        let (d, g) = (self.dim, self.num_gauss);
+        let a = &mut out[..g];
+        a.fill(0.0);
+        scratch.clear();
+        scratch.resize(g, 0.0);
+        let b = &mut scratch[..g];
+        for k in 0..d {
+            let xk = x[k];
+            let sq = xk * xk;
+            let mi = &self.means_invvars_t[k * g..(k + 1) * g];
+            let iv = &self.inv_vars_t[k * g..(k + 1) * g];
+            for m in 0..g {
+                a[m] += mi[m] * xk;
+                b[m] += iv[m] * sq;
             }
-            out[m] = self.gconsts[m] + a - 0.5 * b;
+        }
+        for m in 0..g {
+            out[m] = self.gconsts[m] + out[m] - 0.5 * b[m];
         }
     }
 }
@@ -188,7 +210,7 @@ fn linear_cgd(a: &[f64], n: usize, b: &[f64], x: &mut [f64], max_iters: i32) {
     let residual_factor = 0.01f64 * 0.01;
     let inv_residual_factor = 1.0 / residual_factor;
     let mut k = 0i32;
-    while (k as usize) < n + 5 && k != max_iters {
+    while usize::try_from(k).is_ok_and(|i| i < n + 5) && k != max_iters {
         sp_mat_vec(a, n, &p, &mut ap);
         let alpha = -dot(&p, &r) / dot(&p, &ap);
         for i in 0..n {
@@ -249,7 +271,7 @@ impl IvectorExtractor {
         r.expect_token("<w_vec>")?;
         let _w_vec = r.read_double_vec()?;
         r.expect_token("<M>")?;
-        let size = r.read_i32()? as usize;
+        let size = r.read_dim()?;
         let mut m = Vec::with_capacity(size);
         for _ in 0..size {
             m.push(r.read_double_matrix()?);
@@ -427,6 +449,9 @@ pub struct IvectorOptions {
     pub cmn_window: usize,
     pub speaker_frames: usize,
     pub global_frames: usize,
+    /// The wheel's Kaldi recomputes the CMVN window only for a frame whose raw c0 is above
+    /// this (`--cmn-min-energy`); upstream Kaldi has no such threshold.
+    pub min_energy: f32,
     pub left_context: usize,
     pub right_context: usize,
 }
@@ -444,10 +469,17 @@ impl Default for IvectorOptions {
             cmn_window: 600,
             speaker_frames: 600,
             global_frames: 200,
+            min_energy: 50.0,
             left_context: 3,
             right_context: 3,
         }
     }
+}
+
+fn conf_float(txt: &str, key: &str) -> Option<f32> {
+    txt.lines()
+        .find_map(|line| line.trim().strip_prefix(&format!("--{key}=")))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 fn conf_int(txt: &str, key: &str) -> Option<usize> {
@@ -464,10 +496,13 @@ pub struct IvectorInfo {
     pub opts: IvectorOptions,
     pub gmm: DiagGmm,
     pub extractor: IvectorExtractor,
-    /// LDA rows x (spliced dim + 1): linear part then the offset column.
-    lda: Vec<f32>,
+    /// LDA transposed to `[spliced dim][rows]`, so a frame accumulates every output
+    /// dimension at once, one input dimension at a time: the order the row-major product
+    /// summed in, and the same float.
+    lda_t: Vec<f32>,
+    /// The offset column, each output dimension's starting value.
+    lda_offset: Vec<f32>,
     lda_rows: usize,
-    lda_cols: usize,
     /// Global CMVN stats, row 0: sums then count.
     global_mean_stats: Vec<f64>,
 }
@@ -486,6 +521,9 @@ impl IvectorInfo {
         if let Ok(t) = std::fs::read_to_string(dir.join("online_cmvn.conf")) {
             if let Some(v) = conf_int(&t, "cmn-window") {
                 opts.cmn_window = v;
+            }
+            if let Some(v) = conf_float(&t, "cmn-min-energy") {
+                opts.min_energy = v;
             }
             if let Some(v) = conf_int(&t, "global-frames") {
                 opts.global_frames = v;
@@ -514,13 +552,26 @@ impl IvectorInfo {
         if lda_rows != gmm.dim || gmm.dim != extractor.feat_dim {
             return Err(err("i-vector feature dimensions disagree"));
         }
+        let lin = lda_cols.min(spliced);
+        let mut lda_t = vec![0.0f32; lin * lda_rows];
+        let mut lda_offset = vec![0.0f32; lda_rows];
+        for r in 0..lda_rows {
+            for (c, t) in lda_t.chunks_exact_mut(lda_rows).enumerate() {
+                t[r] = lda[r * lda_cols + c];
+            }
+            lda_offset[r] = if lda_cols > lin {
+                lda[r * lda_cols + lin]
+            } else {
+                0.0
+            };
+        }
         Ok(IvectorInfo {
             opts,
             gmm,
             extractor,
-            lda,
+            lda_t,
+            lda_offset,
             lda_rows,
-            lda_cols,
             global_mean_stats,
         })
     }
@@ -537,6 +588,8 @@ pub struct IvectorStream<'a> {
     frames: Vec<Vec<f32>>,
     /// Running sums of the raw frames, for the CMVN window.
     prefix: Vec<Vec<f64>>,
+    /// What the last `cmvn_frame` call left, smoothed: sums then count.
+    cmvn_stats: Vec<f64>,
     stats: OnlineIvectorStats,
     num_frames_stats: usize,
     current: Vec<f64>,
@@ -557,6 +610,7 @@ impl<'a> IvectorStream<'a> {
             info,
             frames: Vec::new(),
             prefix: vec![vec![0.0; info.global_mean_stats.len() - 1]],
+            cmvn_stats: vec![0.0; info.global_mean_stats.len()],
             stats: OnlineIvectorStats::new(dim, info.extractor.prior_offset, info.opts.max_count),
             num_frames_stats: 0,
             current,
@@ -572,7 +626,7 @@ impl<'a> IvectorStream<'a> {
     /// are reached.
     pub fn update_frame_weights(&mut self, deltas: &[(usize, f32)]) {
         for &(frame, w) in deltas {
-            let idx = self.delta_values.len() as u32;
+            let idx = u32::try_from(self.delta_values.len()).expect("too many frame weights");
             self.delta_values.push(w);
             self.delta_weights.push(std::cmp::Reverse((frame, idx)));
             if frame as i64 > self.most_recent_frame_with_weight {
@@ -605,17 +659,22 @@ impl<'a> IvectorStream<'a> {
                 _ => out.push((f, w)),
             }
         }
-        let o = &self.info.opts;
-        let fd = self.info.extractor.feat_dim;
-        let mut ll = vec![0.0f32; self.info.gmm.num_gauss];
+        let info = self.info;
+        let o = &info.opts;
+        let fd = info.extractor.feat_dim;
+        let mut ll = vec![0.0f32; info.gmm.num_gauss];
+        let mut scratch: Vec<f32> = Vec::new();
         let mut raw: Vec<Vec<f32>> = Vec::with_capacity(out.len());
         let mut posts = Vec::with_capacity(out.len());
         for &(t, weight) in &out {
+            // Kaldi fetches every frame's normalized view before it reads the weights, and the
+            // CMVN state depends on the order of those fetches, so a zero weight skips only the
+            // posteriors.
+            let mut f = vec![0.0f32; fd];
+            self.lda_frame(t, true, &mut f);
             let mut post = Vec::new();
             if weight != 0.0 {
-                let mut f = vec![0.0f32; fd];
-                self.lda_frame(t, true, &mut f);
-                self.info.gmm.loglikes(&f, &mut ll);
+                info.gmm.loglikes(&f, &mut ll, &mut scratch);
                 post = select_posteriors(&ll, o.num_gselect, self.min_post_for(weight));
                 for p in post.iter_mut() {
                     p.1 *= o.posterior_scale * weight;
@@ -627,7 +686,7 @@ impl<'a> IvectorStream<'a> {
             raw.push(g);
         }
         let refs: Vec<&[f32]> = raw.iter().map(|v| v.as_slice()).collect();
-        self.stats.acc(&self.info.extractor, &refs, &posts);
+        self.stats.acc(&info.extractor, &refs, &posts);
     }
 
     fn update_stats_until_frame_weighted(&mut self, frame: usize) {
@@ -680,38 +739,45 @@ impl<'a> IvectorStream<'a> {
         }
     }
 
-    fn cmvn_frame(&self, t: usize, out: &mut [f32]) {
-        let o = &self.info.opts;
+    /// The wheel's `OnlineCmvn::GetFrame`: the window is recomputed only for a frame whose raw
+    /// c0 is above `min_energy`; a quieter frame reuses whatever the previous call left, already
+    /// smoothed, and smooths it again, so a run of quiet frames drifts toward the global mean
+    /// and the result depends on the order frames are asked for. The fork leaves the
+    /// statistics undefined when the first frame asked for is quiet; zero is what a fresh
+    /// process gives. `[[rr:i-vector: against the wheel's Kaldi, passed once its quiet-frame rule was matched]]`
+    #[allow(clippy::cast_possible_truncation)]
+    fn cmvn_frame(&mut self, t: usize, out: &mut [f32]) {
+        let info = self.info;
+        let o = &info.opts;
         let dim = out.len();
-        let lo = (t + 1).saturating_sub(o.cmn_window);
-        let count = (t + 1 - lo) as f64;
-        let mut sums: Vec<f64> = (0..dim)
-            .map(|d| self.prefix[t + 1][d] - self.prefix[lo][d])
-            .collect();
-        let mut cur_count = count;
-        if cur_count < o.cmn_window as f64 {
-            let global_count = self.info.global_mean_stats[dim];
-            let mut from_global = o.cmn_window as f64 - cur_count;
-            if from_global > o.global_frames as f64 {
-                from_global = o.global_frames as f64;
+        if self.frames[t][0] > o.min_energy {
+            let lo = (t + 1).saturating_sub(o.cmn_window);
+            for d in 0..dim {
+                self.cmvn_stats[d] = self.prefix[t + 1][d] - self.prefix[lo][d];
             }
+            self.cmvn_stats[dim] = (t + 1 - lo) as f64;
+        }
+        let cur_count = self.cmvn_stats[dim];
+        if cur_count < o.cmn_window as f64 {
+            let from_global = (o.cmn_window as f64 - cur_count).min(o.global_frames as f64);
             if from_global > 0.0 {
-                let scale = from_global / global_count;
-                for d in 0..dim {
-                    sums[d] += scale * self.info.global_mean_stats[d];
+                let scale = from_global / info.global_mean_stats[dim];
+                for d in 0..=dim {
+                    self.cmvn_stats[d] += scale * info.global_mean_stats[d];
                 }
-                cur_count += from_global;
             }
         }
+        let count = self.cmvn_stats[dim];
         let src = &self.frames[t];
         for d in 0..dim {
-            out[d] = src[d] - (sums[d] / cur_count) as f32;
+            out[d] = src[d] - (self.cmvn_stats[d] / count) as f32;
         }
     }
 
     /// Spliced then LDA-transformed frame t, from raw frames or from CMVN frames.
-    fn lda_frame(&self, t: usize, normalized: bool, out: &mut [f32]) {
-        let o = &self.info.opts;
+    fn lda_frame(&mut self, t: usize, normalized: bool, out: &mut [f32]) {
+        let info = self.info;
+        let o = &info.opts;
         let dim = self.frames[0].len();
         let total = self.frames.len();
         let width = o.left_context + 1 + o.right_context;
@@ -720,7 +786,7 @@ impl<'a> IvectorStream<'a> {
         for (n, t2) in
             (t as i64 - o.left_context as i64..=t as i64 + o.right_context as i64).enumerate()
         {
-            let t2 = t2.clamp(0, total as i64 - 1) as usize;
+            let t2 = usize::try_from(t2.clamp(0, total as i64 - 1)).unwrap_or(0);
             if normalized {
                 self.cmvn_frame(t2, &mut tmp);
                 spliced[n * dim..(n + 1) * dim].copy_from_slice(&tmp);
@@ -728,21 +794,20 @@ impl<'a> IvectorStream<'a> {
                 spliced[n * dim..(n + 1) * dim].copy_from_slice(&self.frames[t2]);
             }
         }
-        let (rows, cols) = (self.info.lda_rows, self.info.lda_cols);
-        let lin = cols.min(spliced.len());
-        for r in 0..rows {
-            let row = &self.info.lda[r * cols..(r + 1) * cols];
-            let mut acc = if cols > lin { row[lin] } else { 0.0 };
-            for c in 0..lin {
-                acc += row[c] * spliced[c];
+        let rows = info.lda_rows;
+        out[..rows].copy_from_slice(&info.lda_offset);
+        for (c, col) in info.lda_t.chunks_exact(rows).enumerate() {
+            let s = spliced[c];
+            for r in 0..rows {
+                out[r] += col[r] * s;
             }
-            out[r] = acc;
         }
     }
 
     fn update_stats_until(&mut self, frame: usize) {
-        let o = &self.info.opts;
-        let fd = self.info.extractor.feat_dim;
+        let info = self.info;
+        let o = &info.opts;
+        let fd = info.extractor.feat_dim;
         let mut pending: Vec<usize> = Vec::new();
         let flush = |this: &mut Self, pending: &mut Vec<usize>| {
             if pending.is_empty() {
@@ -751,11 +816,12 @@ impl<'a> IvectorStream<'a> {
             let mut normalized: Vec<Vec<f32>> = Vec::with_capacity(pending.len());
             let mut raw: Vec<Vec<f32>> = Vec::with_capacity(pending.len());
             let mut ll = vec![0.0f32; this.info.gmm.num_gauss];
+            let mut scratch: Vec<f32> = Vec::new();
             let mut posts = Vec::with_capacity(pending.len());
             for &t in pending.iter() {
                 let mut f = vec![0.0f32; fd];
                 this.lda_frame(t, true, &mut f);
-                this.info.gmm.loglikes(&f, &mut ll);
+                this.info.gmm.loglikes(&f, &mut ll, &mut scratch);
                 let mut post = select_posteriors(&ll, o.num_gselect, o.min_post);
                 for p in post.iter_mut() {
                     p.1 *= o.posterior_scale;
@@ -787,6 +853,7 @@ impl<'a> IvectorStream<'a> {
     /// The i-vector feature for `frame` (must be below `num_frames_ready`): statistics are
     /// brought up to that frame and the estimate refreshed, the prior mean removed from
     /// dimension 0.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn get_frame(&mut self, frame: usize, out: &mut [f32]) {
         assert!(frame < self.num_frames_ready(), "i-vector frame not ready");
         if frame >= self.num_frames_stats {

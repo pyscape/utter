@@ -9,3 +9,9 @@ or transcripts are copied in.
 
 `unknown-word-sweep.md` is not a gate but the measurement behind the
 `[unk]` option's default.
+
+`words-on-wordless-audio.md` is not a gate either but the private half of
+the Speech Commands page's wordless pass: how often either engine puts a
+word at rank 0, among the rivals or in a final on a block the audio says
+carries no speech, over the replay corpus, by grammar and by the take
+property a word that is neither held nor straddling goes with.

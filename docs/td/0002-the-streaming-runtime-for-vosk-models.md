@@ -1,7 +1,5 @@
 # TD-2: The streaming runtime for Vosk models - scope, stages, interface, dependencies and gates
 
-- Status: Proposed
-- Date: 2026-09-11
 - Tags: decoder, kaldi, vosk, partials, alternatives, grammar, endpointing, dependencies
 
 ## Context and problem statement
@@ -149,7 +147,7 @@ bindings maps one to one:
 
 - `Model::open(path)`; `Recognizer::new(&model, sample_rate, grammar)`.
 - `set_words`, `set_partial_words`, `set_alternatives(n)`,
-  `set_max_alternatives(n)`, `set_log_callback`.
+  `set_max_alternatives(n)`.
 - `accept(&[i16]) -> Step`: 16-bit mono PCM at the recognizer's rate;
   `Step` carries whether an endpoint fired and at which sample.
 - `partial()`, `alternatives()`, `result()`, `final_result()`: typed
@@ -177,11 +175,13 @@ JSON, partial, keys in this order:
 `partial_alternatives` is present when alternatives were requested; rank
 0 is always the best path and its text equals `partial`.
 `partial_result` is present when partial words are on. A reading is
-never an empty string: a best path with no word on it reads `[sil]`
-(see "Silence and unknown speech announce themselves"). Final and
+never an empty string: a best path with no word on it reads `[sil]`,
+or `[speech]` once it has entered a word's phones (see "Silence and
+unknown speech announce themselves" and `[[rr:TD-10#Decision outcome]]`). Final and
 `alternatives` shapes keep libvosk's key layout; `conf` on final words
 is emitted as 1.0 and documented as a constant, since no lattice
-posterior exists.
+posterior exists. A final also says what closed it and each of its
+words how long it had held in the partial, `[[rr:TD-11#Decision outcome]]`.
 
 Time base: `start` and `end` in seconds are `samples_round_start /
 sample_rate + (frame_offset + output_frame) * 0.03`, libvosk's formula;
@@ -203,9 +203,11 @@ synthetic silence is ever fed by the runtime.
 Kaldi's `OnlineMfcc` over the configuration above. Reference: Vosk-Rust
 `src/mfcc.rs`, verified at a maximum delta of 1e-3 against
 `torchaudio.compliance.kaldi`. Frames are emitted as soon as their 25 ms
-window is complete; the last partial window is dropped. The 512-point
-real FFT is the runtime's own, written after Kaldi's
-`SplitRadixRealFft` so that summation order matches.
+window is complete; the last partial window is dropped. The FFT is the
+runtime's own: a radix-2 complex transform over the frame zero-padded
+to 512, which is about two and a half times the arithmetic of Kaldi's
+`SplitRadixRealFft` over the same frame. Matching that summation order
+is G1's open refinement, and a change to the features.
 
 ### Front end: the i-vector branch
 
@@ -423,20 +425,23 @@ carries an unknown-word symbol, `[unk]` in Vosk models, that a grammar
 may include so out-of-vocabulary speech decodes to it instead of to the
 closest word. They are different things and are reported differently.
 
-- **`[sil]` is the reading of a best path that carries no word.** The
-  `partial` text is then `[sil]`, never the empty string and never a
-  vocabulary word the beam happened to prefer. In the alternatives, the
-  group whose word sequence is empty is labelled `[sil]` and ranked on
-  its cost like any other group, so on silence rank 0 reads `[sil]` and
-  the rivals stand behind it.
+- **`[sil]` is the reading of a best path that carries no word and
+  ends on silence phones.** The `partial` text is then `[sil]`, never
+  the empty string and never a vocabulary word the beam happened to
+  prefer. A wordless path that has entered a word's phones reads
+  `[speech]` instead, `[[rr:TD-10#Decision outcome]]`. In the
+  alternatives, the group whose word sequence is empty carries the same
+  label and is ranked on its cost like any other group, so on silence
+  rank 0 reads `[sil]` and the rivals stand behind it.
 - **Every run of silence phones on the best path that lies between
   words or after the last word is an entry in `partial_result`** with
   the token `[sil]`, its interval in samples and seconds, its energy in
   dBFS and its `stable_ms`, so a pause has a duration the host can
-  read. The `partial` text lists words only, plus `[sil]` when there is
-  no word; silence entries between words appear in the word list, not
-  in the text, so a host that parses the text as words sees exactly the
-  words.
+  read. Word phones after the last aligned word are one `[speech]`
+  entry, last in the list. The `partial` text lists words only, plus
+  `[sil]` or `[speech]` when there is no word; silence and speech
+  entries appear in the word list, not in the text, so a host that
+  parses the text as words sees exactly the words.
 - **`[unk]` is a word.** When the grammar includes the model's
   unknown-word symbol it decodes, ranks, aligns and reports like any
   other word, with its interval and energy; a reading that is only

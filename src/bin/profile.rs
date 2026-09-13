@@ -5,6 +5,7 @@ use utter::looped::LoopedNnet;
 use utter::wav::read_wav;
 use utter::Model;
 
+#[allow(clippy::cast_precision_loss)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let model = Model::open(std::path::Path::new(&args[0])).unwrap();

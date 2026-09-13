@@ -21,6 +21,10 @@ void utter_recognizer_free(UtterRecognizer *rec);
 
 void utter_recognizer_set_words(UtterRecognizer *rec, int on);
 void utter_recognizer_set_partial_words(UtterRecognizer *rec, int on);
+/* A host endpoint bound: a final once the trailing silence reaches trailing_ms (0 or less removes
+   it), unless extending_veto_nats is positive and a reading extending the partial by a further word
+   is within that many nats of it. */
+void utter_recognizer_set_endpoint_bound(UtterRecognizer *rec, float trailing_ms, float extending_veto_nats);
 void utter_recognizer_set_alternatives(UtterRecognizer *rec, int n);
 void utter_recognizer_set_max_alternatives(UtterRecognizer *rec, int n);
 

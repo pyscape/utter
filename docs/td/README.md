@@ -13,7 +13,7 @@ First line: `# TD-N: Title`. rr indexes that heading as the record
 anchor, so a marker on the record ID cites the whole record and a marker
 on the ID plus a section heading cites that section alone:
 
-```
+```text
 [[rr:TD-N]]
 [[rr:TD-N#Decision outcome]]
 ```
@@ -22,26 +22,33 @@ Mint markers with `rr at`, never by hand. `rr index && rr verify` from
 the repository root must pass before a change to `docs/` or `src/` is
 committed.
 
-## Status
+## Changing a record
 
-- Proposed: written, not yet ruled on by the owner.
-- Accepted: in force.
-- Superseded by TD-M: no longer in force; the successor governs. Before
-  superseding or changing a record, `rr search 'TD-N'` lists every
-  comment and document that leans on it; each one is revisited in the
-  same change.
-- Deprecated: no longer in force and nothing replaces it.
+A record states what is. When a decision changes, the record changes
+with it, or a later record replaces it and says so in its own text.
+Before either, `rr search 'TD-N'` lists every comment and document
+that leans on the record; each one is revisited in the same change.
 
 ## Sections
 
-Copy `TEMPLATE.md`. Every section is required; "none" is an acceptable
-body for Considered options when the decision was forced. Implemented
-by is optional: code cites the record with a bare marker, and
-`rr search 'TD-N'` lists every citation, so no list has to be kept.
+Copy `TEMPLATE.md`. Decision outcome is the record; the rest are
+written when they carry something it does not. Considered options
+usually does, and is where a record earns its length: the next reader
+reaches for the rejected option. Implemented by is optional, because
+`rr search 'TD-N'` lists every citation and no list has to be kept.
 
 ## Index
 
-| ID | Title | Status | Date |
-|---|---|---|---|
-| TD-1 | The technical decision record and the references that carry it | Proposed | 2026-09-11 |
-| TD-2 | The streaming runtime for Vosk models - scope, stages, interface, dependencies and gates | Proposed | 2026-09-11 |
+| ID | Title |
+|---|---|
+| TD-1 | The technical decision record and the references that carry it |
+| TD-2 | The streaming runtime for Vosk models - scope, stages, interface, dependencies and gates |
+| TD-3 | The matrix kernel's tile is bounded by the register file |
+| TD-4 | Compiled grammars are kept on the model |
+| TD-5 | The composition's lookahead is a function of the state pair |
+| TD-6 | The graph cost is scaled before a final is chosen |
+| TD-7 | The best path is read once per decoding advance |
+| TD-8 | Silence is the host's gate, on a floor the runtime reports |
+| TD-9 | Each reading carries its relation to the partial and the motion of its lead |
+| TD-10 | A wordless reading says whether a word has begun |
+| TD-11 | A final says what closed it and how long its words held |

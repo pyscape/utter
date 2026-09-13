@@ -4,7 +4,7 @@
     python scripts/g4.py --oracle ORACLE.json --hyp STREAM.jsonl
 
 From a `stream --alternatives N --partial-words` run and the g2 oracle on the same corpus: rank 0
-equals the partial on every block; a best path without a word is offered as [sil] at rank 0;
+equals the partial on every block; a best path without a word is offered as [sil] or [speech] at rank 0;
 blocks whose libvosk partial was empty never yield a vocabulary word at rank 0; and the contest
 census: how many partials carrying a word have a rival one word away.
 """
@@ -12,44 +12,49 @@ census: how many partials carrying a word have a rival one word away.
 import argparse
 import json
 from pathlib import Path
+from typing import Any, cast
 
 
-def words_of(text):
+def words_of(text: str) -> list[str]:
     return [w for w in text.split() if not (w.startswith("[") and w.endswith("]"))]
 
 
-def one_word_apart(a, b):
+# [[rr:TD-10#Decision outcome]]
+WORDLESS = ("[sil]", "[speech]")
+
+
+def one_word_apart(a: list[str], b: list[str]) -> bool:
     if a == b:
         return False
     if len(a) == len(b):
-        return sum(x != y for x, y in zip(a, b)) == 1
+        return sum(x != y for x, y in zip(a, b, strict=True)) == 1
     if abs(len(a) - len(b)) != 1:
         return False
     short, long = (a, b) if len(a) < len(b) else (b, a)
     return any(long[:i] + long[i + 1 :] == short for i in range(len(long)))
 
 
-def pct(a, b):
+def pct(a: float, b: float) -> float:
     return 100.0 * a / b if b else float("nan")
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--oracle", required=True)
     ap.add_argument("--hyp", required=True)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
-    ref = json.loads(Path(args.oracle).read_text())
+    ref = cast("dict[str, Any]", json.loads(Path(args.oracle).read_text()))
     blocks = rank0_eq = 0
     empty_best = empty_as_sil = 0
     vosk_empty = vosk_empty_utter_word = 0
     with_word = contest = 0
-    alt_counts = {}
+    alt_counts: dict[int, int] = {}
     sil_entries = 0
     for line in Path(args.hyp).read_text().splitlines():
         if not line.strip():
             continue
-        h = json.loads(line)
+        h = cast("dict[str, Any]", json.loads(line))
         r = ref.get(h["take"])
         for i, p in enumerate(h["partials"]):
             if p is None:
@@ -64,10 +69,10 @@ def main():
                 rank0_eq += 1
             if not words_of(p["partial"]):
                 empty_best += 1
-                if rank0 == "[sil]":
+                if rank0 in WORDLESS:
                     empty_as_sil += 1
             for e in p.get("partial_result", []):
-                if e["word"] == "[sil]":
+                if e["word"] in WORDLESS:
                     sil_entries += 1
             ref_partial = r["partials"][i] if r is not None and i < len(r["partials"]) else None
             if ref_partial is not None and not ref_partial.get("partial", ""):
@@ -84,7 +89,7 @@ def main():
         f"- rank 0 equals the partial on {rank0_eq} / {blocks} blocks ({pct(rank0_eq, blocks):.2f}%) [asks every block]"
     )
     lines.append(
-        f"- best path without a word on {empty_best} blocks, offered as [sil] at rank 0 on {empty_as_sil} ({pct(empty_as_sil, empty_best):.2f}%)"
+        f"- best path without a word on {empty_best} blocks, offered as [sil] or [speech] at rank 0 on {empty_as_sil} ({pct(empty_as_sil, empty_best):.2f}%)"
     )
     lines.append(
         f"- blocks whose libvosk partial was empty: {vosk_empty}; rank 0 a vocabulary word on {vosk_empty_utter_word} ({pct(vosk_empty_utter_word, vosk_empty):.3f}%) [asks 0]"
@@ -92,7 +97,7 @@ def main():
     lines.append(
         f"- contest census: {contest} / {with_word} partials with a word have a rival one word away ({pct(contest, with_word):.2f}%)"
     )
-    lines.append(f"- [sil] entries in partial word lists: {sil_entries}")
+    lines.append(f"- [sil] and [speech] entries in partial word lists: {sil_entries}")
     lines.append("- alternatives per block: " + ", ".join(f"{k}: {v}" for k, v in sorted(alt_counts.items())))
     text = "\n".join(lines) + "\n"
     print(text)

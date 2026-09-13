@@ -1,7 +1,5 @@
 # TD-1: The technical decision record and the references that carry it
 
-- Status: Proposed
-- Date: 2026-09-11
 - Tags: documentation, references, tooling, process
 
 ## Context and problem statement
@@ -23,8 +21,9 @@ citation still resolves.
   surprise.
 - A record's identity is stable for the life of the repository:
   numbers are never reused and records are never deleted.
-- The owner rules; a record is written by whoever does the work and is
-  in force only once the owner accepts it.
+- A record describes what is, not what someone hopes to be allowed to
+  do: it is written by whoever takes the decision, and it is in force
+  because the code is built that way.
 - What the library must do is kept apart from how it is built: a use
   case states a need, a record answers it.
 
@@ -46,27 +45,30 @@ citation still resolves.
 `docs/td/` holds the technical decision log. A record is one file named
 `docs/td/NNNN-short-slug.md` whose first line is `# TD-N: Title`. The
 number is assigned once from the next free number in `docs/td/README.md`
-and is the record's identity: a record is never renumbered and never
-deleted; when it stops applying its status changes.
+and is the record's identity: a record is never renumbered. A record
+that stops applying is changed or replaced, not left standing.
 
 ### The sections
 
-Every record carries, in this order: the status, date and tags lines;
-Context and problem statement; Decision drivers; Considered options;
-Decision outcome; Consequences; and, when the record names what carries
-it out, Implemented by. `docs/td/TEMPLATE.md` is copied, never
-retyped. Decision outcome is written in subsections whose headings
-state the ruling, so that a citation can point at one ruling rather than
-at the whole record.
+A record carries the tags line and Decision outcome, written in
+subsections whose headings state each ruling, so a citation points at
+one ruling rather than the whole record. Context, Decision drivers, Considered options, Consequences and
+Implemented by follow it in that order when they carry something the
+outcome does not, and are left out when they do not.
+`docs/td/TEMPLATE.md` is copied, never retyped.
 
-### Status and the owner
+### A record carries no ceremony
 
-A record is Proposed when written, Accepted once the owner rules it in
-force, Superseded by TD-M when a later record replaces it, and
-Deprecated when it stops applying and nothing replaces it. Only the
-owner moves a record to Accepted. Before a record is superseded or
-changed, `rr search 'TD-N'` lists everything that cites it, and each
-citation is revisited in the same change.
+A record has no status field and no date. It describes the decision
+the library is built on, so the only question a reader asks of it is
+whether the code still matches, and `rr verify` plus the gates answer
+that. A record that has stopped being true is changed or replaced in
+the same commit as the code that stopped matching it, never left
+standing with a label saying to disregard it.
+
+Before a record is changed or replaced, `rr search 'TD-N'` lists
+everything that cites it, and each citation is revisited in the same
+change.
 
 ### Citation is by marker
 
@@ -74,7 +76,7 @@ Every reference to a record, from code, from another record, from a use
 case or from the README, is an rr marker, on the record for the whole
 of it and on the record plus a section heading for one ruling:
 
-```
+```text
 [[rr:TD-N]]
 [[rr:TD-N#Decision outcome]]
 ```
@@ -94,7 +96,7 @@ change under `docs/` or `src/` is committed. The index lives in
 ### Use cases are the other side of the log
 
 `usecases/` holds what a consumer needs, in the consumer's terms and
-without its name. A use case is not a decision and carries no status;
+without its name. A use case is not a decision;
 it is the thing a record answers. A record that answers a use case
 cites the use case's section by marker, and a use case that a record
 now satisfies is not edited to say so: `rr search` on the record tells
@@ -120,5 +122,5 @@ code is deleted at review.
 ## Implemented by
 
 - `.rr.toml`: the profile the gate runs under.
-- `docs/td/README.md` and `docs/td/TEMPLATE.md`: numbering, status,
-  sections, and the index.
+- `docs/td/README.md` and `docs/td/TEMPLATE.md`: numbering, sections,
+  and the index.

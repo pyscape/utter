@@ -10,6 +10,36 @@
 
 use crate::fst::{Label, StateId, VectorFst, NO_STATE};
 use std::collections::HashMap;
+
+/// The token maps key on a graph state id. `HashMap`'s default hash costs more than the probe
+/// it protects and its quality buys nothing for a dense integer key, so the two per-frame maps
+/// use a multiply-rotate over the id instead.
+///
+/// Iteration order decides which tokens a narrowing cutoff prunes, so it can move a partial
+/// where two readings tie. The default hash is seeded afresh every run, which made that
+/// order, and so those partials, differ between runs of the same audio; a fixed hash is what
+/// makes them repeatable.
+#[derive(Default)]
+struct StateHasher(u64);
+
+impl std::hash::Hasher for StateHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(v as u64);
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type StateMap<V> = HashMap<StateId, V, std::hash::BuildHasherDefault<StateHasher>>;
 use std::sync::Arc as Rc;
 use std::sync::Arc;
 
@@ -24,15 +54,27 @@ pub struct Link {
     pub phone: i32,
 }
 
+/// libvosk scales the graph half of a final path's cost by this before choosing which path
+/// to emit, so a token carries its graph cost apart from its total.
+/// `[[rr:TD-6#Decision outcome]]`
+pub const GRAPH_SCALE: f32 = 0.9;
+
 #[derive(Clone)]
 pub struct Token {
     pub cost: f32,
+    /// The arc weights along this path, without the acoustic likelihoods.
+    pub graph: f32,
     pub link: Option<Rc<Link>>,
     /// Phone of the last emitting arc on this path, for change detection.
     pub phone: i32,
     /// Creation order within the frame; ties in cost go to the newest token, as Kaldi's token
     /// list, iterated newest first with a strict comparison, resolves them.
     pub seq: u32,
+}
+
+/// The frame a link records. 2^32 frames is over a year of audio in one utterance.
+fn frame_id(n: usize) -> u32 {
+    u32::try_from(n).expect("frame count exceeds u32")
 }
 
 #[derive(Clone, Debug)]
@@ -61,19 +103,55 @@ pub struct Path {
     pub cost: f32,
 }
 
+impl Path {
+    /// Kaldi's `TrailingSilenceLength`.
+    pub fn trailing_silence_frames(&self, silence_phones: &[i32]) -> usize {
+        let mut n = 0;
+        for seg in self.phones.iter().rev() {
+            if silence_phones.contains(&seg.phone) {
+                n += seg.end - seg.start;
+            } else {
+                break;
+            }
+        }
+        n
+    }
+}
+
+/// One reading, with the cheapest token that carries it.
+/// `[[rr:TD-9#Every reading carries its lead's motion]]`
+/// `rank` is what the readings are ordered by, `cost` what a traced path reports; without
+/// final costs they are equal.
+pub struct Group<'t> {
+    pub words: Vec<Label>,
+    pub rank: f32,
+    pub cost: f32,
+    pub token: &'t Token,
+}
+
 pub struct Decoder<'g> {
     fst: Arc<VectorFst>,
     pub config: DecoderConfig,
     tid2pdf: &'g [i32],
     tid2phone: &'g [i32],
-    cur: HashMap<StateId, Token>,
+    cur: StateMap<Token>,
     num_frames_decoded: usize,
     /// Per state: whether it has input-epsilon arcs.
     has_eps: Vec<bool>,
     tmp_costs: Vec<f32>,
     queue: Vec<StateId>,
     seq: u32,
+    /// Off by default: it walks both chains where the costs are close.
+    /// `[[rr:TD-9#No lattice is added for this feature]]`
+    pub census: bool,
+    /// Collisions at a state where the two chains' word sequences differ and their costs are
+    /// within `CENSUS_NATS`. The loser is dropped whichever way the comparison goes, so both
+    /// directions count. A collision is not a reading lost: the loser's sequence may survive
+    /// on another token, and neither path need be near the leader.
+    pub merges_close: u64,
 }
+
+pub const CENSUS_NATS: f32 = 2.0;
 
 impl<'g> Decoder<'g> {
     pub fn new(
@@ -92,12 +170,14 @@ impl<'g> Decoder<'g> {
             config,
             tid2pdf,
             tid2phone,
-            cur: HashMap::new(),
+            cur: StateMap::default(),
             num_frames_decoded: 0,
             has_eps,
             tmp_costs: Vec::new(),
             queue: Vec::new(),
             seq: 0,
+            census: false,
+            merges_close: 0,
         };
         d.init_decoding();
         d
@@ -114,6 +194,7 @@ impl<'g> Decoder<'g> {
             self.fst.start,
             Token {
                 cost: 0.0,
+                graph: 0.0,
                 link: None,
                 phone: 0,
                 seq: 0,
@@ -187,11 +268,15 @@ impl<'g> Decoder<'g> {
         self.num_frames_decoded += 1;
     }
 
+    // Transition ids and pdf ids are non-negative; a negative one indexes past the slice and
+    // panics either way.
+    #[allow(clippy::cast_sign_loss)]
     fn process_emitting(&mut self, loglikes: &[f32]) -> f32 {
-        let frame = self.num_frames_decoded as u32;
+        let frame = frame_id(self.num_frames_decoded);
         let (cur_cutoff, adaptive_beam, best_state) = self.get_cutoff();
         let prev = std::mem::take(&mut self.cur);
-        let mut next: HashMap<StateId, Token> = HashMap::with_capacity(prev.len() * 2);
+        let mut next: StateMap<Token> =
+            StateMap::with_capacity_and_hasher(prev.len() * 2, Default::default());
         let mut next_cutoff = f32::INFINITY;
         let mut cost_offset = 0.0f32;
         if let Some(bs) = best_state {
@@ -225,7 +310,18 @@ impl<'g> Decoder<'g> {
                     next_cutoff = tot + adaptive_beam;
                 }
                 let (better, seq) = match next.get(&a.nextstate) {
-                    Some(t) => (tot < t.cost, t.seq),
+                    Some(t) => {
+                        if self.census && (t.cost - tot).abs() < CENSUS_NATS {
+                            let mut mine = Self::words_on(tok.link.as_deref());
+                            if a.olabel != 0 {
+                                mine.push(a.olabel);
+                            }
+                            if mine != Self::words_on(t.link.as_deref()) {
+                                self.merges_close += 1;
+                            }
+                        }
+                        (tot < t.cost, t.seq)
+                    }
                     None => {
                         self.seq += 1;
                         (true, self.seq)
@@ -247,6 +343,7 @@ impl<'g> Decoder<'g> {
                         a.nextstate,
                         Token {
                             cost: tot,
+                            graph: tok.graph + a.weight,
                             link,
                             phone,
                             seq,
@@ -259,8 +356,9 @@ impl<'g> Decoder<'g> {
         next_cutoff
     }
 
+    #[allow(clippy::cast_sign_loss)]
     fn process_nonemitting(&mut self, cutoff: f32) {
-        let frame = self.num_frames_decoded as u32;
+        let frame = frame_id(self.num_frames_decoded);
         self.queue.clear();
         for &s in self.cur.keys() {
             if self.has_eps[s as usize] {
@@ -281,7 +379,18 @@ impl<'g> Decoder<'g> {
                     continue;
                 }
                 let (better, seq) = match self.cur.get(&a.nextstate) {
-                    Some(t) => (tot < t.cost, t.seq),
+                    Some(t) => {
+                        if self.census && (t.cost - tot).abs() < CENSUS_NATS {
+                            let mut mine = Self::words_on(tok.link.as_deref());
+                            if a.olabel != 0 {
+                                mine.push(a.olabel);
+                            }
+                            if mine != Self::words_on(t.link.as_deref()) {
+                                self.merges_close += 1;
+                            }
+                        }
+                        (tot < t.cost, t.seq)
+                    }
                     None => {
                         self.seq += 1;
                         (true, self.seq)
@@ -302,6 +411,7 @@ impl<'g> Decoder<'g> {
                         a.nextstate,
                         Token {
                             cost: tot,
+                            graph: tok.graph + a.weight,
                             link,
                             phone: tok.phone,
                             seq,
@@ -317,7 +427,7 @@ impl<'g> Decoder<'g> {
     /// non-final token counts only when no token is final.
     pub fn best_token(&self, use_final: bool) -> Option<(&Token, f32)> {
         let any_final = use_final && self.cur.keys().any(|&s| self.fst.is_final(s));
-        let mut best: Option<(&Token, f32)> = None;
+        let mut best: Option<(&Token, f32, f32)> = None;
         for (&s, t) in &self.cur {
             let fw = if any_final {
                 self.fst.states[s as usize].final_weight
@@ -325,15 +435,20 @@ impl<'g> Decoder<'g> {
                 0.0
             };
             let c = t.cost + fw;
+            let rank = if any_final {
+                c - (1.0 - GRAPH_SCALE) * (t.graph + fw)
+            } else {
+                c
+            };
             if c.is_finite()
                 && best
-                    .map(|(bt, b)| c < b || (c == b && t.seq > bt.seq))
+                    .map(|(bt, b, _)| rank < b || (rank == b && t.seq > bt.seq))
                     .unwrap_or(true)
             {
-                best = Some((t, c));
+                best = Some((t, rank, c));
             }
         }
-        best
+        best.map(|(t, _, c)| (t, c))
     }
 
     /// Kaldi's `FinalRelativeCost`: infinity when no active token is final.
@@ -349,6 +464,19 @@ impl<'g> Decoder<'g> {
         } else {
             best_final - best
         }
+    }
+
+    fn words_on(link: Option<&Link>) -> Vec<Label> {
+        let mut words = Vec::new();
+        let mut l = link;
+        while let Some(r) = l {
+            if r.word != 0 {
+                words.push(r.word);
+            }
+            l = r.prev.as_deref();
+        }
+        words.reverse();
+        words
     }
 
     /// Traceback of a token's records into words and phone segments.
@@ -395,27 +523,12 @@ impl<'g> Decoder<'g> {
         self.best_token(use_final).map(|(t, c)| self.trace(t, c))
     }
 
-    /// Kaldi's `TrailingSilenceLength` on the best path without final costs.
-    pub fn trailing_silence_frames(&self, silence_phones: &[i32]) -> usize {
-        let Some(path) = self.best_path(false) else {
-            return 0;
-        };
-        let mut n = 0;
-        for seg in path.phones.iter().rev() {
-            if silence_phones.contains(&seg.phone) {
-                n += seg.end - seg.start;
-            } else {
-                break;
-            }
-        }
-        n
-    }
-
     /// Surviving tokens grouped by word sequence, cheapest first; each group carries its
-    /// cheapest token's path. With `use_final`, final costs are added as for `best_token`.
-    pub fn alternatives(&self, use_final: bool, max: usize) -> Vec<Path> {
+    /// cheapest token. With `use_final`, final costs are added as for `best_token`.
+    /// `[[rr:TD-9#Readings are read once per decoding advance]]`
+    pub fn grouped(&self, use_final: bool) -> Vec<Group<'_>> {
         let any_final = use_final && self.cur.keys().any(|&s| self.fst.is_final(s));
-        let mut groups: HashMap<Vec<Label>, (f32, &Token)> = HashMap::new();
+        let mut groups: HashMap<Vec<Label>, (f32, f32, &Token)> = HashMap::new();
         for (&s, t) in &self.cur {
             let fw = if any_final {
                 self.fst.states[s as usize].final_weight
@@ -426,6 +539,12 @@ impl<'g> Decoder<'g> {
             if !c.is_finite() {
                 continue;
             }
+            // Grouped and ranked at the scale the reading is chosen by, not at the raw cost.
+            let rank = if any_final {
+                c - (1.0 - GRAPH_SCALE) * (t.graph + fw)
+            } else {
+                c
+            };
             let mut words = Vec::new();
             let mut l = t.link.as_deref();
             while let Some(r) = l {
@@ -436,16 +555,41 @@ impl<'g> Decoder<'g> {
             }
             words.reverse();
             match groups.get_mut(&words) {
-                Some(g) if g.0 < c || (g.0 == c && g.1.seq >= t.seq) => {}
-                Some(g) => *g = (c, t),
+                Some(g) if g.0 < rank || (g.0 == rank && g.2.seq >= t.seq) => {}
+                Some(g) => *g = (rank, c, t),
                 None => {
-                    groups.insert(words, (c, t));
+                    groups.insert(words, (rank, c, t));
                 }
             }
         }
-        let mut v: Vec<(f32, &Token)> = groups.into_values().collect();
-        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(b.1.seq.cmp(&a.1.seq)));
-        v.truncate(max);
-        v.into_iter().map(|(c, t)| self.trace(t, c)).collect()
+        let mut v: Vec<Group<'_>> = groups
+            .into_iter()
+            .map(|(words, (rank, cost, token))| Group {
+                words,
+                rank,
+                cost,
+                token,
+            })
+            .collect();
+        v.sort_by(|a, b| {
+            a.rank
+                .partial_cmp(&b.rank)
+                .unwrap()
+                .then(b.token.seq.cmp(&a.token.seq))
+        });
+        v
+    }
+
+    pub fn trace_groups(&self, groups: &[Group<'_>], max: usize) -> Vec<Path> {
+        groups
+            .iter()
+            .take(max)
+            .map(|g| self.trace(g.token, g.cost))
+            .collect()
+    }
+
+    pub fn alternatives(&self, use_final: bool, max: usize) -> Vec<Path> {
+        let groups = self.grouped(use_final);
+        self.trace_groups(&groups, max)
     }
 }

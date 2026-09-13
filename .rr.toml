@@ -1,9 +1,10 @@
 # This repository's profile, merged over rr's built-in rr.toml defaults.
 
 [verify]
-# Markdown and Rust comments: the decision records under docs/td, the use
-# cases, and the markers code carries to cite them.
-in-scope = ["**/*.md", "**/*.rs"]
+# Markdown and Python/Rust comments: the decision records under docs/td, the
+# use cases, the gate and benchmark notes, and the markers code and the scripts
+# that measure it carry to cite them.
+in-scope = ["**/*.md", "**/*.py", "**/*.rs"]
 # Model directories and replay audio, when they are ever checked in, are
 # fixtures, not prose.
 exclude = ["tests/data/**", "target/**"]
@@ -13,6 +14,9 @@ rules = [
   "ambiguous-marker",
   "path-only-marker",
 ]
+
+[scan.python]
+eligible = ["comments"]
 
 [scan.rust]
 eligible = ["comments"]

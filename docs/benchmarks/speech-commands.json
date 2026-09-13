@@ -1,0 +1,2194 @@
+{
+ "split": "testing",
+ "clips": 11005,
+ "block_ms": 40,
+ "grammar_size": {
+  "clips": 400,
+  "sizes": {
+   "35": {
+    "vosk": {
+     "correct": 376,
+     "accuracy": 94.0,
+     "ctor_first_ms": 0.24367100559175014,
+     "ctor_rest_ms": 0.1949184821605832,
+     "decode_rtf": 0.015446575368414813
+    },
+    "utterpy": {
+     "correct": 378,
+     "accuracy": 94.5,
+     "ctor_first_ms": 0.9036140982061625,
+     "ctor_rest_ms": 0.01570506821991059,
+     "decode_rtf": 0.013593817069429352
+    }
+   },
+   "60": {
+    "vosk": {
+     "correct": 370,
+     "accuracy": 92.5,
+     "ctor_first_ms": 0.31938194297254086,
+     "ctor_rest_ms": 0.22994926465409143,
+     "decode_rtf": 0.016498982382858168
+    },
+    "utterpy": {
+     "correct": 371,
+     "accuracy": 92.75,
+     "ctor_first_ms": 1.5127630904316902,
+     "ctor_rest_ms": 0.020798565913225178,
+     "decode_rtf": 0.01444170103389755
+    }
+   },
+   "92": {
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "ctor_first_ms": 0.38266507908701897,
+     "ctor_rest_ms": 0.2906553856888436,
+     "decode_rtf": 0.017037818648964916
+    },
+    "utterpy": {
+     "correct": 369,
+     "accuracy": 92.25,
+     "ctor_first_ms": 2.379376906901598,
+     "ctor_rest_ms": 0.02765106002246975,
+     "decode_rtf": 0.013779869798457637
+    }
+   },
+   "150": {
+    "vosk": {
+     "correct": 364,
+     "accuracy": 91.0,
+     "ctor_first_ms": 0.5135009996592999,
+     "ctor_rest_ms": 0.3926230263067666,
+     "decode_rtf": 0.017649414347224508
+    },
+    "utterpy": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "ctor_first_ms": 3.7172259762883186,
+     "ctor_rest_ms": 0.041994497292023855,
+     "decode_rtf": 0.013879996707060997
+    }
+   },
+   "200": {
+    "vosk": {
+     "correct": 361,
+     "accuracy": 90.25,
+     "ctor_first_ms": 0.5632990505546331,
+     "ctor_rest_ms": 0.46786253765356123,
+     "decode_rtf": 0.018069528500170868
+    },
+    "utterpy": {
+     "correct": 366,
+     "accuracy": 91.5,
+     "ctor_first_ms": 5.074494984000921,
+     "ctor_rest_ms": 0.04787122501634566,
+     "decode_rtf": 0.013963507659396508
+    }
+   },
+   "246": {
+    "vosk": {
+     "correct": 356,
+     "accuracy": 89.0,
+     "ctor_first_ms": 0.6408358458429575,
+     "ctor_rest_ms": 0.533122536644601,
+     "decode_rtf": 0.018610305682019927
+    },
+    "utterpy": {
+     "correct": 359,
+     "accuracy": 89.75,
+     "ctor_first_ms": 6.337004946544766,
+     "ctor_rest_ms": 0.05824126088454908,
+     "decode_rtf": 0.013950377306318814
+    }
+   }
+  }
+ },
+ "out": "docs/benchmarks/speech-commands",
+ "provenance": {
+  "date": "2026-09-13 15:11:08Z",
+  "utter_revision": "afbe98e",
+  "source_dirty": false,
+  "docs_dirty": false,
+  "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
+  "wheel_revision": "d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty",
+  "wheel_matches_head": false,
+  "engines": {
+   "vosk": "0.3.45",
+   "utterpy": "0.0.1"
+  },
+  "model": "vosk-model-small-en-us-0.15",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
+  "python": "3.14.4",
+  "block_ms": 40
+ },
+ "preflight": {
+  "vosk": {
+   "ok": true,
+   "model_load_s": 0.18095899117179215,
+   "first_ctor_ms": 0.4291560035198927
+  },
+  "utterpy": {
+   "ok": true,
+   "model_load_s": 0.1333634799811989,
+   "first_ctor_ms": 31.33748401887715
+  }
+ },
+ "agreement": {
+  "pair": [
+   "vosk",
+   "utterpy"
+  ],
+  "total": 11005,
+  "identical": 10913,
+  "differ": 92,
+  "differ_a_right": 17,
+  "differ_b_right": 50,
+  "differ_neither": 25,
+  "empty": {
+   "vosk": 411,
+   "utterpy": 412
+  },
+  "empty_one_way": {
+   "vosk": 5,
+   "utterpy": 6
+  }
+ },
+ "significance": {
+  "all words": {
+   "only_a": 17,
+   "only_b": 50,
+   "p": 6.737973666915315e-05,
+   "holm": null,
+   "vosk_split": {
+    "word": 14,
+    "silence": 3
+   },
+   "utterpy_split": {
+    "word": 47,
+    "silence": 3
+   }
+  },
+  "eight": {
+   "only_a": 0,
+   "only_b": 9,
+   "p": 0.00390625,
+   "holm": 0.13671875
+  },
+  "zero": {
+   "only_a": 0,
+   "only_b": 6,
+   "p": 0.031250000000000014,
+   "holm": 1.0
+  },
+  "go": {
+   "only_a": 0,
+   "only_b": 5,
+   "p": 0.0625,
+   "holm": 1.0
+  },
+  "two": {
+   "only_a": 0,
+   "only_b": 3,
+   "p": 0.25000000000000006,
+   "holm": 1.0
+  },
+  "visual": {
+   "only_a": 3,
+   "only_b": 0,
+   "p": 0.25000000000000006,
+   "holm": 1.0
+  },
+  "left": {
+   "only_a": 0,
+   "only_b": 2,
+   "p": 0.5,
+   "holm": 1.0
+  },
+  "three": {
+   "only_a": 0,
+   "only_b": 2,
+   "p": 0.5,
+   "holm": 1.0
+  },
+  "nine": {
+   "only_a": 0,
+   "only_b": 2,
+   "p": 0.5,
+   "holm": 1.0
+  },
+  "forward": {
+   "only_a": 1,
+   "only_b": 3,
+   "p": 0.6249999999999994,
+   "holm": 1.0
+  },
+  "yes": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "no": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "up": {
+   "only_a": 1,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "down": {
+   "only_a": 1,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "right": {
+   "only_a": 2,
+   "only_b": 3,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "on": {
+   "only_a": 1,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "off": {
+   "only_a": 3,
+   "only_b": 4,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "stop": {
+   "only_a": 0,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "one": {
+   "only_a": 1,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "four": {
+   "only_a": 2,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "five": {
+   "only_a": 1,
+   "only_b": 2,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "six": {
+   "only_a": 0,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "seven": {
+   "only_a": 0,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "backward": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "follow": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "learn": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "bed": {
+   "only_a": 0,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "bird": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "cat": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "dog": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "happy": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "house": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "marvin": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "sheila": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "tree": {
+   "only_a": 0,
+   "only_b": 0,
+   "p": 1.0,
+   "holm": 1.0
+  },
+  "wow": {
+   "only_a": 1,
+   "only_b": 1,
+   "p": 1.0,
+   "holm": 1.0
+  }
+ },
+ "full": {
+  "vosk": {
+   "correct": 10069,
+   "total": 11005,
+   "confusions": [
+    [
+     [
+      "up",
+      "(nothing)"
+     ],
+     66
+    ],
+    [
+     [
+      "eight",
+      "a"
+     ],
+     51
+    ],
+    [
+     [
+      "off",
+      "o"
+     ],
+     35
+    ],
+    [
+     [
+      "three",
+      "tree"
+     ],
+     28
+    ],
+    [
+     [
+      "eight",
+      "(nothing)"
+     ],
+     25
+    ],
+    [
+     [
+      "four",
+      "forward"
+     ],
+     21
+    ],
+    [
+     [
+      "forward",
+      "four"
+     ],
+     17
+    ],
+    [
+     [
+      "down",
+      "(nothing)"
+     ],
+     16
+    ],
+    [
+     [
+      "cat",
+      "(nothing)"
+     ],
+     15
+    ],
+    [
+     [
+      "on",
+      "(nothing)"
+     ],
+     14
+    ],
+    [
+     [
+      "off",
+      "(nothing)"
+     ],
+     14
+    ],
+    [
+     [
+      "six",
+      "c"
+     ],
+     14
+    ],
+    [
+     [
+      "four",
+      "(nothing)"
+     ],
+     13
+    ],
+    [
+     [
+      "learn",
+      "(nothing)"
+     ],
+     13
+    ],
+    [
+     [
+      "right",
+      "ray"
+     ],
+     12
+    ]
+   ],
+   "per_word": {
+    "yes": [
+     387,
+     419
+    ],
+    "no": [
+     395,
+     405
+    ],
+    "up": [
+     348,
+     425
+    ],
+    "down": [
+     377,
+     406
+    ],
+    "left": [
+     387,
+     412
+    ],
+    "right": [
+     360,
+     396
+    ],
+    "on": [
+     363,
+     396
+    ],
+    "off": [
+     340,
+     402
+    ],
+    "stop": [
+     401,
+     411
+    ],
+    "go": [
+     377,
+     402
+    ],
+    "zero": [
+     382,
+     418
+    ],
+    "one": [
+     368,
+     399
+    ],
+    "two": [
+     400,
+     424
+    ],
+    "three": [
+     354,
+     405
+    ],
+    "four": [
+     361,
+     400
+    ],
+    "five": [
+     424,
+     445
+    ],
+    "six": [
+     367,
+     394
+    ],
+    "seven": [
+     388,
+     406
+    ],
+    "eight": [
+     313,
+     408
+    ],
+    "nine": [
+     392,
+     408
+    ],
+    "backward": [
+     152,
+     165
+    ],
+    "forward": [
+     133,
+     155
+    ],
+    "follow": [
+     163,
+     172
+    ],
+    "learn": [
+     137,
+     161
+    ],
+    "visual": [
+     141,
+     165
+    ],
+    "bed": [
+     190,
+     207
+    ],
+    "bird": [
+     175,
+     185
+    ],
+    "cat": [
+     177,
+     194
+    ],
+    "dog": [
+     206,
+     220
+    ],
+    "happy": [
+     192,
+     203
+    ],
+    "house": [
+     181,
+     191
+    ],
+    "marvin": [
+     180,
+     195
+    ],
+    "sheila": [
+     198,
+     212
+    ],
+    "tree": [
+     171,
+     193
+    ],
+    "wow": [
+     189,
+     206
+    ]
+   },
+   "latency_ms_p50": 40.000000000000036,
+   "latency_ms_p90": 250.0,
+   "latency_n": 8554,
+   "never_in_partial": 2451,
+   "first_shown": 9218,
+   "first_changed": 1137,
+   "first_revised": 688,
+   "first_flushed": 456,
+   "rev_lag_ms_p50": 240.0,
+   "rev_lag_ms_p90": 240.0,
+   "rev_lag_ms_min": 240.0,
+   "rev_lag_ms_max": 480.0,
+   "rtf": 0.017105830568618106,
+   "decode_rtf": 0.016809882448124102,
+   "ctor_ms": 0.2908867050761163,
+   "ctor_first_ms": 0.32157707028090954,
+   "ctor_rest_ms": 0.2908839160571046
+  },
+  "utterpy": {
+   "correct": 10102,
+   "total": 11005,
+   "confusions": [
+    [
+     [
+      "up",
+      "(nothing)"
+     ],
+     65
+    ],
+    [
+     [
+      "eight",
+      "a"
+     ],
+     48
+    ],
+    [
+     [
+      "off",
+      "o"
+     ],
+     31
+    ],
+    [
+     [
+      "three",
+      "tree"
+     ],
+     29
+    ],
+    [
+     [
+      "eight",
+      "(nothing)"
+     ],
+     25
+    ],
+    [
+     [
+      "four",
+      "forward"
+     ],
+     20
+    ],
+    [
+     [
+      "on",
+      "(nothing)"
+     ],
+     18
+    ],
+    [
+     [
+      "down",
+      "(nothing)"
+     ],
+     16
+    ],
+    [
+     [
+      "cat",
+      "(nothing)"
+     ],
+     15
+    ],
+    [
+     [
+      "off",
+      "(nothing)"
+     ],
+     14
+    ],
+    [
+     [
+      "six",
+      "c"
+     ],
+     14
+    ],
+    [
+     [
+      "forward",
+      "four"
+     ],
+     14
+    ],
+    [
+     [
+      "right",
+      "ray"
+     ],
+     13
+    ],
+    [
+     [
+      "four",
+      "(nothing)"
+     ],
+     13
+    ],
+    [
+     [
+      "learn",
+      "(nothing)"
+     ],
+     13
+    ]
+   ],
+   "per_word": {
+    "yes": [
+     387,
+     419
+    ],
+    "no": [
+     395,
+     405
+    ],
+    "up": [
+     348,
+     425
+    ],
+    "down": [
+     377,
+     406
+    ],
+    "left": [
+     389,
+     412
+    ],
+    "right": [
+     361,
+     396
+    ],
+    "on": [
+     362,
+     396
+    ],
+    "off": [
+     341,
+     402
+    ],
+    "stop": [
+     402,
+     411
+    ],
+    "go": [
+     382,
+     402
+    ],
+    "zero": [
+     388,
+     418
+    ],
+    "one": [
+     368,
+     399
+    ],
+    "two": [
+     403,
+     424
+    ],
+    "three": [
+     356,
+     405
+    ],
+    "four": [
+     360,
+     400
+    ],
+    "five": [
+     425,
+     445
+    ],
+    "six": [
+     368,
+     394
+    ],
+    "seven": [
+     389,
+     406
+    ],
+    "eight": [
+     322,
+     408
+    ],
+    "nine": [
+     394,
+     408
+    ],
+    "backward": [
+     152,
+     165
+    ],
+    "forward": [
+     135,
+     155
+    ],
+    "follow": [
+     163,
+     172
+    ],
+    "learn": [
+     137,
+     161
+    ],
+    "visual": [
+     138,
+     165
+    ],
+    "bed": [
+     191,
+     207
+    ],
+    "bird": [
+     175,
+     185
+    ],
+    "cat": [
+     177,
+     194
+    ],
+    "dog": [
+     206,
+     220
+    ],
+    "happy": [
+     192,
+     203
+    ],
+    "house": [
+     181,
+     191
+    ],
+    "marvin": [
+     180,
+     195
+    ],
+    "sheila": [
+     198,
+     212
+    ],
+    "tree": [
+     171,
+     193
+    ],
+    "wow": [
+     189,
+     206
+    ]
+   },
+   "latency_ms_p50": 40.000000000000036,
+   "latency_ms_p90": 250.0,
+   "latency_n": 8573,
+   "never_in_partial": 2432,
+   "first_shown": 9230,
+   "first_changed": 1147,
+   "first_revised": 691,
+   "first_flushed": 462,
+   "rev_lag_ms_p50": 240.0,
+   "rev_lag_ms_p90": 240.0,
+   "rev_lag_ms_min": 240.0,
+   "rev_lag_ms_max": 480.0,
+   "rtf": 0.01437409577160779,
+   "decode_rtf": 0.014346516248276155,
+   "ctor_ms": 0.027107848011055407,
+   "ctor_first_ms": 2.3262680042535067,
+   "ctor_rest_ms": 0.026898909429063183
+  }
+ },
+ "determinism": {
+  "vosk": {
+   "fresh_processes": {
+    "partials": [],
+    "finals": [],
+    "compared": 11005
+   }
+  },
+  "utterpy": {
+   "fresh_processes": {
+    "partials": [],
+    "finals": [],
+    "compared": 11005
+   }
+  }
+ },
+ "endpoint": {
+  "clips": 800,
+  "pad_ms": 2000,
+  "engines": {
+   "vosk": {
+    "endpointed": 781,
+    "never": 19,
+    "ms_p50": 870.0000000000001,
+    "ms_p90": 1010.0000000000002,
+    "ms_p99": 1150.0000000000002,
+    "n": 781
+   },
+   "utterpy": {
+    "endpointed": 781,
+    "never": 19,
+    "ms_p50": 870.0000000000001,
+    "ms_p90": 1010.0000000000002,
+    "ms_p99": 1150.0000000000002,
+    "n": 781
+   },
+   "utterpy@100": {
+    "endpointed": 781,
+    "never": 19,
+    "ms_p50": 470.00000000000006,
+    "ms_p90": 620.0000000000001,
+    "ms_p99": 790.0,
+    "n": 781
+   },
+   "utterpy@300": {
+    "endpointed": 781,
+    "never": 19,
+    "ms_p50": 660.0000000000001,
+    "ms_p90": 800.0,
+    "ms_p99": 930.0000000000001,
+    "n": 781
+   },
+   "utterpy@300/4": {
+    "endpointed": 781,
+    "never": 19,
+    "ms_p50": 660.0000000000001,
+    "ms_p90": 810.0,
+    "ms_p99": 940.0000000000001,
+    "n": 781
+   },
+   "utterpy@300/8": {
+    "endpointed": 781,
+    "never": 19,
+    "ms_p50": 670.0,
+    "ms_p90": 820.0000000000001,
+    "ms_p99": 960.0000000000001,
+    "n": 781
+   }
+  },
+  "agreement": {
+   "both": 781,
+   "same": 765
+  },
+  "bound_words": {
+   "utterpy@100": {
+    "right": 736,
+    "base_right": 736,
+    "differs": 0,
+    "said_nothing": 0,
+    "said_more": 0,
+    "said_another": 0,
+    "base_only": 0,
+    "bound_only": 0,
+    "p": 1.0
+   },
+   "utterpy@300": {
+    "right": 736,
+    "base_right": 736,
+    "differs": 0,
+    "said_nothing": 0,
+    "said_more": 0,
+    "said_another": 0,
+    "base_only": 0,
+    "bound_only": 0,
+    "p": 1.0
+   },
+   "utterpy@300/4": {
+    "right": 736,
+    "base_right": 736,
+    "differs": 0,
+    "said_nothing": 0,
+    "said_more": 0,
+    "said_another": 0,
+    "base_only": 0,
+    "bound_only": 0,
+    "p": 1.0
+   },
+   "utterpy@300/8": {
+    "right": 736,
+    "base_right": 736,
+    "differs": 0,
+    "said_nothing": 0,
+    "said_more": 0,
+    "said_another": 0,
+    "base_only": 0,
+    "bound_only": 0,
+    "p": 1.0
+   }
+  }
+ },
+ "block_size": {
+  "clips": 400,
+  "finest_ms": 10,
+  "sizes": {
+   "10": {
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 317,
+     "same_as_finest": 317,
+     "compared_to_finest": 317,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.01717751795409823
+    },
+    "utterpy": {
+     "correct": 369,
+     "accuracy": 92.25,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 319,
+     "same_as_finest": 319,
+     "compared_to_finest": 319,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.014946851699476474
+    }
+   },
+   "20": {
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 317,
+     "same_as_finest": 317,
+     "compared_to_finest": 317,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.017166844416824808
+    },
+    "utterpy": {
+     "correct": 369,
+     "accuracy": 92.25,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 319,
+     "same_as_finest": 319,
+     "compared_to_finest": 319,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.01373757032746027
+    }
+   },
+   "40": {
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 317,
+     "same_as_finest": 317,
+     "compared_to_finest": 317,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.0169971454899666
+    },
+    "utterpy": {
+     "correct": 369,
+     "accuracy": 92.25,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 319,
+     "same_as_finest": 319,
+     "compared_to_finest": 319,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.01381429195078138
+    }
+   },
+   "80": {
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 317,
+     "same_as_finest": 317,
+     "compared_to_finest": 317,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.017053367142903304
+    },
+    "utterpy": {
+     "correct": 369,
+     "accuracy": 92.25,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 319,
+     "same_as_finest": 319,
+     "compared_to_finest": 319,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.013940155916840648
+    }
+   },
+   "100": {
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 79.99999999999996,
+     "latency_ms_p90": 280.0,
+     "latency_n": 316,
+     "same_as_finest": 26,
+     "compared_to_finest": 316,
+     "max_shift_ms": 60,
+     "decode_rtf": 0.016872127234950518
+    },
+    "utterpy": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 79.99999999999996,
+     "latency_ms_p90": 280.0,
+     "latency_n": 319,
+     "same_as_finest": 26,
+     "compared_to_finest": 319,
+     "max_shift_ms": 60,
+     "decode_rtf": 0.014268597591861224
+    }
+   }
+  }
+ },
+ "steady_state": {
+  "vosk": {
+   "rtf": 0.012404645085347266,
+   "ms_p50": 0.048791058361530304,
+   "ms_p95": 2.852817066013813,
+   "ms_p99": 3.3546050544828176,
+   "seconds": 295.3100625
+  },
+  "utterpy": {
+   "rtf": 0.010744552641110934,
+   "ms_p50": 0.04239194095134735,
+   "ms_p95": 2.4495781399309635,
+   "ms_p99": 2.7508868370205164,
+   "seconds": 295.3100625
+  }
+ },
+ "snr": {
+  "clips": 800,
+  "levels": [
+   20,
+   10,
+   5,
+   0
+  ],
+  "results": {
+   "vosk": {
+    "20": 699,
+    "10": 634,
+    "5": 558,
+    "0": 399,
+    "clean": 729
+   },
+   "utterpy": {
+    "20": 702,
+    "10": 634,
+    "5": 560,
+    "0": 400,
+    "clean": 730
+   }
+  },
+  "paired": {
+   "20": {
+    "only_a": 2,
+    "only_b": 5,
+    "p": 0.453125
+   },
+   "10": {
+    "only_a": 6,
+    "only_b": 6,
+    "p": 1.0
+   },
+   "5": {
+    "only_a": 6,
+    "only_b": 8,
+    "p": 0.7905273437500022
+   },
+   "0": {
+    "only_a": 7,
+    "only_b": 8,
+    "p": 0.9999999999999999
+   },
+   "clean": {
+    "only_a": 1,
+    "only_b": 2,
+    "p": 1.0
+   }
+  }
+ },
+ "twelve": {
+  "vosk": {
+   "cmd_ok": 3917,
+   "cmd_total": 4074,
+   "other_unk": 5769,
+   "other_cmd": 679,
+   "other_total": 6931,
+   "noise_minutes": 6.656636458333334,
+   "silence_finals": 0
+  },
+  "utterpy": {
+   "cmd_ok": 3920,
+   "cmd_total": 4074,
+   "other_unk": 5815,
+   "other_cmd": 633,
+   "other_total": 6931,
+   "noise_minutes": 6.656636458333334,
+   "silence_finals": 0
+  }
+ },
+ "noise": {
+  "vosk/full": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 7
+  },
+  "vosk/full + [unk]": {
+   "minutes": 6.656636458333334,
+   "blocks": 9931,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy/full": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy/full + [unk]": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy@100/full": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy@100/full + [unk]": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy@300/full": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy@300/full + [unk]": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy@300/4/full": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy@300/4/full + [unk]": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy@300/8/full": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "utterpy@300/8/full + [unk]": {
+   "minutes": 6.656636458333334,
+   "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  }
+ },
+ "wordless": {
+  "takes": 105,
+  "base_floor_dbfs": -50.0,
+  "floor": {
+   "digital silence": {
+    "cold/vosk": {
+     "blocks": 9911,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 82,
+     "phantom_finals": 0,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10787,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 197,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9911,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 82,
+     "phantom_finals": 0,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10787,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 197,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "-70 dBFS": {
+    "cold/vosk": {
+     "blocks": 9953,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 40,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10786,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 198,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10786,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 198,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "-60 dBFS": {
+    "cold/vosk": {
+     "blocks": 9955,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 38,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9955,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 38,
+     "phantom_finals": 16,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "-50 dBFS": {
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "-40 dBFS": {
+    "cold/vosk": {
+     "blocks": 9950,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 43,
+     "phantom_finals": 13,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9950,
+     "word_blocks": 6,
+     "rival_blocks": 6,
+     "finals": 43,
+     "phantom_finals": 13,
+     "longest_run": 6,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   }
+  },
+  "mcnemar_engines": {
+   "cold": {
+    "b": 0,
+    "c": 0,
+    "p": 1.0
+   },
+   "after a word": {
+    "b": 0,
+    "c": 0,
+    "p": 1.0
+   }
+  },
+  "grammar": {
+   "35": {
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10786,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 198,
+     "phantom_finals": 1,
+     "longest_run": 0,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10787,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 197,
+     "phantom_finals": 1,
+     "longest_run": 0,
+     "minutes": 7.199759375
+    }
+   },
+   "60": {
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10787,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 197,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10787,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 197,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "92": {
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "150": {
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 22,
+     "rival_blocks": 0,
+     "finals": 196,
+     "phantom_finals": 1,
+     "longest_run": 22,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10788,
+     "word_blocks": 22,
+     "rival_blocks": 22,
+     "finals": 196,
+     "phantom_finals": 1,
+     "longest_run": 22,
+     "minutes": 7.199759375
+    }
+   },
+   "200": {
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 22,
+     "rival_blocks": 0,
+     "finals": 196,
+     "phantom_finals": 1,
+     "longest_run": 22,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10788,
+     "word_blocks": 22,
+     "rival_blocks": 22,
+     "finals": 196,
+     "phantom_finals": 1,
+     "longest_run": 22,
+     "minutes": 7.199759375
+    }
+   },
+   "246": {
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 34,
+     "rival_blocks": 0,
+     "finals": 196,
+     "phantom_finals": 2,
+     "longest_run": 22,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 18,
+     "rival_blocks": 18,
+     "finals": 39,
+     "phantom_finals": 16,
+     "longest_run": 18,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10789,
+     "word_blocks": 28,
+     "rival_blocks": 22,
+     "finals": 195,
+     "phantom_finals": 2,
+     "longest_run": 22,
+     "minutes": 7.199759375
+    }
+   }
+  },
+  "unknown_cost": {
+   "stock": {
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10789,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 195,
+     "phantom_finals": 0,
+     "longest_run": 0,
+     "minutes": 7.199759375
+    }
+   },
+   "8": {
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "4": {
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "2": {
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10789,
+     "word_blocks": 4,
+     "rival_blocks": 4,
+     "finals": 195,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    }
+   },
+   "0": {
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10789,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 195,
+     "phantom_finals": 0,
+     "longest_run": 0,
+     "minutes": 7.199759375
+    }
+   },
+   "-2": {
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10790,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 194,
+     "phantom_finals": 0,
+     "longest_run": 0,
+     "minutes": 7.199759375
+    }
+   }
+  },
+  "gate": {
+   "digital silence": {
+    "cold": {
+     "4": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 6.656636458333334,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "8": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 6.656636458333334,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "12": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 6.656636458333334,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     }
+    },
+    "after a word": {
+     "4": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "8": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "12": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     }
+    }
+   },
+   "-70 dBFS": {
+    "cold": {
+     "4": {
+      "words": 15,
+      "caught": 13,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     },
+     "8": {
+      "words": 15,
+      "caught": 14,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     },
+     "12": {
+      "words": 15,
+      "caught": 14,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     }
+    },
+    "after a word": {
+     "4": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "8": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "12": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     }
+    }
+   },
+   "-60 dBFS": {
+    "cold": {
+     "4": {
+      "words": 16,
+      "caught": 15,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     },
+     "8": {
+      "words": 16,
+      "caught": 15,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     },
+     "12": {
+      "words": 16,
+      "caught": 15,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     }
+    },
+    "after a word": {
+     "4": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "8": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "12": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     }
+    }
+   },
+   "-50 dBFS": {
+    "cold": {
+     "4": {
+      "words": 15,
+      "caught": 14,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     },
+     "8": {
+      "words": 15,
+      "caught": 14,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     },
+     "12": {
+      "words": 15,
+      "caught": 14,
+      "minutes": 6.656636458333334,
+      "b": 5,
+      "c": 0,
+      "p": 0.0625
+     }
+    },
+    "after a word": {
+     "4": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "8": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "12": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     }
+    }
+   },
+   "-40 dBFS": {
+    "cold": {
+     "4": {
+      "words": 13,
+      "caught": 12,
+      "minutes": 6.656636458333334,
+      "b": 4,
+      "c": 0,
+      "p": 0.125
+     },
+     "8": {
+      "words": 13,
+      "caught": 12,
+      "minutes": 6.656636458333334,
+      "b": 4,
+      "c": 0,
+      "p": 0.125
+     },
+     "12": {
+      "words": 13,
+      "caught": 12,
+      "minutes": 6.656636458333334,
+      "b": 4,
+      "c": 0,
+      "p": 0.125
+     }
+    },
+    "after a word": {
+     "4": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "8": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     },
+     "12": {
+      "words": 0,
+      "caught": 0,
+      "minutes": 7.199759375,
+      "b": 0,
+      "c": 0,
+      "p": 1.0
+     }
+    }
+   }
+  }
+ }
+}

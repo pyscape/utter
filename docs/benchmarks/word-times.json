@@ -1,0 +1,80 @@
+{
+ "split": "testing",
+ "clips": 11005,
+ "block_ms": 40,
+ "grammar_size": 92,
+ "frame_ms": 30.0,
+ "reference": "vosk",
+ "compared": "utterpy",
+ "provenance": {
+  "date": "2026-09-13 17:57:01Z",
+  "utter_revision": "608d4f7",
+  "source_dirty": false,
+  "docs_dirty": false,
+  "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
+  "wheel_revision": "fafb7f5e4d6bab8dea51c2ad7dd578ebd14ffbd4",
+  "wheel_matches_head": false,
+  "engines": {
+   "vosk": "0.3.45",
+   "utterpy": "0.0.1"
+  },
+  "model": "vosk-model-small-en-us-0.15",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
+  "python": "3.14.4",
+  "block_ms": 40
+ },
+ "words": {
+  "vosk": 10612,
+  "utterpy": 10614
+ },
+ "off_grid": {
+  "vosk": 25,
+  "utterpy": 0
+ },
+ "same_sequence": 10505,
+ "differ": 93,
+ "empty_both": 407,
+ "paired_words": 10521,
+ "start": {
+  "exact": 10287,
+  "one_frame": 223,
+  "two_frames": 5,
+  "beyond": 6
+ },
+ "end": {
+  "exact": 9338,
+  "one_frame": 1063,
+  "two_frames": 72,
+  "beyond": 48
+ },
+ "word": {
+  "exact": 9132,
+  "one_frame": 1258,
+  "two_frames": 77,
+  "beyond": 54
+ },
+ "abs_ms": {
+  "start": {
+   "0.5": 0.0,
+   "0.9": 0.0,
+   "0.99": 30.0,
+   "max": 510.0
+  },
+  "end": {
+   "0.5": 0.0,
+   "0.9": 29.999999999999915,
+   "0.99": 59.99999999999994,
+   "max": 329.99999999999994
+  }
+ },
+ "signed_ms": {
+  "start": {
+   "earlier": 119,
+   "later": 115
+  },
+  "end": {
+   "earlier": 563,
+   "later": 620
+  }
+ }
+}

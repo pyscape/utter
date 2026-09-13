@@ -16,6 +16,7 @@ fn arc(i: i32, o: i32, w: f32, n: u32) -> FstArc {
 }
 
 #[test]
+#[allow(clippy::cast_possible_truncation)]
 fn wav_reader_reads_pcm16() {
     let dir = std::env::temp_dir().join(format!("utter-wav-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -78,6 +79,7 @@ fn json_writer_escapes() {
 }
 
 #[test]
+#[allow(clippy::cast_precision_loss)]
 fn mfcc_frame_count_and_shape() {
     let opts = utter::mfcc::MfccOptions::from_conf(
         "--sample-frequency=16000\n--num-mel-bins=40\n--num-ceps=40\n--dither=0\n",
@@ -150,7 +152,7 @@ fn decoder_traces_words_phones_and_trailing_silence() {
         .map(|s| (s.phone, s.start, s.end))
         .collect();
     assert_eq!(phones, vec![(1, 0, 2), (2, 2, 5), (3, 5, 7), (1, 7, 10)]);
-    assert_eq!(dec.trailing_silence_frames(&[1]), 3);
+    assert_eq!(path.trailing_silence_frames(&[1]), 3);
     assert!(dec.final_relative_cost().is_finite());
     // alternatives: the best group is the partial's word sequence
     let alts = dec.alternatives(false, 5);

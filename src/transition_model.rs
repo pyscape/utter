@@ -11,9 +11,9 @@ use crate::kaldi_io::{err, find, KaldiReader};
 use std::io::Result;
 
 pub struct TransitionModel {
-    /// tid2pdf[transition_id] = pdf_id; index 0 unused.
+    /// tid2pdf\[transition_id\] = pdf_id; index 0 unused.
     pub tid2pdf: Vec<i32>,
-    /// tid2phone[transition_id] = phone; index 0 unused.
+    /// tid2phone\[transition_id\] = phone; index 0 unused.
     pub tid2phone: Vec<i32>,
     pub num_pdfs: usize,
     pub num_transition_states: usize,
@@ -24,7 +24,7 @@ impl TransitionModel {
         let marker = b"<Tuples> ";
         let pos = find(data, marker, 0).ok_or_else(|| err("no <Tuples>"))? + marker.len();
         let mut kr = KaldiReader::new(&data[pos..]);
-        let n = kr.read_i32()? as usize;
+        let n = kr.read_dim()?;
         let mut tid2pdf = vec![-1i32; 2 * n + 1];
         let mut tid2phone = vec![0i32; 2 * n + 1];
         let mut num_pdfs = 0i32;
@@ -42,7 +42,7 @@ impl TransitionModel {
         Ok(TransitionModel {
             tid2pdf,
             tid2phone,
-            num_pdfs: num_pdfs as usize,
+            num_pdfs: usize::try_from(num_pdfs).unwrap_or(0),
             num_transition_states: n,
         })
     }
