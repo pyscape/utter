@@ -253,3 +253,6 @@ per minute, on which both engines are expected equal.
 - `[[rr:FloorTracker]]`: the floor, on every partial and every final.
 - `[[rr:scripts/unk_sweep.py#main]]` and `[[rr:noise_pass]]`: the
   measurements.
+- `[[rr:set_endpoint_bound]]`, with `[[rr:bound_words_section]]` and
+  `[[rr:runtime_finals]]`: the bound, and the two public pages' figures
+  for it.

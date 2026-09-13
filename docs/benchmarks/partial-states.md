@@ -1,6 +1,6 @@
 # Silence direction and word transitions on a built stream
 
-Run 2026-09-13 01:19:40Z, utter 76cf75d+dirty, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 76cf75d44a7752d0b07b178dc49082a32fac0a96, **not** the checkout as it stands (76cf75d+dirty).
+Run 2026-09-13 02:17:34Z, utter 2038a5b, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 2038a5b12a8da5db31a4657d153862494e88fd5f, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 40 ms blocks, 8 partial alternatives, partial words on, seed 20260912. Measured by `scripts/partial_states.py`.
 
@@ -168,6 +168,31 @@ That share of pauses is a fact about this stream's pauses, which are uniform ove
 | 500-600 | 215 | 193 / 215 (89.8%) | 117 / 215 (54.4%) | 20 / 215 (9.3%) | 9 / 215 (4.2%) |
 | 600-700 | 221 | 212 / 221 (95.9%) | 130 / 221 (58.8%) | 33 / 221 (14.9%) | 20 / 221 (9.0%) |
 | 700-800 | 197 | 187 / 197 (94.9%) | 138 / 197 (70.1%) | 44 / 197 (22.3%) | 26 / 197 (13.2%) |
+
+### The same stretches, from the finals the runtime emitted
+
+The table above reads the trailing `[sil]` span a host would apply its own bound to. This one reads what the recognizer did: a final landing between a word's energy offset and the next word's onset is a pause the runtime ended, a final inside a finish gap is a finish it called. The bound rows are the same streams decoded again with the recognizer's own host bound set (`[[rr:TD-8#A host may add one endpoint bound of its own, off by default]]`), `MS` of trailing silence and, after the slash, the margin in nats within which a reading extending the partial vetoes the final.
+
+| engine | pauses ended | finishes called | ms after the word's energy end p50 / p90 | finals | with a word | per minute | words lost | words decoded twice |
+|---|---|---|---|---|---|---|---|---|
+| utterpy | 942 / 1458 (64.6%) | 732 / 750 (97.6%) | 866.2 / 1000.9 | 2071 | 1996 | 26.4 | 52 / 2208 (2.4%) | 6 / 2208 (0.3%) |
+| utterpy@300 | 1208 / 1458 (82.9%) | 732 / 750 (97.6%) | 659.8 / 799.0 | 2200 | 2125 | 28.0 | 49 / 2208 (2.2%) | 6 / 2208 (0.3%) |
+| utterpy@300/4 | 1207 / 1458 (82.8%) | 732 / 750 (97.6%) | 659.8 / 799.0 | 2192 | 2117 | 27.9 | 49 / 2208 (2.2%) | 6 / 2208 (0.3%) |
+| utterpy@300/8 | 1159 / 1458 (79.5%) | 732 / 750 (97.6%) | 680.7 / 870.1 | 2139 | 2064 | 27.2 | 48 / 2208 (2.2%) | 6 / 2208 (0.3%) |
+
+The first row is the model's own endpointing (`[[rr:TD-2#Inputs: configuration]]`), which on this stream ends most pauses already. A bound is a gain only where it calls the finishes sooner than that without ending more pauses and without costing words, and the last two columns are where a bound firing inside a word shows up: a word no final covers, or one that two of them each decode.
+
+By the length of the pause that was built, as the series table above gives it:
+
+| pause built (ms) | utterpy | utterpy@300 | utterpy@300/4 | utterpy@300/8 |
+|---|---|---|---|---|
+| 100-200 | 59 / 205 (28.8%) | 106 / 205 (51.7%) | 105 / 205 (51.2%) | 93 / 205 (45.4%) |
+| 200-300 | 78 / 205 (38.0%) | 136 / 205 (66.3%) | 136 / 205 (66.3%) | 127 / 205 (62.0%) |
+| 300-400 | 119 / 202 (58.9%) | 163 / 202 (80.7%) | 163 / 202 (80.7%) | 155 / 202 (76.7%) |
+| 400-500 | 134 / 213 (62.9%) | 192 / 213 (90.1%) | 192 / 213 (90.1%) | 181 / 213 (85.0%) |
+| 500-600 | 174 / 215 (80.9%) | 204 / 215 (94.9%) | 204 / 215 (94.9%) | 201 / 215 (93.5%) |
+| 600-700 | 200 / 221 (90.5%) | 218 / 221 (98.6%) | 218 / 221 (98.6%) | 214 / 221 (96.8%) |
+| 700-800 | 178 / 197 (90.4%) | 189 / 197 (95.9%) | 189 / 197 (95.9%) | 188 / 197 (95.4%) |
 
 ## B. Transitioning between words
 

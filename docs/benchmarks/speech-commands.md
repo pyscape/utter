@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-13 00:38:17Z, utter 76cf75d, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 76cf75d44a7752d0b07b178dc49082a32fac0a96, the checkout's HEAD.
+Run 2026-09-13 01:38:00Z, utter 2038a5b, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 2038a5b12a8da5db31a4657d153862494e88fd5f, the checkout's HEAD.
 
 ## Engines
 
@@ -10,8 +10,8 @@ Each engine opened the model and decoded a clip before the run began; a model an
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
-| vosk | 0.18 | 0.4 |
-| utterpy | 0.13 | 22.9 |
+| vosk | 0.19 | 0.4 |
+| utterpy | 0.14 | 24.4 |
 
 ## Full grammar: accuracy
 
@@ -31,8 +31,8 @@ Compute, one recognizer per clip:
 
 | engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |
 |---|---|---|---|---|---|
-| vosk | 0.31 | 0.291 | 0.291 | 0.0170 | 0.0173 |
-| utterpy | 2.32 | 0.027 | 0.027 | 0.0139 | 0.0139 |
+| vosk | 0.31 | 0.300 | 0.300 | 0.0171 | 0.0174 |
+| utterpy | 2.43 | 0.029 | 0.029 | 0.0148 | 0.0149 |
 
 | word | vosk | utterpy |
 |---|---|---|
@@ -128,12 +128,29 @@ Every clip read the same way both times.
 
 800 clips, each followed by 2000 ms of silence, measured to the first block at which the engine closes a segment itself. Reported against the clip's own energy end, the same reference the first-appearance figure uses. Neither engine endpoints within the clip alone, so without the silence there is nothing here to measure.
 
+The rows spelled `utterpy@MS` and `utterpy@MS/NATS` carry a host endpoint bound of their own beside the model's rules, `[[rr:TD-8#A host may add one endpoint bound of its own, off by default]]`: a final once the trailing silence reaches MS, and where a margin follows, no final while a reading extending the partial is within that many nats of the leader.
+
 | engine | endpointed | after the clip's energy end p50 / p90 / p99 | never within the silence |
 |---|---|---|---|
 | vosk | 781 / 800 | 870 / 1010 / 1150 ms over 781 | 19 |
 | utterpy | 781 / 800 | 870 / 1010 / 1150 ms over 781 | 19 |
+| utterpy@300 | 781 / 800 | 660 / 800 / 930 ms over 781 | 19 |
+| utterpy@300/4 | 781 / 800 | 660 / 810 / 940 ms over 781 | 19 |
+| utterpy@300/8 | 781 / 800 | 670 / 820 / 960 ms over 781 | 19 |
 
-Both engines endpointed on 781 of the 800, at the same block on 766 (98.08%). Endpointing is a second surface the contract covers, and one the accuracy figures do not touch: a host that agreed on every word would still feel a difference here.
+Both engines endpointed on 781 of the 800, at the same block on 765 (97.95%). Endpointing is a second surface the contract covers, and one the accuracy figures do not touch: a host that agreed on every word would still feel a difference here.
+
+### What the bound costs in words
+
+The same 800 padded clips, every word each engine finally reported, paired against stock `utterpy` clip by clip. *Right* is the clip's label and nothing else; the three columns after it are how a reading that differs from the stock engine's differs. The test is exact McNemar over the clips where exactly one of the two was right.
+
+| engine | right | differs from utterpy | said nothing | said more words | said another word | utterpy right only / bound right only | exact p |
+|---|---|---|---|---|---|---|---|
+| utterpy@300 | 736 / 800 (92.00%) | 0 | 0 | 0 | 0 | 0 / 0 | 1 |
+| utterpy@300/4 | 736 / 800 (92.00%) | 0 | 0 | 0 | 0 | 0 / 0 | 1 |
+| utterpy@300/8 | 736 / 800 (92.00%) | 0 | 0 | 0 | 0 | 0 / 0 | 1 |
+
+Stock `utterpy` was right on 736 of the 800 under the same grammar and padding, which is the row every bound is paired against.
 
 ## Block size
 
@@ -141,16 +158,16 @@ Both engines endpointed on 781 of the 800, at the same block on 766 (98.08%). En
 
 | block ms | engine | accuracy | first appearance p50 / p90 | same instant as the finest block | RTF, decode only |
 |---|---|---|---|---|---|
-| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0174 |
-| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0141 |
-| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0172 |
-| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0138 |
-| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0171 |
-| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0139 |
-| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0170 |
-| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0141 |
-| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 317, up to 60 ms later | 0.0171 |
-| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0139 |
+| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0177 |
+| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0145 |
+| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0175 |
+| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0154 |
+| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0174 |
+| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0153 |
+| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0173 |
+| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0154 |
+| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 316, up to 60 ms later | 0.0173 |
+| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0140 |
 
 The column that carries the result is the per-clip one, not the quantiles: two block sizes can produce the same p50 by luck, and only a clip-by-clip comparison against the finest block (10 ms) shows whether the word actually appeared at the same instant.
 
@@ -160,8 +177,8 @@ One recognizer over 295 s of the clips joined end to end.
 
 | engine | RTF | per-block compute ms p50 / p95 / p99 |
 |---|---|---|
-| vosk | 0.0124 | 0.049 / 2.85 / 3.34 |
-| utterpy | 0.0108 | 0.043 / 2.46 / 2.72 |
+| vosk | 0.0126 | 0.050 / 2.89 / 3.39 |
+| utterpy | 0.0111 | 0.043 / 2.52 / 2.79 |
 
 ## Accuracy against noise
 
@@ -188,18 +205,18 @@ Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNem
 
 | entries | vosk accuracy | vosk first ms | vosk later ms | vosk RTF | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF |
 |---|---|---|---|---|---|---|---|---|
-| 35 | 94.0% | 0.22 | 0.193 | 0.0154 | 94.5% | 0.89 | 0.014 | 0.0137 |
-| 60 | 92.5% | 0.30 | 0.228 | 0.0165 | 92.8% | 1.59 | 0.020 | 0.0138 |
-| 92 | 92.0% | 0.34 | 0.292 | 0.0170 | 92.2% | 2.36 | 0.027 | 0.0138 |
-| 150 | 91.0% | 0.47 | 0.390 | 0.0175 | 92.0% | 3.68 | 0.040 | 0.0137 |
-| 200 | 90.5% | 0.58 | 0.466 | 0.0181 | 91.5% | 4.99 | 0.047 | 0.0139 |
-| 246 | 88.8% | 0.61 | 0.525 | 0.0186 | 89.8% | 6.07 | 0.058 | 0.0141 |
+| 35 | 94.0% | 0.23 | 0.212 | 0.0161 | 94.5% | 0.94 | 0.015 | 0.0150 |
+| 60 | 92.5% | 0.31 | 0.253 | 0.0174 | 92.8% | 1.57 | 0.020 | 0.0143 |
+| 92 | 92.0% | 0.38 | 0.305 | 0.0175 | 92.2% | 2.45 | 0.029 | 0.0149 |
+| 150 | 91.0% | 0.51 | 0.456 | 0.0194 | 92.0% | 3.90 | 0.044 | 0.0154 |
+| 200 | 90.2% | 0.55 | 0.529 | 0.0197 | 91.5% | 5.46 | 0.051 | 0.0153 |
+| 246 | 89.0% | 0.84 | 0.560 | 0.0195 | 89.8% | 6.29 | 0.060 | 0.0155 |
 
 ## Twelve-class: ten commands plus the unknown-word symbol
 
 | engine | commands correct | fillers and digits read as unknown | fillers and digits read as a command | noise minutes | silence finals per minute |
 |---|---|---|---|---|---|
-| vosk | 3915 / 4074 (96.10%) | 5769 / 6931 (83.23%) | 674 (9.72%) | 6.7 | 0.0 |
+| vosk | 3917 / 4074 (96.15%) | 5769 / 6931 (83.23%) | 679 (9.80%) | 6.7 | 0.0 |
 | utterpy | 3920 / 4074 (96.22%) | 5815 / 6931 (83.90%) | 633 (9.13%) | 6.7 | 0.0 |
 
 ## Background noise under the full grammar
@@ -207,9 +224,15 @@ Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNem
 | engine | grammar | noise minutes | partial blocks | blocks with a word at rank 0 | silence finals per minute | word blocks with the silence reading among the rivals |
 |---|---|---|---|---|---|---|
 | vosk | full | 6.7 | 9932 | 0 (0.00%) | 1.1 | no alternatives |
-| vosk | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 1.1 | no alternatives |
+| vosk | full + [unk] | 6.7 | 9931 | 0 (0.00%) | 0.9 | no alternatives |
 | utterpy | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 | utterpy | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+| utterpy@300 | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+| utterpy@300 | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+| utterpy@300/4 | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+| utterpy@300/4 | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+| utterpy@300/8 | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+| utterpy@300/8 | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 ## Reading
 
 Accuracy and first-appearance latency are at parity with the stock

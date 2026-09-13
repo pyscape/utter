@@ -1,10 +1,12 @@
 {
  "provenance": {
-  "date": "2026-09-13 01:19:40Z",
-  "utter_revision": "76cf75d+dirty",
+  "date": "2026-09-13 02:17:34Z",
+  "utter_revision": "2038a5b",
+  "source_dirty": false,
+  "docs_dirty": true,
   "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
-  "wheel_revision": "76cf75d44a7752d0b07b178dc49082a32fac0a96",
-  "wheel_matches_head": false,
+  "wheel_revision": "2038a5b12a8da5db31a4657d153862494e88fd5f",
+  "wheel_matches_head": true,
   "engines": {
    "utterpy": "0.0.1",
    "vosk": "0.3.45"
@@ -28,7 +30,8 @@
   "with_vosk": true,
   "pause_variants": "100-300,400-1600",
   "variant_words": 600,
-  "no_streams": false
+  "no_streams": false,
+  "bound_runs": "/home/jared/.cache/utter-bound-runs/b300.json,/home/jared/.cache/utter-bound-runs/b300-4.json,/home/jared/.cache/utter-bound-runs/b300-8.json"
  },
  "wheel": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
  "grammar_size": 92,
@@ -90,7 +93,7 @@
    "minutes": 78.57144583333334
   }
  },
- "decode_seconds": 189.44651722395793,
+ "decode_seconds": 190.08796303602867,
  "fit": {
   "bound_ms": 500,
   "sil_delta": -8.0,
@@ -9675,6 +9678,202 @@
     "mistaken": 44,
     "mistaken_motion": 26
    }
+  }
+ },
+ "A5": {
+  "totals": {
+   "pause": 1458,
+   "finish": 750
+  },
+  "pauses_mistaken": 942,
+  "finishes_called": 732,
+  "finish_ms_p50": 866.25,
+  "finish_ms_p90": 1000.875,
+  "by_pause": {
+   "100-200": {
+    "n": 205,
+    "mistaken": 59
+   },
+   "200-300": {
+    "n": 205,
+    "mistaken": 78
+   },
+   "300-400": {
+    "n": 202,
+    "mistaken": 119
+   },
+   "400-500": {
+    "n": 213,
+    "mistaken": 134
+   },
+   "500-600": {
+    "n": 215,
+    "mistaken": 174
+   },
+   "600-700": {
+    "n": 221,
+    "mistaken": 200
+   },
+   "700-800": {
+    "n": 197,
+    "mistaken": 178
+   }
+  },
+  "finals": 2071,
+  "finals_with_a_word": 1996,
+  "finals_per_min": 26.358176027370416,
+  "minutes": 78.57144583333334,
+  "words": 2208,
+  "lost": 52,
+  "restarted": 6
+ },
+ "A5_bound": {
+  "utterpy@300": {
+   "totals": {
+    "pause": 1458,
+    "finish": 750
+   },
+   "pauses_mistaken": 1208,
+   "finishes_called": 732,
+   "finish_ms_p50": 659.75,
+   "finish_ms_p90": 799.0,
+   "by_pause": {
+    "100-200": {
+     "n": 205,
+     "mistaken": 106
+    },
+    "200-300": {
+     "n": 205,
+     "mistaken": 136
+    },
+    "300-400": {
+     "n": 202,
+     "mistaken": 163
+    },
+    "400-500": {
+     "n": 213,
+     "mistaken": 192
+    },
+    "500-600": {
+     "n": 215,
+     "mistaken": 204
+    },
+    "600-700": {
+     "n": 221,
+     "mistaken": 218
+    },
+    "700-800": {
+     "n": 197,
+     "mistaken": 189
+    }
+   },
+   "finals": 2200,
+   "finals_with_a_word": 2125,
+   "finals_per_min": 27.999993848486195,
+   "minutes": 78.57144583333334,
+   "words": 2208,
+   "lost": 49,
+   "restarted": 6,
+   "wheel_revision": "2038a5b12a8da5db31a4657d153862494e88fd5f",
+   "same_streams": true
+  },
+  "utterpy@300/4": {
+   "totals": {
+    "pause": 1458,
+    "finish": 750
+   },
+   "pauses_mistaken": 1207,
+   "finishes_called": 732,
+   "finish_ms_p50": 659.75,
+   "finish_ms_p90": 799.0,
+   "by_pause": {
+    "100-200": {
+     "n": 205,
+     "mistaken": 105
+    },
+    "200-300": {
+     "n": 205,
+     "mistaken": 136
+    },
+    "300-400": {
+     "n": 202,
+     "mistaken": 163
+    },
+    "400-500": {
+     "n": 213,
+     "mistaken": 192
+    },
+    "500-600": {
+     "n": 215,
+     "mistaken": 204
+    },
+    "600-700": {
+     "n": 221,
+     "mistaken": 218
+    },
+    "700-800": {
+     "n": 197,
+     "mistaken": 189
+    }
+   },
+   "finals": 2192,
+   "finals_with_a_word": 2117,
+   "finals_per_min": 27.898175689037156,
+   "minutes": 78.57144583333334,
+   "words": 2208,
+   "lost": 49,
+   "restarted": 6,
+   "wheel_revision": "2038a5b12a8da5db31a4657d153862494e88fd5f",
+   "same_streams": true
+  },
+  "utterpy@300/8": {
+   "totals": {
+    "pause": 1458,
+    "finish": 750
+   },
+   "pauses_mistaken": 1159,
+   "finishes_called": 732,
+   "finish_ms_p50": 680.6875,
+   "finish_ms_p90": 870.0625,
+   "by_pause": {
+    "100-200": {
+     "n": 205,
+     "mistaken": 93
+    },
+    "200-300": {
+     "n": 205,
+     "mistaken": 127
+    },
+    "300-400": {
+     "n": 202,
+     "mistaken": 155
+    },
+    "400-500": {
+     "n": 213,
+     "mistaken": 181
+    },
+    "500-600": {
+     "n": 215,
+     "mistaken": 201
+    },
+    "600-700": {
+     "n": 221,
+     "mistaken": 214
+    },
+    "700-800": {
+     "n": 197,
+     "mistaken": 188
+    }
+   },
+   "finals": 2139,
+   "finals_with_a_word": 2064,
+   "finals_per_min": 27.22363038268726,
+   "minutes": 78.57144583333334,
+   "words": 2208,
+   "lost": 48,
+   "restarted": 6,
+   "wheel_revision": "2038a5b12a8da5db31a4657d153862494e88fd5f",
+   "same_streams": true
   }
  },
  "B1": {
