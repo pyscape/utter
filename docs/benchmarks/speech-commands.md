@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-13 01:38:00Z, utter 2038a5b, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 2038a5b12a8da5db31a4657d153862494e88fd5f, the checkout's HEAD.
+Run 2026-09-13 03:11:01Z, utter e1fda4c, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter e1fda4c25bd49142134e3286a15bd5eb3232260e, the checkout's HEAD.
 
 ## Engines
 
@@ -11,7 +11,7 @@ Each engine opened the model and decoded a clip before the run began; a model an
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
 | vosk | 0.19 | 0.4 |
-| utterpy | 0.14 | 24.4 |
+| utterpy | 0.14 | 23.9 |
 
 ## Full grammar: accuracy
 
@@ -31,8 +31,8 @@ Compute, one recognizer per clip:
 
 | engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |
 |---|---|---|---|---|---|
-| vosk | 0.31 | 0.300 | 0.300 | 0.0171 | 0.0174 |
-| utterpy | 2.43 | 0.029 | 0.029 | 0.0148 | 0.0149 |
+| vosk | 0.31 | 0.319 | 0.319 | 0.0180 | 0.0183 |
+| utterpy | 2.45 | 0.031 | 0.032 | 0.0158 | 0.0159 |
 
 | word | vosk | utterpy |
 |---|---|---|
@@ -158,16 +158,16 @@ Stock `utterpy` was right on 736 of the 800 under the same grammar and padding, 
 
 | block ms | engine | accuracy | first appearance p50 / p90 | same instant as the finest block | RTF, decode only |
 |---|---|---|---|---|---|
-| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0177 |
-| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0145 |
-| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0175 |
-| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0154 |
-| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0174 |
-| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0153 |
-| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0173 |
-| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0154 |
-| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 316, up to 60 ms later | 0.0173 |
-| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0140 |
+| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0193 |
+| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0164 |
+| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0192 |
+| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0161 |
+| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0191 |
+| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0160 |
+| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0190 |
+| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0159 |
+| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 316, up to 60 ms later | 0.0190 |
+| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0159 |
 
 The column that carries the result is the per-clip one, not the quantiles: two block sizes can produce the same p50 by luck, and only a clip-by-clip comparison against the finest block (10 ms) shows whether the word actually appeared at the same instant.
 
@@ -177,8 +177,8 @@ One recognizer over 295 s of the clips joined end to end.
 
 | engine | RTF | per-block compute ms p50 / p95 / p99 |
 |---|---|---|
-| vosk | 0.0126 | 0.050 / 2.89 / 3.39 |
-| utterpy | 0.0111 | 0.043 / 2.52 / 2.79 |
+| vosk | 0.0142 | 0.051 / 3.34 / 3.88 |
+| utterpy | 0.0125 | 0.044 / 2.87 / 3.09 |
 
 ## Accuracy against noise
 
@@ -205,12 +205,12 @@ Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNem
 
 | entries | vosk accuracy | vosk first ms | vosk later ms | vosk RTF | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF |
 |---|---|---|---|---|---|---|---|---|
-| 35 | 94.0% | 0.23 | 0.212 | 0.0161 | 94.5% | 0.94 | 0.015 | 0.0150 |
-| 60 | 92.5% | 0.31 | 0.253 | 0.0174 | 92.8% | 1.57 | 0.020 | 0.0143 |
-| 92 | 92.0% | 0.38 | 0.305 | 0.0175 | 92.2% | 2.45 | 0.029 | 0.0149 |
-| 150 | 91.0% | 0.51 | 0.456 | 0.0194 | 92.0% | 3.90 | 0.044 | 0.0154 |
-| 200 | 90.2% | 0.55 | 0.529 | 0.0197 | 91.5% | 5.46 | 0.051 | 0.0153 |
-| 246 | 89.0% | 0.84 | 0.560 | 0.0195 | 89.8% | 6.29 | 0.060 | 0.0155 |
+| 35 | 94.0% | 0.22 | 0.220 | 0.0170 | 94.5% | 0.94 | 0.017 | 0.0162 |
+| 60 | 92.5% | 0.30 | 0.262 | 0.0182 | 92.8% | 1.68 | 0.024 | 0.0162 |
+| 92 | 92.0% | 0.41 | 0.325 | 0.0187 | 92.2% | 2.51 | 0.031 | 0.0158 |
+| 150 | 91.0% | 0.53 | 0.454 | 0.0198 | 92.0% | 3.93 | 0.046 | 0.0158 |
+| 200 | 90.2% | 0.64 | 0.530 | 0.0202 | 91.5% | 5.76 | 0.055 | 0.0162 |
+| 246 | 89.0% | 0.75 | 0.664 | 0.0221 | 89.8% | 8.87 | 0.073 | 0.0185 |
 
 ## Twelve-class: ten commands plus the unknown-word symbol
 
@@ -233,6 +233,130 @@ Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNem
 | utterpy@300/4 | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 | utterpy@300/8 | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 | utterpy@300/8 | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+
+## Words on wordless audio
+
+Every figure here is counted on audio after the last thing anybody said: the background recordings alone, and 105 clips followed by 3 to 5 s of one recording, from the moment each clip's own energy ends. A word at rank 0 is counted when the partial holds more words than were spoken so far in the segment, so a word still held from the clip is not one, nor is a misrecognition of it, and a word beyond it is. The after-a-word takes are the quietest, median and loudest clip of every dataset word, chosen for the level of the word that precedes the silence. Rates are per minute of non-speech, and both engines see the same samples.
+
+### By floor level
+
+The recordings scaled so their floor sits at each level, and digital silence of the same length beside them, which the floor's percentile treats apart from a room.
+
+| floor | condition | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
+|---|---|---|---|---|---|---|---|---|
+| digital silence | cold | vosk | 6.7 | 9911 | 0.00 | no alternatives | 0.00 | 0 |
+| digital silence | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
+| -70 dBFS | cold | vosk | 6.7 | 9953 | 0.00 | no alternatives | 2.25 | 0 |
+| -70 dBFS | after a word | vosk | 7.2 | 10786 | 0.56 | no alternatives | 0.00 | 4 |
+| -60 dBFS | cold | vosk | 6.7 | 9955 | 0.00 | no alternatives | 2.25 | 0 |
+| -60 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
+| -50 dBFS | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| -50 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
+| -40 dBFS | cold | vosk | 6.7 | 9950 | 0.00 | no alternatives | 1.95 | 0 |
+| -40 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
+| digital silence | cold | utterpy | 6.7 | 9911 | 0.00 | 0.0 | 0.00 | 0 |
+| digital silence | after a word | utterpy | 7.2 | 10787 | 0.56 | 0.6 | 0.00 | 4 |
+| -70 dBFS | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| -70 dBFS | after a word | utterpy | 7.2 | 10786 | 0.56 | 0.6 | 0.00 | 4 |
+| -60 dBFS | cold | utterpy | 6.7 | 9955 | 0.00 | 0.0 | 2.40 | 0 |
+| -60 dBFS | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
+| -50 dBFS | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| -50 dBFS | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
+| -40 dBFS | cold | utterpy | 6.7 | 9950 | 0.90 | 0.9 | 1.95 | 6 |
+| -40 dBFS | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
+
+Paired over the same samples at -50 dBFS, cold, a sample carrying any rank-0 word: vosk only 0, utterpy only 0, exact two-sided p = 1.
+Paired over the same samples at -50 dBFS, after a word, a sample carrying any rank-0 word: vosk only 0, utterpy only 0, exact two-sided p = 1.
+
+### By grammar size
+
+At a -50 dBFS floor, the 35 dataset words plus filler up to each size.
+
+| entries | condition | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
+|---|---|---|---|---|---|---|---|---|
+| 35 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 35 | after a word | vosk | 7.2 | 10786 | 0.00 | no alternatives | 0.14 | 0 |
+| 35 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 35 | after a word | utterpy | 7.2 | 10787 | 0.00 | 0.0 | 0.14 | 0 |
+| 60 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 60 | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
+| 60 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 60 | after a word | utterpy | 7.2 | 10787 | 0.56 | 0.6 | 0.00 | 4 |
+| 92 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 92 | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
+| 92 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 92 | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
+| 150 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 150 | after a word | vosk | 7.2 | 10788 | 3.06 | no alternatives | 0.14 | 22 |
+| 150 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 150 | after a word | utterpy | 7.2 | 10788 | 3.06 | 3.1 | 0.14 | 22 |
+| 200 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 200 | after a word | vosk | 7.2 | 10788 | 3.06 | no alternatives | 0.14 | 22 |
+| 200 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 200 | after a word | utterpy | 7.2 | 10788 | 3.06 | 3.1 | 0.14 | 22 |
+| 246 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 246 | after a word | vosk | 7.2 | 10788 | 4.72 | no alternatives | 0.28 | 22 |
+| 246 | cold | utterpy | 6.7 | 9954 | 2.70 | 2.7 | 2.40 | 18 |
+| 246 | after a word | utterpy | 7.2 | 10789 | 3.89 | 3.1 | 0.28 | 22 |
+
+### The unknown-word symbol
+
+At the same floor and the full grammar, `[unk]` admitted at each cost the private sweep uses, `[[rr:The unknown-word symbol against silence phantoms]]`. The stock wheel takes no cost, so it appears once, at its own default.
+
+| `[unk]` cost | condition | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
+|---|---|---|---|---|---|---|---|---|
+| stock | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| stock | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
+| stock | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| stock | after a word | utterpy | 7.2 | 10789 | 0.00 | 0.0 | 0.00 | 0 |
+| 8 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 8 | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
+| 4 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 4 | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
+| 2 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 2 | after a word | utterpy | 7.2 | 10789 | 0.56 | 0.6 | 0.00 | 4 |
+| 0 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| 0 | after a word | utterpy | 7.2 | 10789 | 0.00 | 0.0 | 0.00 | 0 |
+| -2 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
+| -2 | after a word | utterpy | 7.2 | 10790 | 0.00 | 0.0 | 0.00 | 0 |
+
+### The floor gate a host applies
+
+The same finals with the runtime's own reads applied host-side: a final word is silence when its `energy_dbfs` is within the margin of the `floor_dbfs` that final carries, and the runtime never applies the margin. Only the runtime reports the two fields, so the stock wheel has no row here. The McNemar pairs each sample before and after the gate.
+
+| floor | condition | margin | finals with a word /min | after the gate /min | words caught | b / c / p |
+|---|---|---|---|---|---|---|
+| digital silence | cold | 4 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| digital silence | cold | 8 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| digital silence | cold | 12 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| digital silence | after a word | 4 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| digital silence | after a word | 8 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| digital silence | after a word | 12 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -70 dBFS | cold | 4 dB | 2.25 | 0.30 | 13 / 15 | 5 / 0 / 0.0625 |
+| -70 dBFS | cold | 8 dB | 2.25 | 0.15 | 14 / 15 | 5 / 0 / 0.0625 |
+| -70 dBFS | cold | 12 dB | 2.25 | 0.15 | 14 / 15 | 5 / 0 / 0.0625 |
+| -70 dBFS | after a word | 4 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -70 dBFS | after a word | 8 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -70 dBFS | after a word | 12 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -60 dBFS | cold | 4 dB | 2.40 | 0.15 | 15 / 16 | 5 / 0 / 0.0625 |
+| -60 dBFS | cold | 8 dB | 2.40 | 0.15 | 15 / 16 | 5 / 0 / 0.0625 |
+| -60 dBFS | cold | 12 dB | 2.40 | 0.15 | 15 / 16 | 5 / 0 / 0.0625 |
+| -60 dBFS | after a word | 4 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -60 dBFS | after a word | 8 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -60 dBFS | after a word | 12 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -50 dBFS | cold | 4 dB | 2.25 | 0.15 | 14 / 15 | 5 / 0 / 0.0625 |
+| -50 dBFS | cold | 8 dB | 2.25 | 0.15 | 14 / 15 | 5 / 0 / 0.0625 |
+| -50 dBFS | cold | 12 dB | 2.25 | 0.15 | 14 / 15 | 5 / 0 / 0.0625 |
+| -50 dBFS | after a word | 4 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -50 dBFS | after a word | 8 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -50 dBFS | after a word | 12 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -40 dBFS | cold | 4 dB | 1.95 | 0.15 | 12 / 13 | 4 / 0 / 0.125 |
+| -40 dBFS | cold | 8 dB | 1.95 | 0.15 | 12 / 13 | 4 / 0 / 0.125 |
+| -40 dBFS | cold | 12 dB | 1.95 | 0.15 | 12 / 13 | 4 / 0 / 0.125 |
+| -40 dBFS | after a word | 4 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -40 dBFS | after a word | 8 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+| -40 dBFS | after a word | 12 dB | 0.00 | 0.00 | 0 / 0 | 0 / 0 / 1 |
+
 ## Reading
 
 Accuracy and first-appearance latency are at parity with the stock
@@ -281,3 +405,37 @@ Noise costs both engines the same. Accuracy halves between clean and
 any level. An earlier run showed the runtime 2.3 points behind at
 0 dB; that was TD-6's bug, not the front end.
 
+Words on wordless audio put a number on the complaint the runtime
+exists to answer, and the number is small and it is not the decoder's.
+Fed a quiet room cold under the full grammar, neither engine puts a
+word at rank 0 on a single block of ten thousand, at any floor from
+digital silence to -50 dBFS, and the words that do appear appear in
+finals: about 2.25 a minute at every floor a room has, and none at all
+on digital zeros, which is where a silent
+stretch's word comes from, `[[rr:TD-8#A silent stretch closes as
+libvosk closes it]]`, and not a partial a host could have read first.
+
+The dial that moves it is the grammar, not the microphone. From 35 to
+92 entries the stretch after a spoken word carries at most 0.56 words a
+minute; at 150 it is 3.06 and the longest run a word holds jumps from 4
+blocks to 22, near a second of a host seeing a word nobody said. Both
+engines move together, so this is libvosk's behaviour reproduced
+rather than this runtime's defect, and it is the strongest argument on
+the page for keeping a command grammar small.
+
+The floor gate works and the unknown-word symbol does not. At 8 dB
+above the reported floor the gate takes 14 of the 15 wordless final
+words at -50 dBFS and 12 of 13 at -40, in every case leaving one
+behind, and `[unk]` at any cost from 8 down to -2 changes the rank-0
+count by nothing. That is the private sweep's finding
+(`[[rr:The unknown-word symbol against silence phantoms]]`) reproduced
+on public audio.
+
+Two cells in the whole census differ between the engines, and both are
+one event rather than a rate: a six-block run at a -40 dBFS floor and
+an eighteen-block run at 246 entries, each seen by the runtime and not
+by the stock wheel, each inside a single recording. They are recorded
+here because a one-way excess is what a decoder dropping a reading
+looks like; at two events in some twenty thousand paired blocks there
+is nothing to test, and the paired tests over samples find no
+difference at all.

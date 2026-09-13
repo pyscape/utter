@@ -45,3 +45,38 @@ Noise costs both engines the same. Accuracy halves between clean and
 0 dB, and the paired test finds no difference between the engines at
 any level. An earlier run showed the runtime 2.3 points behind at
 0 dB; that was TD-6's bug, not the front end.
+
+Words on wordless audio put a number on the complaint the runtime
+exists to answer, and the number is small and it is not the decoder's.
+Fed a quiet room cold under the full grammar, neither engine puts a
+word at rank 0 on a single block of ten thousand, at any floor from
+digital silence to -50 dBFS, and the words that do appear appear in
+finals: about 2.25 a minute at every floor a room has, and none at all
+on digital zeros, which is where a silent
+stretch's word comes from, `[[rr:TD-8#A silent stretch closes as
+libvosk closes it]]`, and not a partial a host could have read first.
+
+The dial that moves it is the grammar, not the microphone. From 35 to
+92 entries the stretch after a spoken word carries at most 0.56 words a
+minute; at 150 it is 3.06 and the longest run a word holds jumps from 4
+blocks to 22, near a second of a host seeing a word nobody said. Both
+engines move together, so this is libvosk's behaviour reproduced
+rather than this runtime's defect, and it is the strongest argument on
+the page for keeping a command grammar small.
+
+The floor gate works and the unknown-word symbol does not. At 8 dB
+above the reported floor the gate takes 14 of the 15 wordless final
+words at -50 dBFS and 12 of 13 at -40, in every case leaving one
+behind, and `[unk]` at any cost from 8 down to -2 changes the rank-0
+count by nothing. That is the private sweep's finding
+(`[[rr:The unknown-word symbol against silence phantoms]]`) reproduced
+on public audio.
+
+Two cells in the whole census differ between the engines, and both are
+one event rather than a rate: a six-block run at a -40 dBFS floor and
+an eighteen-block run at 246 entries, each seen by the runtime and not
+by the stock wheel, each inside a single recording. They are recorded
+here because a one-way excess is what a decoder dropping a reading
+looks like; at two events in some twenty thousand paired blocks there
+is nothing to test, and the paired tests over samples find no
+difference at all.
