@@ -11,11 +11,13 @@ the clips that went right-to-wrong and wrong-to-right, and what each engine read
 import argparse
 import json
 from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 
-def load(path):
-    rows = {}
+def load(path: str) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
     for line in Path(path).read_text().splitlines():
         if line.strip():
             row = json.loads(line)
@@ -23,8 +25,8 @@ def load(path):
     return rows
 
 
-def engines_of(rows):
-    names = []
+def engines_of(rows: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    names: list[str] = []
     for row in rows.values():
         for k, v in row.items():
             if k not in ("clip", "label") and isinstance(v, dict) and k not in names:
@@ -32,7 +34,7 @@ def engines_of(rows):
     return names
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("old")
     ap.add_argument("new")
@@ -48,8 +50,10 @@ def main():
         print(f"  {only_old} only in the old run, {only_new} only in the new one; compared on the rest")
 
     for name in engines_of(new):
-        broke, fixed, reread = [], [], 0
-        per_word = defaultdict(lambda: [0, 0])
+        broke: list[tuple[str, list[str]]] = []
+        fixed: list[tuple[str, list[str]]] = []
+        reread = 0
+        per_word: defaultdict[str, list[int]] = defaultdict(lambda: [0, 0])
         for clip in shared:
             a, b = old[clip].get(name), new[clip].get(name)
             if a is None or b is None:

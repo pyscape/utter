@@ -27,7 +27,10 @@ import shutil
 import sys
 import tempfile
 from collections import Counter
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -36,10 +39,13 @@ import speech_commands as sc  # noqa: E402
 STOCK = "stock"
 WIDE = "wide"
 
+# One engine's decode of a clip set, keyed by the clip's path.
+Rows = dict[str, sc.Json]
 
-def read_conf(model_dir):
+
+def read_conf(model_dir: str | Path) -> dict[str, str]:
     """`conf/model.conf` as a dict of the `--key=value` lines it carries."""
-    out = {}
+    out: dict[str, str] = {}
     for line in (Path(model_dir) / "conf" / "model.conf").read_text().splitlines():
         line = line.strip()
         if line.startswith("--") and "=" in line:
@@ -48,7 +54,7 @@ def read_conf(model_dir):
     return out
 
 
-def sibling_model(model_dir, dest, overrides):
+def sibling_model(model_dir: str | Path, dest: str | Path, overrides: Mapping[str, object]) -> Path:
     """A model directory that is the original except for `conf/model.conf`.
 
     The trick is the one `[[rr:TD-2#Inputs: configuration]]` describes for a host shipping its
@@ -71,7 +77,7 @@ def sibling_model(model_dir, dest, overrides):
     return dest
 
 
-def vosk_decoding_params(module, model_dir):
+def vosk_decoding_params(module: ModuleType, model_dir: str | Path) -> str | None:
     """What the wheel says it decodes with, from its own log line as it opens the model.
 
     libvosk parses `conf/model.conf` into the option objects it then decodes with and prints
@@ -97,7 +103,7 @@ def vosk_decoding_params(module, model_dir):
     return None
 
 
-def final_readings(finals):
+def final_readings(finals: Iterable[Mapping[str, Any]]) -> tuple[list[str], list[list[str]], int]:
     """The final's n-best as a list of word sequences, best first, and the words the engine read.
 
     `SetMaxAlternatives` replaces the plain `text` with an `alternatives` array; below 2 the
@@ -106,8 +112,8 @@ def final_readings(finals):
     and the ranked list is the last segment that carried a word, because a ranking across
     segments is not a thing the engine offered.
     """
-    words = []
-    ranked = []
+    words: list[str] = []
+    ranked: list[list[str]] = []
     segments = 0
     for f in finals:
         alts = f.get("alternatives")
@@ -121,7 +127,7 @@ def final_readings(finals):
     return words, ranked, segments
 
 
-def sighting_readings(p):
+def sighting_readings(p: Mapping[str, Any]) -> list[list[str]]:
     """The readings at a partial, best first, as word sequences."""
     alts = p.get("partial_alternatives") or []
     if alts:
@@ -129,18 +135,18 @@ def sighting_readings(p):
     return [sc.words_of(p.get("partial", ""))]
 
 
-def rank_of(ranked, hit):
+def rank_of(ranked: Sequence[Sequence[str]], hit: Callable[[Sequence[str]], bool]) -> int | None:
     for i, words in enumerate(ranked):
         if hit(words):
             return i
     return None
 
 
-def decode_clip(eng, pcm, block_ms, label, n):
+def decode_clip(eng: sc.Engine, pcm: bytes, block_ms: int, label: str, n: int) -> sc.Json:
     """One clip: the readings when its first word appeared, and the readings in its final."""
-    sight = {}
+    sight: dict[str, Any] = {}
 
-    def on_partial(fed, p):
+    def on_partial(fed: int, p: sc.Json) -> None:
         if not sight and sc.words_of(p.get("partial", "")):
             sight["readings"] = sighting_readings(p)
             sight["ms"] = 1000.0 * fed / sc.RATE
@@ -161,15 +167,23 @@ def decode_clip(eng, pcm, block_ms, label, n):
     )
 
 
-def decode_pass(modules, model_dir, clips, block_ms, grammar, n, tag):
+def decode_pass(
+    modules: Mapping[str, ModuleType],
+    model_dir: str | Path,
+    clips: Sequence[sc.Clip],
+    block_ms: int,
+    grammar: Sequence[str],
+    n: int,
+    tag: str,
+) -> tuple[dict[str, Rows], dict[str, bool]]:
     """Every clip through every engine at one search setting, and whose partials carry a n-best."""
-    out = {}
-    nbest = {}
+    out: dict[str, Rows] = {}
+    nbest: dict[str, bool] = {}
     for name, mod in modules.items():
         eng = sc.Engine(name, mod, model_dir, grammar)
         nbest[name] = hasattr(eng.new(), "SetPartialAlternatives")
         sc.note(f"{tag}: {name}, {len(clips)} clips")
-        rows = {}
+        rows: Rows = {}
         for done, (label, path) in enumerate(clips):
             if done and done % 2500 == 0:
                 sc.note(f"  {tag} {name} {done} / {len(clips)}")
@@ -178,10 +192,10 @@ def decode_pass(modules, model_dir, clips, block_ms, grammar, n, tag):
     return out, nbest
 
 
-def oracle_counts(rows, key, ns):
+def oracle_counts(rows: Mapping[str, sc.Json], key: str, ns: Sequence[int]) -> dict[Any, Any]:
     """How often the word was among the readings, at each n, and where it stood when it was."""
     rank = f"{key}_rank"
-    out = {
+    out: dict[Any, Any] = {
         n: dict(
             present=sum(1 for r in rows.values() if r[rank] is not None and r[rank] < n),
             total=len(rows),
@@ -192,7 +206,14 @@ def oracle_counts(rows, key, ns):
     return out
 
 
-def oracle_section(results, nbest, ns, lines, report, key_prefix="oracle"):
+def oracle_section(
+    results: Mapping[str, Rows],
+    nbest: Mapping[str, bool],
+    ns: Sequence[int],
+    lines: list[str],
+    report: sc.Json,
+    key_prefix: str = "oracle",
+) -> None:
     lines.append("## Oracle in the beam: was the word there at all")
     lines.append("")
     lines.append(
@@ -204,7 +225,7 @@ def oracle_section(results, nbest, ns, lines, report, key_prefix="oracle"):
         "`[[rr:TD-2#The decoder: partial alternatives]]`."
     )
     lines.append("")
-    fig = {}
+    fig: sc.Json = {}
     for key, what in (("sighting", "at the first sighting"), ("final", "in the final")):
         limited = [name for name in results if key == "sighting" and not nbest.get(name, True)]
         lines.append(f"### The word among the readings {what}")
@@ -277,15 +298,26 @@ def oracle_section(results, nbest, ns, lines, report, key_prefix="oracle"):
     report[key_prefix] = fig
 
 
-def finals_at(eng, clips, block_ms, n):
+def finals_at(eng: sc.Engine, clips: Sequence[sc.Clip], block_ms: int, n: int) -> list[list[str]]:
     return [decode_clip(eng, sc.read_pcm(p), block_ms, label, n)["words"] for label, p in clips]
 
 
-def moved_against(base, got):
+def moved_against(base: Sequence[object], got: Sequence[object]) -> int:
     return sum(1 for a, b in zip(base, got, strict=True) if a != b)
 
 
-def conf_read_check(modules, model_dir, probe_model, scale, clips, block_ms, grammar, n, lines, report):
+def conf_read_check(
+    modules: Mapping[str, ModuleType],
+    model_dir: str | Path,
+    probe_model: str | Path,
+    scale: Mapping[str, str | None],
+    clips: Sequence[sc.Clip],
+    block_ms: int,
+    grammar: Sequence[str],
+    n: int,
+    lines: list[str],
+    report: sc.Json,
+) -> None:
     """That a sibling directory's `conf/` reaches the decoder, shown rather than assumed.
 
     A beam that moves no final cannot tell a file that was read from a file that was ignored, so
@@ -302,7 +334,7 @@ def conf_read_check(modules, model_dir, probe_model, scale, clips, block_ms, gra
     lines.append("")
     lines.append("| engine | finals changed against stock |")
     lines.append("|---|---|")
-    fig = {}
+    fig: sc.Json = {}
     for name, mod in modules.items():
         base = finals_at(sc.Engine(name, mod, model_dir, grammar), clips, block_ms, n)
         got = finals_at(sc.Engine(name, mod, probe_model, grammar), clips, block_ms, n)
@@ -314,18 +346,18 @@ def conf_read_check(modules, model_dir, probe_model, scale, clips, block_ms, gra
 
 
 def beam_sweep_section(
-    modules,
-    model_dir,
-    work,
-    beams,
-    max_active,
-    clips,
-    block_ms,
-    grammar,
-    n,
-    lines,
-    report,
-):
+    modules: Mapping[str, ModuleType],
+    model_dir: str | Path,
+    work: Path,
+    beams: Sequence[float],
+    max_active: int,
+    clips: Sequence[sc.Clip],
+    block_ms: int,
+    grammar: Sequence[str],
+    n: int,
+    lines: list[str],
+    report: sc.Json,
+) -> None:
     """The same clips at a range of beams, so one wider point is not read as the whole story."""
     lines.append("### The finals over a range of beams")
     lines.append("")
@@ -336,7 +368,7 @@ def beam_sweep_section(
     lines.append("")
     lines.append("| engine | " + " | ".join(f"beam {b:g}" for b in beams) + " |")
     lines.append("|---|" + "---|" * len(beams))
-    fig = {}
+    fig: sc.Json = {}
     siblings = [
         (
             b,
@@ -361,7 +393,15 @@ def beam_sweep_section(
     )
 
 
-def beam_section(stock, wide, conf, params, compute, lines, report):
+def beam_section(
+    stock: Mapping[str, Rows],
+    wide: Mapping[str, Rows],
+    conf: Mapping[str, Any],
+    params: Mapping[str, str | None],
+    compute: Mapping[str, Mapping[str, sc.Json]],
+    lines: list[str],
+    report: sc.Json,
+) -> None:
     lines.append("## Beam sensitivity: the clips a wider search moves")
     lines.append("")
     lines.append(
@@ -385,7 +425,7 @@ def beam_section(stock, wide, conf, params, compute, lines, report):
         "| engine | final changed | became right | became wrong | wrong to wrong | accuracy stock | accuracy wide |"
     )
     lines.append("|---|---|---|---|---|---|---|")
-    fig = {}
+    fig: sc.Json = {}
     for name in stock:
         a, b = stock[name], wide[name]
         shared = sorted(set(a) & set(b))
@@ -437,7 +477,7 @@ def beam_section(stock, wide, conf, params, compute, lines, report):
     report["beam"] = dict(clips=fig, conf=conf, vosk_params=params, compute=compute)
 
 
-def wide_oracle_section(fig, ns, lines):
+def wide_oracle_section(fig: Mapping[str, Any], ns: Sequence[int], lines: list[str]) -> None:
     """The oracle rate again with the search widened, which is what the beam is a lever over."""
     top, low = str(max(ns)), str(min(ns))
     lines.append("### The word among the readings at the wider search")
@@ -445,7 +485,7 @@ def wide_oracle_section(fig, ns, lines):
     lines.append(f"| engine | sighting, n = {max(ns)} | final, n = {min(ns)} | final, n = {max(ns)} |")
     lines.append("|---|---|---|---|")
 
-    def cell(at, n):
+    def cell(at: Mapping[str, Any], n: str) -> str:
         if n not in at:
             return "-"
         c = at[n]
@@ -459,14 +499,14 @@ def wide_oracle_section(fig, ns, lines):
     lines.append("")
 
 
-def attribution(series_path, lines, report):
+def attribution(series_path: str | Path, lines: list[str], report: sc.Json) -> None:
     """Where the replacing word stood when the word it replaced was first shown.
 
     Reads the series `scripts/partial_trust.py` recorded and decodes nothing. In that file a
     record's `word` is the first word a host was shown and `survived` says whether the final
     still led with it, so a revision is a record with `survived` false.
     """
-    revised = []
+    revised: list[tuple[sc.Json, Any]] = []
     consistent = 0
     total = 0
     for line in Path(series_path).read_text().splitlines():
@@ -480,11 +520,11 @@ def attribution(series_path, lines, report):
         if not rec["survived"]:
             revised.append((rec, settled))
 
-    def leads(entry):
+    def leads(entry: Mapping[str, Any]) -> list[str]:
         return [r["text"].split()[0] for r in entry["readings"] if r["text"].split()]
 
-    buckets = Counter()
-    truth_right = Counter()
+    buckets: Counter[str] = Counter()
+    truth_right: Counter[str] = Counter()
     alone = [r for r, _ in revised if len(r["series"]) == 1]
     followed = [(r, s) for r, s in revised if len(r["series"]) > 1]
     for rec, settled in followed:
@@ -551,7 +591,9 @@ def attribution(series_path, lines, report):
     )
 
 
-def asking_for_alternatives_check(stock, compare, lines, report):
+def asking_for_alternatives_check(
+    stock: Mapping[str, Rows], compare: str | Path, lines: list[str], report: sc.Json
+) -> None:
     """Whether asking for an n-best moved the answer the engine gives without one.
 
     The figures above are only about the Speech Commands page's if the rank-0 reading is the
@@ -560,7 +602,7 @@ def asking_for_alternatives_check(stock, compare, lines, report):
     path = Path(compare)
     if not path.exists():
         return
-    other = {}
+    other: dict[str, sc.Json] = {}
     for line in path.read_text().splitlines():
         if line.strip():
             row = json.loads(line)
@@ -571,7 +613,7 @@ def asking_for_alternatives_check(stock, compare, lines, report):
     lines.append("")
     lines.append("| engine | rank 0 equals the recorded final |")
     lines.append("|---|---|")
-    fig = {}
+    fig: sc.Json = {}
     for name, rows in stock.items():
         both = [(r, other[c][name]) for c, r in rows.items() if c in other and name in other[c]]
         same = sum(1 for mine, theirs in both if mine["words"] == theirs["words"])
@@ -581,10 +623,12 @@ def asking_for_alternatives_check(stock, compare, lines, report):
     report["nbest_check"] = dict(against=path.name, engines=fig)
 
 
-def write_clips(path, clips, stock, wide):
+def write_clips(
+    path: str | Path, clips: Sequence[sc.Clip], stock: Mapping[str, Rows], wide: Mapping[str, Rows]
+) -> None:
     with open(path, "w") as f:
         for label, clip in clips:
-            row = {"clip": f"{clip.parent.name}/{clip.name}", "label": label}
+            row: sc.Json = {"clip": f"{clip.parent.name}/{clip.name}", "label": label}
             for tag, res in ((STOCK, stock), (WIDE, wide)):
                 for name, rows in res.items():
                     r = rows.get(str(clip))
@@ -593,7 +637,7 @@ def write_clips(path, clips, stock, wide):
             f.write(json.dumps(row) + "\n")
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--model", required=True)
@@ -641,17 +685,17 @@ def main():
 
     data = Path(args.data)
     listed = [line.strip() for line in (data / f"{args.split}_list.txt").read_text().splitlines() if line.strip()]
-    by_word = {}
+    by_word: dict[str, list[str]] = {}
     for rel in listed:
         by_word.setdefault(rel.split("/")[0], []).append(rel)
-    clips = []
+    clips: list[sc.Clip] = []
     for w in sc.DATASET_WORDS:
         items = by_word.get(w, [])
         if args.limit:
             items = items[: args.limit]
         clips.extend((w, data / rel) for rel in items)
 
-    modules = {}
+    modules: dict[str, ModuleType] = {}
     for name in args.engines.split(","):
         modules[name] = __import__(name)
         if name == "vosk":
@@ -673,22 +717,22 @@ def main():
     work = Path(args.work) if args.work else Path(tempfile.mkdtemp(prefix="decoder-diagnostics-"))
     work.mkdir(parents=True, exist_ok=True)
     stock_conf = read_conf(args.model)
-    overrides = {"beam": args.wide_beam, "max-active": args.wide_max_active}
+    overrides: dict[str, object] = {"beam": args.wide_beam, "max-active": args.wide_max_active}
     wide_model = sibling_model(args.model, work / (Path(args.model).name + "-wide-beam"), overrides)
-    conf = dict(
+    conf: sc.Json = dict(
         from_={k: stock_conf.get(k) for k in overrides},
         to={k: str(v) for k, v in overrides.items()},
         stock=stock_conf,
         wide=read_conf(wide_model),
     )
     conf["from"] = conf.pop("from_")
-    scale = dict(**{"from": stock_conf.get("acoustic-scale")}, to=str(args.probe_acoustic_scale))
+    scale: dict[str, str | None] = dict(**{"from": stock_conf.get("acoustic-scale")}, to=str(args.probe_acoustic_scale))
     probe_model = sibling_model(
         args.model,
         work / (Path(args.model).name + "-scale"),
         {"acoustic-scale": scale["to"]},
     )
-    params = {}
+    params: dict[str, str | None] = {}
     if "vosk" in modules:
         params["vosk stock"] = vosk_decoding_params(modules["vosk"], args.model)
         params["vosk wide"] = vosk_decoding_params(modules["vosk"], wide_model)
@@ -709,13 +753,13 @@ def main():
     oracle_section(stock, nbest, ns, lines, report)
     asking_for_alternatives_check(stock, args.compare, lines, report)
     wide, _ = decode_pass(modules, wide_model, clips, args.block_ms, grammar, args.alternatives, WIDE)
-    wide_report = {}
+    wide_report: sc.Json = {}
     oracle_section(wide, nbest, ns, [], wide_report, key_prefix="oracle_wide")
     report["oracle_wide"] = wide_report["oracle_wide"]
 
-    compute = {}
+    compute: dict[str, Any] = {}
     for tag, model_dir in ((STOCK, args.model), (WIDE, wide_model)):
-        held = {}
+        held: sc.Json = {}
         sc.steady_state_pass(
             modules,
             model_dir,

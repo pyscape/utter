@@ -12,25 +12,28 @@ seconds, and the [unk] readings.
 """
 
 import argparse
+import array
 import json
 import math
 import wave
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 RATE = 16000
 TAIL_MS = 400
 LONG_S = 2.0
 
 
-def words_of(text):
+def words_of(text: str) -> list[str]:
     return [w for w in text.split() if not (w.startswith("[") and w.endswith("]"))]
 
 
-def spoken_entries(entries):
+def spoken_entries(entries: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     return [e for e in entries if not (e["word"].startswith("[") and e["word"].endswith("]"))]
 
 
-def dbfs(samples):
+def dbfs(samples: Sequence[int]) -> float:
     if not samples:
         return -999.0
     acc = 0
@@ -40,9 +43,7 @@ def dbfs(samples):
     return 20 * math.log10(rms / 32768.0) if rms > 0 else -999.0
 
 
-def load_pcm(path):
-    import array
-
+def load_pcm(path: Path) -> array.array[int]:
     with wave.open(str(path)) as w:
         a = array.array("h")
         a.frombytes(w.readframes(w.getnframes()))
@@ -50,14 +51,14 @@ def load_pcm(path):
 
 
 # [[rr:TD-8#Measurements count a word whose own span carries no speech]]
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--margin", type=float, default=8.0, help="dB above the floor that is still silence")
     ap.add_argument("--label", action="append", default=[], help="label per run, in order")
     ap.add_argument("runs", nargs="+")
     args = ap.parse_args()
-    pcm_cache = {}
+    pcm_cache: dict[str, array.array[int]] = {}
     print(
         "| run | quiet blocks | rank 0 a word on a quiet block | held | straddling | silence | "
         "final words | silence final words | final words over 2 s | [unk] finals |"

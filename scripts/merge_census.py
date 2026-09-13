@@ -11,6 +11,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import speech_commands as sc  # noqa: E402
@@ -18,15 +19,15 @@ import speech_commands as sc  # noqa: E402
 BATCH = 500
 
 
-def clips_of(data, split):
+def clips_of(data: Path, split: str) -> list[Path]:
     listed = [x.strip() for x in (data / f"{split}_list.txt").read_text().splitlines() if x.strip()]
-    by = defaultdict(list)
+    by: defaultdict[str, list[str]] = defaultdict(list)
     for rel in listed:
         by[rel.split("/")[0]].append(rel)
     return [data / rel for w in sc.DATASET_WORDS for rel in by.get(w, [])]
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--model", required=True)
@@ -42,7 +43,7 @@ def main():
     grammar = sc.DATASET_WORDS + sc.LETTERS + sc.NATO + sc.COLOURS
     gpath = Path(a.out + ".grammar.json")
     gpath.write_text(json.dumps(grammar))
-    rows = {}
+    rows: dict[str, Any] = {}
     try:
         for i in range(0, len(clips), BATCH):
             batch = clips[i : i + BATCH]

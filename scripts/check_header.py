@@ -13,7 +13,7 @@ from pathlib import Path
 
 def prototypes(text: str) -> dict[str, str]:
     # A declaration runs from the start of a line to its semicolon, possibly over several lines.
-    out = {}
+    out: dict[str, str] = {}
     for decl in re.findall(r"^[A-Za-z_][^;#{}]*?\butter_[a-z_]+\s*\([^;]*?\)\s*;", text, re.M | re.S):
         flat = re.sub(r"\s+", " ", decl).strip()
         flat = flat.replace("struct ", "")

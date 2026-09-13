@@ -35,10 +35,24 @@ import random
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any, TypedDict, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import speech_commands as sc  # noqa: E402
+
+Json = dict[str, Any]
+Reading = tuple[str, float]
+Readings = tuple[Reading, ...]
+Leads = dict[str, float | None]
+Parity = dict[str, float]
+Series = Sequence[tuple[int, Readings, Json]]
+Edges = Sequence[tuple[float, float]]
+Trust = Callable[[Json], float]
+Cols = Callable[[Json], list[float]]
+# The in-sample winner of `logistic_section`: its AUC, and the signal's key and label.
+Best = tuple[float | None, str | None, str | None]
 
 RATE = 16000
 SAMPLES_PER_MS = RATE // 1000
@@ -50,15 +64,15 @@ BOOTSTRAP = 1000
 # runtime's leads and their difference are single precision: a few times 1e-6 either way.
 RUNTIME_TOL = 2e-5
 
-GAP_EDGES = [(0.0, 0.5), (0.5, 1.0), (1.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, float("inf"))]
-TRUST_EDGES = [(0.0, 0.5), (0.5, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 0.95), (0.95, 1.01)]
+GAP_EDGES: list[tuple[float, float]] = [(0.0, 0.5), (0.5, 1.0), (1.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, float("inf"))]
+TRUST_EDGES: list[tuple[float, float]] = [(0.0, 0.5), (0.5, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 0.95), (0.95, 1.01)]
 
-LEVEL = [
+LEVEL: list[tuple[str, str]] = [
     ("gap", "gap from the top `confidence` to the next"),
     ("conf0", "the top reading's own `confidence`"),
     ("energy", "`energy_dbfs` under the word"),
 ]
-MOTION = [
+MOTION: list[tuple[str, str]] = [
     ("advances_alive", "advances the top reading has stood"),
     ("lead_delta0", "`lead_delta` of rank 0"),
     ("lead_delta1", "`lead_delta` of rank 1"),
@@ -70,16 +84,16 @@ MOTION = [
 ]
 
 
-def first_word(text):
+def first_word(text: str) -> str | None:
     ws = sc.words_of(text)
     return ws[0] if ws else None
 
 
-def sigmoid(x):
+def sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-max(-40.0, min(40.0, x))))
 
 
-def auc(pairs):
+def auc(pairs: Sequence[tuple[float | None, bool]]) -> float | None:
     """Rank-AUC of a score against a boolean label; 0.5 is no information, below 0.5 inverted."""
     xs = [(s, y) for s, y in pairs if s is not None]
     pos = [s for s, y in xs if y]
@@ -106,21 +120,21 @@ def auc(pairs):
 # [[rr:TD-10#Decision outcome]]: the empty reading is keyed by one label so its history runs
 # across the flip from `[sil]` to `[speech]`, as the runtime's does.
 WORDLESS = ("[sil]", "[speech]")
-SPEECH_LABELS = {"blocks": 0, "rank0": 0}
+SPEECH_LABELS: dict[str, int] = {"blocks": 0, "rank0": 0}
 
 
-def canon(text):
+def canon(text: str) -> str:
     return "[sil]" if text in WORDLESS else text
 
 
-def readings_of(p):
+def readings_of(p: Json) -> Readings:
     alts = p.get("partial_alternatives") or []
     SPEECH_LABELS["blocks"] += 1
     SPEECH_LABELS["rank0"] += bool(alts) and alts[0]["text"] == "[speech]"
     return tuple((canon(e["text"]), e["confidence"]) for e in alts)
 
 
-def leads_of(readings):
+def leads_of(readings: Readings) -> Leads:
     """Each reading's confidence less the best of the others: the gap for rank 0, the deficit to
     the leader for the rest. Undefined where a reading stands alone."""
     if len(readings) < 2:
@@ -128,7 +142,7 @@ def leads_of(readings):
     return {t: c - max(d for u, d in readings if u != t) for t, c in readings}
 
 
-def relation_of(top, text):
+def relation_of(top: str, text: str) -> str:
     """A reading's word sequence set against rank 0's, as
     `[[rr:TD-9#Every reading names its relation to the partial]]` defines it: a sequence relation
     from the labels, and nothing about which word differs."""
@@ -142,13 +156,13 @@ def relation_of(top, text):
     return "differs"
 
 
-def empty_parity():
+def empty_parity() -> Parity:
     """The cross-check's tally: where both sources have a delta they must agree; where only the
     runtime has one the reading entered the reported list and the harness has no record of it."""
     return dict(agreed=0, runtime_only=0, neither=0, max_diff=0.0)
 
 
-def runtime_motion(p):
+def runtime_motion(p: Json) -> dict[str, tuple[str, float | None]] | None:
     """`relation` and `lead_delta` as the runtime reports them, by reading text, or None from a
     build that predates the keys. The runtime keeps the history over every surviving group, so it
     reports a delta where the harness, which sees only the readings reported, has none
@@ -159,7 +173,9 @@ def runtime_motion(p):
     return {canon(e["text"]): (e["relation"], e["lead_delta"]) for e in alts}
 
 
-def check_motion(rt, derived, top, parity):
+def check_motion(
+    rt: Mapping[str, tuple[str, float | None]], derived: Mapping[str, float], top: str, parity: Parity
+) -> None:
     """The harness's derivation is the cross-check on the runtime's fields. A reading reported at
     both advances has its lead from the same two confidences either way, so the two must agree;
     a reading the harness cannot see is the runtime's alone."""
@@ -173,13 +189,14 @@ def check_motion(rt, derived, top, parity):
         if mine is None:
             parity["runtime_only" if delta is not None else "neither"] += 1
             continue
+        assert delta is not None
         if abs(delta - mine) > RUNTIME_TOL:
             raise AssertionError(f"lead_delta {delta} from the runtime, {mine} derived, on {text!r}")
         parity["agreed"] += 1
         parity["max_diff"] = max(parity["max_diff"], abs(delta - mine))
 
 
-def entropy_of(readings):
+def entropy_of(readings: Readings) -> float | None:
     """Shannon entropy in nats of the softmax over the confidences."""
     if not readings:
         return None
@@ -189,22 +206,22 @@ def entropy_of(readings):
     return -sum((x / z) * math.log(x / z) for x in w if x > 0)
 
 
-def energy_of(p):
+def energy_of(p: Json) -> float | None:
     lead = [e for e in (p.get("partial_result") or []) if e["word"] == first_word(p["partial"])]
     return lead[-1]["energy_dbfs"] if lead else None
 
 
-def advance_states(series, parity=None):
+def advance_states(series: Series, parity: Parity | None = None) -> list[Json]:
     """The blocks where the readings changed, each with what the readings had done by then.
 
     A block that carries no readings at all is not an advance: the decoder has not run a chunk
     yet, so there is no beam to report. Past that, `[[rr:TD-7#Decision outcome]]` is why a change
     marks an advance: the readings are a function of the decoded frame count, so between advances
     every block repeats the last one."""
-    states = []
-    alive = {}
+    states: list[Json] = []
+    alive: dict[str, int] = {}
     churn = 0
-    prev = None
+    prev: Json | None = None
     if parity is None:
         parity = empty_parity()
     for i, (fed, readings, p) in enumerate(series):
@@ -214,15 +231,17 @@ def advance_states(series, parity=None):
         alive = {t: alive.get(t, 0) + 1 for t in texts}
         lead = leads_of(readings)
         ent = entropy_of(readings)
+        assert ent is not None
         top = texts[0]
         if prev is not None and prev["top"] != top:
             churn += 1
-        derived = {}
+        derived: dict[str, float] = {}
         if prev is not None:
             for t in texts:
                 before = prev["lead"].get(t)
-                if before is not None and lead[t] is not None:
-                    derived[t] = lead[t] - before
+                now = lead[t]
+                if before is not None and now is not None:
+                    derived[t] = now - before
         rt = runtime_motion(p)
         delta = derived
         rel = {t: relation_of(top, t) for t in texts}
@@ -252,7 +271,7 @@ def advance_states(series, parity=None):
     return states
 
 
-def vanishings(states):
+def vanishings(states: Sequence[Json]) -> list[tuple[int, int]]:
     """Per advance, the readings that were within `IN_CONTENTION` nats of the leader and are gone
     at the next advance. An upper bound on Viterbi merges: beam pruning drops readings too."""
     out = []
@@ -265,7 +284,7 @@ def vanishings(states):
     return out
 
 
-def features_at(st, vanished):
+def features_at(st: Json, vanished: int) -> Json:
     """What a host could read off one advance."""
     r = st["readings"]
     rank1 = r[1][0] if len(r) >= 2 else None
@@ -299,20 +318,24 @@ def features_at(st, vanished):
     )
 
 
-def decode(clips, eng, block_ms, alternatives):
+def decode(clips: Sequence[Path], eng: sc.Engine, block_ms: int, alternatives: int) -> tuple[list[Json], Json]:
     """Per clip, the readings at the first block whose partial carries a word and a runner-up, and
     every advance from there to the end of the clip."""
-    recs = []
-    diag = dict(clips=0, intervals=[], advances=[], first_advance_ms=[], gaps_after_start=0, sighting_off_advance=0)
+    recs: list[Json] = []
+    diag: Json = dict(
+        clips=0, intervals=[], advances=[], first_advance_ms=[], gaps_after_start=0, sighting_off_advance=0
+    )
     parity = empty_parity()
     t0 = time.monotonic()
     for n, path in enumerate(clips):
         if n and n % 2000 == 0:
             print(f"{n}/{len(clips)} {time.monotonic() - t0:.0f}s", file=sys.stderr, flush=True)
-        series = []
-        sight = []
+        series: list[tuple[int, Readings, Json]] = []
+        sight: list[int] = []
 
-        def on_partial(fed, p, series=series, sight=sight):
+        def on_partial(
+            fed: int, p: Json, series: list[tuple[int, Readings, Json]] = series, sight: list[int] = sight
+        ) -> None:
             series.append((fed, readings_of(p), p))
             if not sight and len(p.get("partial_alternatives") or []) >= 2 and sc.words_of(p.get("partial", "")):
                 sight.append(len(series) - 1)
@@ -361,7 +384,7 @@ def decode(clips, eng, block_ms, alternatives):
     return recs, diag
 
 
-def promote(rec):
+def promote(rec: Json) -> Json:
     """The record as the figures read it: the sighting's own features at the top level, and the
     next advance beside them with the wait it costs."""
     f = dict(rec)
@@ -374,7 +397,7 @@ def promote(rec):
     return f
 
 
-def load(path):
+def load(path: str | Path) -> list[Json]:
     with open(path) as fh:
         return [promote(json.loads(line)) for line in fh if line.strip()]
 
@@ -382,28 +405,28 @@ def load(path):
 # ---------------------------------------------------------------- statistics
 
 
-def defined(feats, key):
+def defined(feats: Sequence[Json], key: str) -> list[Json]:
     return [f for f in feats if f.get(key) is not None]
 
 
-def fmt(x, places=2):
+def fmt(x: float | None, places: int = 2) -> str:
     return "-" if x is None else f"{x:.{places}f}"
 
 
-def mean(values):
+def mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else float("nan")
 
 
-def dist(values, places=0):
+def dist(values: Sequence[float], places: int = 0) -> str:
     if not values:
         return "-"
     return f"{sc.quantile(values, 0.5):.{places}f} / {sc.quantile(values, 0.9):.{places}f}"
 
 
-def solve(A, b):
+def solve(A: Sequence[Sequence[float]], b: Sequence[float]) -> list[float] | None:
     """Gaussian elimination with partial pivoting; None where the system is singular."""
     n = len(A)
-    M = [row[:] + [b[i]] for i, row in enumerate(A)]
+    M = [list(row) + [b[i]] for i, row in enumerate(A)]
     for c in range(n):
         piv = max(range(c, n), key=lambda r: abs(M[r][c]))
         if abs(M[piv][c]) < 1e-12:
@@ -418,7 +441,7 @@ def solve(A, b):
     return [M[i][n] / M[i][i] for i in range(n)]
 
 
-def logistic_fit(rows, ys, l2=1e-3, iters=60):
+def logistic_fit(rows: Sequence[Sequence[float]], ys: Sequence[bool], l2: float = 1e-3, iters: int = 60) -> list[float]:
     """Newton steps on the log-likelihood. The ridge is there because some columns separate the
     labels outright, and an unpenalised fit walks off to infinity on those."""
     k = len(rows[0])
@@ -444,7 +467,7 @@ def logistic_fit(rows, ys, l2=1e-3, iters=60):
     return b
 
 
-def fit(cols, ys):
+def fit(cols: Sequence[Sequence[float]], ys: Sequence[bool]) -> tuple[list[float], float | None]:
     """Coefficients and the in-sample AUC of a logistic fit; the columns get an intercept here."""
     rows = [[1.0] + list(c) for c in cols]
     b = logistic_fit(rows, ys)
@@ -452,7 +475,9 @@ def fit(cols, ys):
     return b, auc(list(zip(scores, ys, strict=True)))
 
 
-def ece(pairs, edges):
+def ece(
+    pairs: Sequence[tuple[float | None, bool]], edges: Edges
+) -> tuple[float | None, list[tuple[tuple[float, float], int, float, float]]]:
     """Expected calibration error: how far the predicted probability sits from the observed rate,
     averaged over bins by the clips in them."""
     rows = [(p, y) for p, y in pairs if p is not None]
@@ -471,13 +496,13 @@ def ece(pairs, edges):
     return err, out
 
 
-def sorted_pairs(scores, labels):
-    idx = [i for i, s in enumerate(scores) if s is not None]
-    idx.sort(key=lambda i: scores[i])
-    return [(i, scores[i], labels[i]) for i in idx]
+def sorted_pairs(scores: Sequence[float | None], labels: Sequence[bool]) -> list[tuple[int, float, bool]]:
+    rows = [(i, s, labels[i]) for i, s in enumerate(scores) if s is not None]
+    rows.sort(key=lambda t: t[1])
+    return rows
 
 
-def weighted_auc(pairs, w):
+def weighted_auc(pairs: Sequence[tuple[int, float, bool]], w: Sequence[float]) -> float | None:
     """Mann-Whitney U over pre-sorted scores with each clip counted `w[i]` times: the bootstrap
     resamples clips, so the sort is done once and the weights change."""
     below = acc = pos = neg = 0.0
@@ -502,7 +527,13 @@ def weighted_auc(pairs, w):
     return acc / (pos * neg) if pos and neg else None
 
 
-def paired_bootstrap(a_scores, b_scores, labels, n=BOOTSTRAP, seed=0):
+def paired_bootstrap(
+    a_scores: Sequence[float | None],
+    b_scores: Sequence[float | None],
+    labels: Sequence[bool],
+    n: int = BOOTSTRAP,
+    seed: int = 0,
+) -> tuple[float | None, float | None, float | None, int]:
     """The AUC difference between two rules and its 95% interval, resampling clips in pairs so
     the two rules always see the same clips."""
     keep = [i for i in range(len(labels)) if a_scores[i] is not None and b_scores[i] is not None]
@@ -511,7 +542,7 @@ def paired_bootstrap(a_scores, b_scores, labels, n=BOOTSTRAP, seed=0):
     b = sorted_pairs([b_scores[i] if i in both else None for i in range(len(labels))], labels)
     rng = random.Random(seed)
     m = len(labels)
-    diffs = []
+    diffs: list[float] = []
     for _ in range(n):
         w = [0] * m
         for _ in range(len(keep)):
@@ -523,7 +554,9 @@ def paired_bootstrap(a_scores, b_scores, labels, n=BOOTSTRAP, seed=0):
     if not diffs:
         return None, None, None, len(keep)
     ones = [1] * m
-    base = weighted_auc(b, ones) - weighted_auc(a, ones)
+    whole_a, whole_b = weighted_auc(a, ones), weighted_auc(b, ones)
+    assert whole_a is not None and whole_b is not None
+    base = whole_b - whole_a
     lo = diffs[int(0.025 * len(diffs))]
     hi = diffs[min(len(diffs) - 1, int(0.975 * len(diffs)))]
     return base, lo, hi, len(keep)
@@ -532,7 +565,7 @@ def paired_bootstrap(a_scores, b_scores, labels, n=BOOTSTRAP, seed=0):
 # ---------------------------------------------------------------- the rules
 
 
-def rule_cols(e):
+def rule_cols(e: Json) -> list[float]:
     """The motion a host can read at one advance, missing values as zero beside the flag that says
     they were missing, which is what reading the field unconditionally amounts to."""
     return [
@@ -544,19 +577,19 @@ def rule_cols(e):
     ]
 
 
-def gap_cols(e):
+def gap_cols(e: Json) -> list[float]:
     return [e["gap"]]
 
 
-def gap_entropy_cols(e):
+def gap_entropy_cols(e: Json) -> list[float]:
     return [e["gap"], e["entropy"] if e["entropy"] is not None else 0.0]
 
 
-def entropy_motion_cols(e):
+def entropy_motion_cols(e: Json) -> list[float]:
     return gap_entropy_cols(e) + rule_cols(e)[1:]
 
 
-COEF_ORDER = {
+COEF_ORDER: dict[str, str] = {
     "gap": "intercept, gap",
     "gap + entropy": "intercept, gap, entropy",
     "gap + motion": ("intercept, gap, displaced `lead_delta`, its missing flag, rank-0 `lead_delta`, its missing flag"),
@@ -566,25 +599,25 @@ COEF_ORDER = {
 }
 
 
-def fit_cols(entries, ys, cols):
+def fit_cols(entries: Sequence[Json], ys: Sequence[bool], cols: Cols) -> list[float]:
     rows = [[1.0] + cols(e) for e in entries if e["gap"] is not None]
     ok = [y for e, y in zip(entries, ys, strict=True) if e["gap"] is not None]
     return logistic_fit(rows, ok)
 
 
-def fit_rule(entries, ys):
+def fit_rule(entries: Sequence[Json], ys: Sequence[bool]) -> list[float]:
     return fit_cols(entries, ys, rule_cols)
 
 
-def gap_trust(e):
+def gap_trust(e: Json) -> float:
     """The README's rule: sigmoid of the lead, and 1.0 where nothing else is in the list."""
     return 1.0 if e["gap"] is None else sigmoid(e["gap"])
 
 
-def fitted_trust(cols, coef):
+def fitted_trust(cols: Cols, coef: Sequence[float]) -> Trust:
     """A fitted rule's trust: one minus its P(revision), so every rule is read on one scale."""
 
-    def trust(e):
+    def trust(e: Json) -> float:
         if e["gap"] is None:
             return 1.0
         x = [1.0] + cols(e)
@@ -593,38 +626,53 @@ def fitted_trust(cols, coef):
     return trust
 
 
-def rule_trust(e, coef):
+def rule_trust(e: Json, coef: Sequence[float]) -> float:
     return fitted_trust(rule_cols, coef)(e)
 
 
-def always_trust(e):
+def always_trust(e: Json) -> float:
     """The hold-only rule: no score at all, so it releases at the first advance it is read on."""
     return 1.0
 
 
-def clears_at(f, trust_fn, bar, start):
+def clears_at(f: Json, trust_fn: Trust, bar: float, start: int) -> float | None:
     """The ms at which a rule first releases the word it is holding. Rank 0 has to still lead with
     that word: a host is offered the word it acts on, and a partial that has moved on is not
     offering it."""
     for e in f["series"][start:]:
         if e["top_word"] == f["word"] and trust_fn(e) >= bar:
-            return e["ms"]
+            return cast(float, e["ms"])
     return None
 
 
-def rule_run(feats, trust_fn, bar, start):
+class Run(TypedDict):
+    """One rule at one bar over one set of clips, as the delay tables and the McNemar read it."""
+
+    caught: int
+    delays: list[float]
+    never: int
+    correct: list[bool]
+    per_clip: list[tuple[bool, bool, float | None]]
+
+
+# What `rules_section` hands `reading_section`: the R1 coefficients, the AUCs of R0, R1, R2 and of
+# R2's later reading scored alone, and every run by rule and bar.
+Rules = tuple[list[float], float | None, float | None, float | None, float | None, dict[tuple[str, float], Run]]
+
+
+def rule_run(feats: Sequence[Json], trust_fn: Trust, bar: float, start: int) -> Run:
     """Per clip, when the rule released the word and what that costs: a revision the rule never
     released is caught, a good word it never released is delayed to the final."""
     caught = 0
-    delays = []
+    delays: list[float] = []
     never = 0
-    correct = []
-    per_clip = []
+    correct: list[bool] = []
+    per_clip: list[tuple[bool, bool, float | None]] = []
     for f in feats:
         at = clears_at(f, trust_fn, bar, start)
         if at is None:
             never += 1
-        delay = None
+        delay: float | None = None
         if f["survived"]:
             delay = (at - f["sighting_ms"]) if at is not None else (f["end_ms"] - f["sighting_ms"])
             delays.append(delay)
@@ -632,10 +680,10 @@ def rule_run(feats, trust_fn, bar, start):
             caught += 1
         correct.append((f["survived"] and at is not None) or (not f["survived"] and at is None))
         per_clip.append((f["survived"], at is None, delay))
-    return dict(caught=caught, delays=delays, never=never, correct=correct, per_clip=per_clip)
+    return Run(caught=caught, delays=delays, never=never, correct=correct, per_clip=per_clip)
 
 
-def run_interval(run, n=BOOTSTRAP, seed=1):
+def run_interval(run: Run, n: int = BOOTSTRAP, seed: int = 1) -> Json:
     """The realized catch and delay with a 95% interval, resampling clips with replacement. A
     threshold frozen on one split lands where the other split's clips put it, and that is a
     sample."""
@@ -643,7 +691,8 @@ def run_interval(run, n=BOOTSTRAP, seed=1):
     if not rows:
         return {}
     rng = random.Random(seed)
-    caught, delay = [], []
+    caught: list[float] = []
+    delay: list[float] = []
     m = len(rows)
     for _ in range(n):
         pick = [rows[rng.randrange(m)] for _ in range(m)]
@@ -656,7 +705,7 @@ def run_interval(run, n=BOOTSTRAP, seed=1):
     caught.sort()
     delay.sort()
 
-    def band(v):
+    def band(v: Sequence[float]) -> tuple[float | None, float | None]:
         return (v[int(0.025 * len(v))], v[min(len(v) - 1, int(0.975 * len(v)))]) if v else (None, None)
 
     rev_n = sum(1 for survived, _, _ in rows if not survived)
@@ -670,7 +719,14 @@ def run_interval(run, n=BOOTSTRAP, seed=1):
     )
 
 
-def frozen_bar(fit_feats, trust_fn, start, target, kind, grid=None):
+def frozen_bar(
+    fit_feats: Sequence[Json],
+    trust_fn: Trust,
+    start: int,
+    target: float,
+    kind: str,
+    grid: Sequence[float] | None = None,
+) -> float:
     """The bar a rule is frozen at, chosen on the fitting split alone: the one whose delay, or
     whose revisions caught, comes closest to the reference rule's on that same split."""
     grid = grid or [i / 200 for i in range(1, 200)]
@@ -680,11 +736,11 @@ def frozen_bar(fit_feats, trust_fn, start, target, kind, grid=None):
     return min(runs, key=lambda t: (abs(t[1]["caught"] / max(1, len(fit_feats)) - target), mean(t[1]["delays"])))[0]
 
 
-def rule_score(feats, trust_fn, start, as_run=False):
+def rule_score(feats: Sequence[Json], trust_fn: Trust, start: int, as_run: bool = False) -> list[float | None]:
     """Each clip's P(revision) under a rule, or None where the rule has no reading to score. As the
     rule runs, a word rank 0 has already dropped is a revision the rule calls with certainty; the
     reading alone does not say that, so both orderings are scored."""
-    out = []
+    out: list[float | None] = []
     for f in feats:
         e = f["series"][start] if len(f["series"]) > start else None
         if e is None:
@@ -699,7 +755,7 @@ def rule_score(feats, trust_fn, start, as_run=False):
 # ---------------------------------------------------------------- the page
 
 
-def availability_section(feats, diag, lines, fig):
+def availability_section(feats: Sequence[Json], diag: Json, lines: list[str], fig: Json) -> None:
     n = len(feats)
     interval = sc.quantile(diag["intervals"], 0.5) if diag["intervals"] else float("nan")
     exact = sum(1 for v in diag["intervals"] if v == interval)
@@ -739,7 +795,7 @@ def availability_section(feats, diag, lines, fig):
     ]
     held = [f for f in feats if f["hold"]]
 
-    def both(key, label, runtime_only=False):
+    def both(key: str, label: str, runtime_only: bool = False) -> tuple[str, str, int, int, int, int]:
         """The count from the harness's own derivation and from the runtime, at each moment."""
         if runtime_only:
             at = sum(1 for f in feats if f[key] is not None)
@@ -769,7 +825,7 @@ def availability_section(feats, diag, lines, fig):
         both("entropy_delta", "`entropy_delta` is defined (there was a previous advance)", runtime_only=True),
     ]
 
-    def cell(c, total):
+    def cell(c: int, total: int) -> str:
         return f"{c} / {total} ({100 * c / total:.1f}%)" if total else "-"
 
     for _, label, dc, rc, dh, rh in rows:
@@ -819,7 +875,7 @@ def availability_section(feats, diag, lines, fig):
     )
 
 
-def auc_section(feats, lines, fig):
+def auc_section(feats: Sequence[Json], lines: list[str], fig: Json) -> None:
     lines += [
         "",
         "## Every signal at the first sighting, against a revision",
@@ -845,7 +901,7 @@ def auc_section(feats, lines, fig):
     ]
 
 
-def stratified_section(feats, lines, fig):
+def stratified_section(feats: Sequence[Json], lines: list[str], fig: Json) -> list[tuple[float, str, str]]:
     lines += [
         "",
         "## The same signals at equal gap",
@@ -881,7 +937,7 @@ def stratified_section(feats, lines, fig):
     return strat
 
 
-def logistic_section(feats, lines, fig):
+def logistic_section(feats: Sequence[Json], lines: list[str], fig: Json) -> tuple[Best, float | None]:
     """Gap alone against gap plus one motion signal, in sample, one signal at a time."""
     ys = [not f["survived"] for f in feats]
     lines += [
@@ -916,7 +972,7 @@ def logistic_section(feats, lines, fig):
         "| signal | AUC, gap + signal + missing | coefficient on gap | on the signal | on missing |",
         "|---|---|---|---|---|",
     ]
-    best = (base, None, None)
+    best: Best = (base, None, None)
     fig["incremental_filled"] = {}
     for key, label in MOTION:
         cols = [[f["gap"], f[key] or 0.0, 0.0 if f.get(key) is not None else 1.0] for f in feats]
@@ -926,13 +982,13 @@ def logistic_section(feats, lines, fig):
         miss = f"{b[3]:+.3f}" if len(b) > 3 else "-"
         lines.append(f"| {label} | {fmt(a1, 3)} | {b[1]:+.3f} | {b[2]:+.4f} | {miss} |")
         fig["incremental_filled"][key] = dict(auc=a1, coef=b)
-        if a1 is not None and a1 > best[0]:
+        if a1 is not None and (best[0] is None or a1 > best[0]):
             best = (a1, key, label)
     fig["incremental_filled"]["gap_alone_auc"] = base
     return best, base
 
 
-def hold_section(feats, best, base, lines, fig):
+def hold_section(feats: Sequence[Json], best: Best, base: float | None, lines: list[str], fig: Json) -> None:
     """The existing hold-until-gap table, matched on words held against the best in-sample fit."""
     n = len(feats)
     revised = sum(1 for f in feats if not f["survived"])
@@ -983,7 +1039,7 @@ def hold_section(feats, best, base, lines, fig):
     ]
 
 
-def next_advance_section(feats, lines, fig):
+def next_advance_section(feats: Sequence[Json], lines: list[str], fig: Json) -> None:
     held = [f for f in feats if f["hold"]]
     n = len(feats)
     lines += ["", "## Holding one advance", ""]
@@ -1066,14 +1122,14 @@ def next_advance_section(feats, lines, fig):
     )
 
 
-def vanishing_section(feats, lines, fig):
+def vanishing_section(feats: Sequence[Json], lines: list[str], fig: Json) -> None:
     n = len(feats)
     all_ev = [f["vanished_all"] for f in feats]
     before = [f["vanished"] for f in feats]
     with_ev = [f for f in feats if f["vanished"] > 0]
     without = [f for f in feats if f["vanished"] == 0]
 
-    def rate(g):
+    def rate(g: Sequence[Json]) -> str:
         r = sum(1 for f in g if not f["survived"])
         return f"{r} / {len(g)} ({100 * r / (len(g) or 1):.1f}%)"
 
@@ -1111,7 +1167,7 @@ def vanishing_section(feats, lines, fig):
     )
 
 
-def census_section(feats, census, lines, fig):
+def census_section(feats: Sequence[Json], census: Json, lines: list[str], fig: Json) -> None:
     """The decoder's own count beside the harness proxy above. `stream --census` counts per take,
     so the unit here is the clip's whole decode and not the audio before the sighting. Neither
     quantity settles what a lattice would keep (`[[rr:TD-9#No lattice is added for this feature]]`).
@@ -1125,7 +1181,7 @@ def census_section(feats, census, lines, fig):
     lost = [rows[f["clip"]]["readings_lost"] for f in have]
     lost_close = [rows[f["clip"]]["readings_lost_close"] for f in have]
 
-    def rate(g):
+    def rate(g: Sequence[Json]) -> tuple[int, str]:
         r = sum(1 for f in g if not f["survived"])
         return r, f"{r} / {len(g)} ({100 * r / (len(g) or 1):.1f}%)"
 
@@ -1202,7 +1258,9 @@ def census_section(feats, census, lines, fig):
     )
 
 
-def rules_section(feats, fit_feats, fit_name, lines, fig):
+def rules_section(
+    feats: Sequence[Json], fit_feats: Sequence[Json], fit_name: str, lines: list[str], fig: Json
+) -> Rules:
     """The before and the after, every coefficient and every bar fitted on one split and scored on
     another: the README's rule, the two cheaper baselines it is worth beating, a hold that reads
     nothing, the motion, and the motion read one advance later."""
@@ -1376,15 +1434,15 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
         idx = [i for i, f in enumerate(feats) if lo <= f["gap"] < hi]
         if not idx:
             continue
-        row = dict(lo=lo, hi=None if hi == float("inf") else hi, n=len(idx))
+        row: Json = dict(lo=lo, hi=None if hi == float("inf") else hi, n=len(idx))
         cells = []
         for name in shown:
-            have = [i for i in idx if scores[name][i] is not None]
+            have = [(i, s) for i in idx if (s := scores[name][i]) is not None]
             if not have:
                 cells.append("-")
                 continue
-            pred = sum(1.0 - scores[name][i] for i in have) / len(have)
-            obs = sum(1 for i in have if feats[i]["survived"]) / len(have)
+            pred = sum(1.0 - s for _, s in have) / len(have)
+            obs = sum(1 for i, _ in have if feats[i]["survived"]) / len(have)
             errs[name] += len(have) / scored[name] * abs(pred - obs)
             cells.append(f"{100 * pred:.0f}%")
             row[name] = dict(n=len(have), predicted=pred, observed=obs)
@@ -1489,18 +1547,20 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
     ]
     for name in ("B1", "B2", "R1", "R1e", "R2"):
         r = runs[(name, OPERATING_TRUST)]
-        b = sum(1 for x, y in zip(base["correct"], r["correct"], strict=True) if x and not y)
-        c = sum(1 for x, y in zip(base["correct"], r["correct"], strict=True) if y and not x)
-        pv = sc.mcnemar(b, c)
-        lines.append(f"| R0 against {name} | {b} | {c} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |")
-        fig["rules"]["operating_point"][f"mcnemar_R0_{name}"] = dict(b=b, c=c, p=pv)
+        r0_only = sum(1 for x, y in zip(base["correct"], r["correct"], strict=True) if x and not y)
+        other_only = sum(1 for x, y in zip(base["correct"], r["correct"], strict=True) if y and not x)
+        pv = sc.mcnemar(r0_only, other_only)
+        lines.append(f"| R0 against {name} | {r0_only} | {other_only} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |")
+        fig["rules"]["operating_point"][f"mcnemar_R0_{name}"] = dict(b=r0_only, c=other_only, p=pv)
     r1_op = runs[("R1", OPERATING_TRUST)]
     b1_op = runs[("B1", OPERATING_TRUST)]
-    b = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"], strict=True) if x and not y)
-    c = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"], strict=True) if y and not x)
-    pv = sc.mcnemar(b, c)
-    lines.append(f"| B1 against R1, the motion's own share | {b} | {c} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |")
-    fig["rules"]["operating_point"]["mcnemar_B1_R1"] = dict(b=b, c=c, p=pv)
+    b1_only = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"], strict=True) if x and not y)
+    r1_only = sum(1 for x, y in zip(b1_op["correct"], r1_op["correct"], strict=True) if y and not x)
+    pv = sc.mcnemar(b1_only, r1_only)
+    lines.append(
+        f"| B1 against R1, the motion's own share | {b1_only} | {r1_only} | {'<1e-300' if pv == 0.0 else f'{pv:.3g}'} |"
+    )
+    fig["rules"]["operating_point"]["mcnemar_B1_R1"] = dict(b=b1_only, c=r1_only, p=pv)
 
     # [[rr:TD-9#The benchmark is paired, held out, and charged in milliseconds]]
     fit_base = rule_run(fit_feats, gap_trust, OPERATING_TRUST, 0)
@@ -1580,15 +1640,26 @@ def rules_section(feats, fit_feats, fit_name, lines, fig):
     return coef, a0, a1, a2, a2r, runs
 
 
-def reading_section(feats, best, base, strat, diag, rules, lines, fig):
+def reading_section(
+    feats: Sequence[Json],
+    best: Best,
+    base: float | None,
+    strat: Sequence[tuple[float, str, str]],
+    diag: Json,
+    rules: Rules,
+    lines: list[str],
+    fig: Json,
+) -> None:
     n = len(feats)
     held = [f for f in feats if f["hold"]]
     revised = [f for f in held if not f["survived"]]
     caught = sum(1 for f in revised if not f["hold"]["word_same"])
     last = sum(1 for f in held if f["advance_index"] + 2 == f["n_advances"])
     hist = 100 * sum(1 for f in feats if f["had_history"]) / n
-    gain = (best[0] - base) if best[1] else 0.0
-    gap_dev = abs(auc([(f["gap"], not f["survived"]) for f in feats]) - 0.5)
+    gain = (best[0] - base) if best[0] is not None and base is not None and best[1] else 0.0
+    gap_auc = auc([(f["gap"], not f["survived"]) for f in feats])
+    assert gap_auc is not None
+    gap_dev = abs(gap_auc - 0.5)
     with_ev = [f for f in feats if f["vanished"] > 0]
     without = [f for f in feats if f["vanished"] == 0]
     rev_ev = 100 * sum(1 for f in with_ev if not f["survived"]) / (len(with_ev) or 1)
@@ -1690,7 +1761,16 @@ def reading_section(feats, best, base, strat, diag, rules, lines, fig):
     ]
 
 
-def build_page(feats, diag, fit_feats, fit_name, split, block_ms, alternatives, fig):
+def build_page(
+    feats: Sequence[Json],
+    diag: Json,
+    fit_feats: Sequence[Json],
+    fit_name: str,
+    split: str,
+    block_ms: int,
+    alternatives: int,
+    fig: Json,
+) -> list[str]:
     n = len(feats)
     revised = sum(1 for f in feats if not f["survived"])
     good = n - revised
@@ -1805,7 +1885,7 @@ def build_page(feats, diag, fit_feats, fit_name, split, block_ms, alternatives, 
     return lines
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data")
     ap.add_argument("--model")

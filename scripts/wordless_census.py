@@ -29,7 +29,10 @@ import sys
 import time
 import wave
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import speech_commands as sc  # noqa: E402
@@ -42,23 +45,30 @@ FLOOR_HISTORY_S = 10
 FLOOR_Q = 0.05
 SINCE_SPEECH_EDGES = (0.5, 1.0, 2.0, 5.0)
 
+Json = dict[str, Any]
+Pcm = array.array[int]
+# What one engine is built from: its module, the model opened on it, and the grammar as JSON.
+EngineEntry = tuple[ModuleType, Any, str]
+# Per block: whether the audio calls it wordless, the floor as it then stands, the tail's level.
+BlockLabel = tuple[bool, float | None, float]
 
-def note(msg):
+
+def note(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr, flush=True)
 
 
-def words_of(text):
+def words_of(text: str) -> list[str]:
     return [w for w in text.split() if not (w.startswith("[") and w.endswith("]"))]
 
 
-def read_pcm(path):
-    with wave.open(str(path)) as w:
+def read_pcm(path: str | Path) -> Pcm:
+    with wave.open(str(path), "rb") as w:
         a = array.array("h")
         a.frombytes(w.readframes(w.getnframes()))
     return a
 
 
-def dbfs(samples):
+def dbfs(samples: Sequence[int]) -> float:
     if not samples:
         return -999.0
     acc = 0
@@ -68,21 +78,21 @@ def dbfs(samples):
     return 20 * math.log10(rms / 32768.0) if rms > 0 else -999.0
 
 
-def quantile(v, q):
+def quantile(v: Sequence[float], q: float) -> float:
     if not v:
         return float("nan")
     s = sorted(v)
     return s[min(len(s) - 1, int(q * len(s)))]
 
 
-def floor_series(pcm, block):
+def floor_series(pcm: Pcm, block: int) -> list[float | None]:
     """The floor as it stands at the end of every block, by the runtime's own definition.
     [[rr:TD-8#The runtime reports the floor]]"""
     n = RATE * FLOOR_WINDOW_MS // 1000
     hop = RATE * FLOOR_HOP_MS // 1000
     keep = RATE * FLOOR_HISTORY_S // hop
-    levels = []
-    out = []
+    levels: list[float] = []
+    out: list[float | None] = []
     windows = 0
     for end in range(block, len(pcm) + block, block):
         while (windows + 1) * hop + n <= min(end, len(pcm)):
@@ -93,11 +103,11 @@ def floor_series(pcm, block):
     return out
 
 
-def wordless_blocks(pcm, block, margin):
+def wordless_blocks(pcm: Pcm, block: int, margin: float) -> list[BlockLabel]:
     """One label per block from the audio alone, so both engines are scored on the same blocks."""
     floors = floor_series(pcm, block)
     tail = RATE * TAIL_MS // 1000
-    out = []
+    out: list[BlockLabel] = []
     for i, floor in enumerate(floors):
         end = min((i + 1) * block, len(pcm))
         level = dbfs(pcm[max(0, end - tail) : end])
@@ -105,23 +115,23 @@ def wordless_blocks(pcm, block, margin):
     return out
 
 
-def span_energy(pcm, start_s, end_s):
+def span_energy(pcm: Pcm, start_s: float, end_s: float) -> float:
     a = int(start_s * RATE)
     b = int(end_s * RATE)
     return dbfs(pcm[a:b]) if b > a else -999.0
 
 
-def engines(names, model_dir, grammar):
-    out = {}
+def engines(names: Sequence[str], model_dir: str | Path, grammar: Sequence[str]) -> dict[str, EngineEntry]:
+    out: dict[str, EngineEntry] = {}
     for name in names:
         mod = __import__(name)
         if name == "vosk":
             mod.SetLogLevel(-1)
-        out[name] = (mod, mod.Model(str(model_dir)), json.dumps(grammar))
+        out[name] = (mod, mod.Model(str(model_dir)), json.dumps(list(grammar)))
     return out
 
 
-def recognizer(entry, alternatives, partial_words):
+def recognizer(entry: EngineEntry, alternatives: int, partial_words: bool) -> Any:
     mod, model, grammar = entry
     rec = mod.KaldiRecognizer(model, RATE, grammar)
     rec.SetWords(True)
@@ -132,7 +142,7 @@ def recognizer(entry, alternatives, partial_words):
     return rec
 
 
-def classify(entries, pcm, end, margin, floor):
+def classify(entries: Sequence[Mapping[str, Any]], pcm: Pcm, end: int, margin: float, floor: float) -> str | None:
     """A rank-0 word on a wordless block, split as the private sweep splits it. The word's own
     energy is measured here from the WAV, so the stock wheel is classified by the same rule.
     [[rr:TD-8#Measurements count a word whose own span carries no speech]]"""
@@ -148,16 +158,24 @@ def classify(entries, pcm, end, margin, floor):
     return "silence"
 
 
-def run_take(entry, pcm, labels, block_ms, margin, alternatives, partial_words=False):
+def run_take(
+    entry: EngineEntry,
+    pcm: Pcm,
+    labels: Sequence[BlockLabel],
+    block_ms: int,
+    margin: float,
+    alternatives: int,
+    partial_words: bool = False,
+) -> tuple[Counter[str], list[Json]]:
     """One take through one engine, counted only on the blocks the audio called wordless. Asking
     for the words under a partial can change which partial an engine shows: the stock wheel's
     partial-word path is a lattice one that trails the audio, so the census is read off the plain
     partial for both engines and the split below off a second pass, which is trusted only where
     the two passes agree on the count."""
     block = RATE * block_ms // 1000
-    counts = Counter()
-    events = []
-    since_speech = None
+    counts: Counter[str] = Counter()
+    events: list[Json] = []
+    since_speech: int | None = None
     spoken_before = 0
     run = longest = 0
     rec = recognizer(entry, alternatives, partial_words)
@@ -184,6 +202,7 @@ def run_take(entry, pcm, labels, block_ms, margin, alternatives, partial_words=F
         if not quiet:
             run = 0
             continue
+        assert floor is not None  # wordless_blocks calls no block quiet without a floor
         p = json.loads(rec.PartialResult())
         counts["quiet_blocks"] += 1
         if not words_of(p.get("partial", "")):
@@ -220,7 +239,7 @@ def run_take(entry, pcm, labels, block_ms, margin, alternatives, partial_words=F
     return counts, events
 
 
-def bucket_since(v):
+def bucket_since(v: float | None) -> str:
     if v is None:
         return "no speech yet"
     for e in SINCE_SPEECH_EDGES:
@@ -229,15 +248,24 @@ def bucket_since(v):
     return f"{SINCE_SPEECH_EDGES[-1]:g} s or more"
 
 
-def rate(n, minutes):
+def rate(n: float, minutes: float) -> float:
     return n / minutes if minutes else float("nan")
 
 
-def census(names, corpus, model_dir, grammar, block_ms, margin, alternatives, fractions):
+def census(
+    names: Sequence[str],
+    corpus: str | Path,
+    model_dir: str | Path,
+    grammar: Sequence[str],
+    block_ms: int,
+    margin: float,
+    alternatives: int,
+    fractions: Sequence[float],
+) -> Json:
     takes = sorted(Path(corpus).glob("*.wav"))
     note(f"{len(takes)} takes, {len(names)} engines, {len(fractions)} grammar fractions")
-    audio = {}
-    labels = {}
+    audio: dict[Path, Pcm] = {}
+    labels: dict[Path, list[BlockLabel]] = {}
     minutes = 0.0
     for p in takes:
         pcm = read_pcm(p)
@@ -245,7 +273,7 @@ def census(names, corpus, model_dir, grammar, block_ms, margin, alternatives, fr
         labels[p] = wordless_blocks(pcm, RATE * block_ms // 1000, margin)
         minutes += len(pcm) / RATE / 60.0
     quiet_minutes = sum(sum(1 for q, _, _ in labels[p] if q) for p in takes) * block_ms / 1000.0 / 60.0
-    out = dict(
+    out: Json = dict(
         takes=len(takes),
         minutes=minutes,
         quiet_minutes=quiet_minutes,
@@ -262,10 +290,10 @@ def census(names, corpus, model_dir, grammar, block_ms, margin, alternatives, fr
         eng = engines(names, model_dir, g)
         for name in names:
             note(f"  grammar {label}, {name}")
-            plain = Counter()
-            split = Counter()
-            events = []
-            per_take = {}
+            plain: Counter[str] = Counter()
+            split: Counter[str] = Counter()
+            events: list[Json] = []
+            per_take: dict[str, int] = {}
             for p in takes:
                 c, _ = run_take(eng[name], audio[p], labels[p], block_ms, margin, alternatives)
                 plain.update(c)
@@ -282,7 +310,7 @@ def census(names, corpus, model_dir, grammar, block_ms, margin, alternatives, fr
             out["by_fraction"].setdefault(label, {})[name] = dict(plain, **{f"split_{k}": v for k, v in split.items()})
             out["paired"].setdefault(label, {})[name] = [per_take[p.name] > 0 for p in takes]
             if frac == 1.0 and trusted:
-                by = defaultdict(Counter)
+                by: defaultdict[str, Counter[str]] = defaultdict(Counter)
                 for e in events:
                     by["floor"][f"{10 * round(e['floor'] / 10):g} dBFS" if e["floor"] is not None else "none"] += 1
                     by["a word came first"]["yes" if e["after_a_word"] else "no"] += 1
@@ -291,7 +319,7 @@ def census(names, corpus, model_dir, grammar, block_ms, margin, alternatives, fr
     return out
 
 
-def mcnemar(b, c):
+def mcnemar(b: int, c: int) -> float:
     n = b + c
     if n == 0:
         return 1.0
@@ -302,7 +330,7 @@ def mcnemar(b, c):
     return min(1.0, 2.0 * math.exp(log_tail)) if log_tail > -700.0 else 0.0
 
 
-def recorded_args(a):
+def recorded_args(a: argparse.Namespace) -> Json:
     """The arguments a rerun needs, with the paths that name a consumer replaced by the labels the
     gates already use. A page here carries counts and rates and nothing that identifies a take."""
     out = dict(vars(a))
@@ -312,7 +340,7 @@ def recorded_args(a):
     return out
 
 
-def page(r, names, corpus_label, model_name):
+def page(r: Mapping[str, Any], names: Sequence[str], corpus_label: str, model_name: str) -> list[str]:
     q = r["quiet_minutes"]
     lines = [
         "# Words on wordless audio, on the consumer's replay corpus",
@@ -392,7 +420,7 @@ def page(r, names, corpus_label, model_name):
     return lines
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--model", required=True)

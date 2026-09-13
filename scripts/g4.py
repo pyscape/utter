@@ -12,9 +12,10 @@ census: how many partials carrying a word have a rival one word away.
 import argparse
 import json
 from pathlib import Path
+from typing import Any, cast
 
 
-def words_of(text):
+def words_of(text: str) -> list[str]:
     return [w for w in text.split() if not (w.startswith("[") and w.endswith("]"))]
 
 
@@ -22,7 +23,7 @@ def words_of(text):
 WORDLESS = ("[sil]", "[speech]")
 
 
-def one_word_apart(a, b):
+def one_word_apart(a: list[str], b: list[str]) -> bool:
     if a == b:
         return False
     if len(a) == len(b):
@@ -33,27 +34,27 @@ def one_word_apart(a, b):
     return any(long[:i] + long[i + 1 :] == short for i in range(len(long)))
 
 
-def pct(a, b):
+def pct(a: float, b: float) -> float:
     return 100.0 * a / b if b else float("nan")
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--oracle", required=True)
     ap.add_argument("--hyp", required=True)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
-    ref = json.loads(Path(args.oracle).read_text())
+    ref = cast("dict[str, Any]", json.loads(Path(args.oracle).read_text()))
     blocks = rank0_eq = 0
     empty_best = empty_as_sil = 0
     vosk_empty = vosk_empty_utter_word = 0
     with_word = contest = 0
-    alt_counts = {}
+    alt_counts: dict[int, int] = {}
     sil_entries = 0
     for line in Path(args.hyp).read_text().splitlines():
         if not line.strip():
             continue
-        h = json.loads(line)
+        h = cast("dict[str, Any]", json.loads(line))
         r = ref.get(h["take"])
         for i, p in enumerate(h["partials"]):
             if p is None:

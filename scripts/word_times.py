@@ -22,7 +22,10 @@ import argparse
 import json
 import sys
 from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from speech_commands import (  # noqa: E402
@@ -45,9 +48,9 @@ FRAME_S = 0.03
 EPS = 1e-6
 
 
-def timed_words(finals):
+def timed_words(finals: Iterable[Mapping[str, Any]]) -> list[tuple[str, float, float]]:
     """(word, start, end) for every word of every final, in order."""
-    out = []
+    out: list[tuple[str, float, float]] = []
     for f in finals:
         for e in f.get("result") or []:
             w = e["word"]
@@ -57,12 +60,12 @@ def timed_words(finals):
     return out
 
 
-def on_grid(t):
+def on_grid(t: float) -> bool:
     k = round(t / FRAME_S)
     return abs(t - k * FRAME_S) < EPS
 
 
-def bucket(deltas_ms):
+def bucket(deltas_ms: Sequence[float]) -> dict[str, int]:
     """Counts of |delta| exact, within one frame, within two, and beyond."""
     frame_ms = FRAME_S * 1000
     b = {"exact": 0, "one_frame": 0, "two_frames": 0, "beyond": 0}
@@ -79,7 +82,7 @@ def bucket(deltas_ms):
     return b
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", required=True)
     ap.add_argument("--model", required=True)
@@ -95,17 +98,17 @@ def main():
         ap.error("--engines takes exactly two engines")
     data = Path(args.data)
     listed = [line.strip() for line in (data / f"{args.split}_list.txt").read_text().splitlines() if line.strip()]
-    by_word = defaultdict(list)
+    by_word: defaultdict[str, list[str]] = defaultdict(list)
     for rel in listed:
         by_word[rel.split("/")[0]].append(rel)
-    clips = []
+    clips: list[tuple[str, Path]] = []
     for w in DATASET_WORDS:
         items = by_word.get(w, [])
         if args.limit:
             items = items[: args.limit]
         clips.extend((w, data / rel) for rel in items)
 
-    modules = {}
+    modules: dict[str, ModuleType] = {}
     for name in names:
         modules[name] = __import__(name.split("@")[0])
         if name == "vosk":
@@ -115,17 +118,18 @@ def main():
     engines = {n: Engine(n, modules[n], args.model, grammar) for n in names}
     ref, other = names
 
-    rows = []
+    rows: list[dict[str, Any]] = []
     off_grid = {n: 0 for n in names}
     words_seen = {n: 0 for n in names}
-    starts, ends = [], []
+    starts: list[float] = []
+    ends: list[float] = []
     same_sequence = 0
     differ = 0
     empty_both = 0
     for i, (label, clip) in enumerate(clips):
         pcm = read_pcm(clip)
-        row = {"clip": str(clip), "label": label}
-        got = {}
+        row: dict[str, Any] = {"clip": str(clip), "label": label}
+        got: dict[str, list[tuple[str, float, float]]] = {}
         for n, eng in engines.items():
             got[n] = timed_words(feed(eng.new(), pcm, args.block_ms))
             words_seen[n] += len(got[n])

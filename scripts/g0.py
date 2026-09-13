@@ -14,10 +14,12 @@ import os
 import sys
 import tempfile
 import wave
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
 
-def dither0_model(model_dir):
+def dither0_model(model_dir: str | os.PathLike[str]) -> Path:
     """A sibling model directory whose mfcc.conf adds --dither=0; everything else is linked."""
     tmp = Path(tempfile.mkdtemp(prefix="utter-model-"))
     for entry in Path(model_dir).iterdir():
@@ -33,7 +35,7 @@ def dither0_model(model_dir):
     return tmp
 
 
-def oracle(args):
+def oracle(args: argparse.Namespace) -> None:
     import vosk
 
     vosk.SetLogLevel(-1)
@@ -41,14 +43,14 @@ def oracle(args):
     model = vosk.Model(str(model_dir))
     grammar = json.loads(Path(args.grammar).read_text())
     block = 16000 * args.block_ms // 1000 * 2
-    out = {}
+    out: dict[str, dict[str, Any]] = {}
     for wav_path in sorted(Path(args.corpus).glob("*.wav")):
         with wave.open(str(wav_path)) as w:
             assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (16000, 1, 2), wav_path
             pcm = w.readframes(w.getnframes())
         rec = vosk.KaldiRecognizer(model, 16000, json.dumps(grammar))
         rec.SetWords(True)
-        segments = []
+        segments: list[dict[str, Any]] = []
         fed = 0
         for i in range(0, len(pcm), block):
             chunk = pcm[i : i + block]
@@ -64,7 +66,7 @@ def oracle(args):
     Path(args.out).write_text(json.dumps(out, indent=1))
 
 
-def edit_distance(ref, hyp):
+def edit_distance(ref: Sequence[str], hyp: Sequence[str]) -> int:
     d = list(range(len(hyp) + 1))
     for i in range(1, len(ref) + 1):
         prev, d[0] = d[0], i
@@ -75,15 +77,17 @@ def edit_distance(ref, hyp):
     return d[len(hyp)]
 
 
-def score(args):
-    ref = json.loads(Path(args.oracle).read_text())
-    rows = [json.loads(line) for line in Path(args.hyp).read_text().splitlines() if line.strip()]
-    modes = sorted({r["mode"] for r in rows})
+def score(args: argparse.Namespace) -> None:
+    ref = cast("dict[str, Any]", json.loads(Path(args.oracle).read_text()))
+    rows = [
+        cast("dict[str, Any]", json.loads(line)) for line in Path(args.hyp).read_text().splitlines() if line.strip()
+    ]
+    modes = sorted({cast("str", r["mode"]) for r in rows})
     lines = ["# G0: batch decode against libvosk finals", ""]
     lines.append("| take | ref words | " + " | ".join(f"{m} err" for m in modes) + " |")
     lines.append("|---|---|" + "---|" * len(modes))
     totals = {m: [0, 0] for m in modes}
-    by_take = {}
+    by_take: dict[str, dict[str, dict[str, Any]]] = {}
     for r in rows:
         by_take.setdefault(r["take"], {})[r["mode"]] = r
     exact = {m: 0 for m in modes}
@@ -91,13 +95,13 @@ def score(args):
         if take not in ref:
             continue
         ref_words = ref[take]["words"]
-        cells = []
+        cells: list[str] = []
         for m in modes:
-            r = by_take[take].get(m)
-            if r is None:
+            hyp_row = by_take[take].get(m)
+            if hyp_row is None:
                 cells.append("-")
                 continue
-            e = edit_distance(ref_words, r["words"])
+            e = edit_distance(ref_words, hyp_row["words"])
             totals[m][0] += e
             totals[m][1] += len(ref_words)
             exact[m] += int(e == 0)
@@ -117,7 +121,7 @@ def score(args):
         Path(args.out).write_text(text)
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     o = sub.add_parser("oracle")

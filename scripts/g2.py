@@ -11,7 +11,9 @@ score:  compare a `stream` JSON-lines run against the oracle: partial text per b
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from g0 import dither0_model  # noqa: E402
@@ -19,7 +21,7 @@ from g0 import dither0_model  # noqa: E402
 RATE = 16000
 
 
-def oracle(args):
+def oracle(args: argparse.Namespace) -> None:
     import vosk
 
     vosk.SetLogLevel(-1)
@@ -27,7 +29,7 @@ def oracle(args):
     model = vosk.Model(str(model_dir))
     grammar = json.loads(Path(args.grammar).read_text())
     block = RATE * args.block_ms // 1000 * 2
-    out = {}
+    out: dict[str, dict[str, Any]] = {}
     import wave
 
     for wav_path in sorted(Path(args.corpus).glob("*.wav")):
@@ -35,7 +37,9 @@ def oracle(args):
             pcm = w.readframes(w.getnframes())
         rec = vosk.KaldiRecognizer(model, RATE, json.dumps(grammar))
         rec.SetWords(True)
-        partials, segments, fed = [], [], 0
+        partials: list[dict[str, Any] | None] = []
+        segments: list[dict[str, Any]] = []
+        fed = 0
         for i in range(0, len(pcm), block):
             chunk = pcm[i : i + block]
             fed += len(chunk) // 2
@@ -50,12 +54,12 @@ def oracle(args):
     Path(args.out).write_text(json.dumps(out))
 
 
-def words_of(text):
+def words_of(text: str) -> list[str]:
     """Words of a text with bracketed tokens ([sil], [unk]) removed, as G2 and G4 compare."""
     return [w for w in text.split() if not (w.startswith("[") and w.endswith("]"))]
 
 
-def align_ops(ref, hyp):
+def align_ops(ref: Sequence[str], hyp: Sequence[str]) -> tuple[int, int, int]:
     """Levenshtein alignment ops: counts of (ref only, hyp only, substitutions)."""
     n, m = len(ref), len(hyp)
     d = [[0] * (m + 1) for _ in range(n + 1)]
@@ -80,13 +84,13 @@ def align_ops(ref, hyp):
     return dele, ins, sub
 
 
-def pct(a, b):
+def pct(a: float, b: float) -> float:
     return 100.0 * a / b if b else float("nan")
 
 
-def score(args):
-    ref = json.loads(Path(args.oracle).read_text())
-    hyp_rows = {}
+def score(args: argparse.Namespace) -> None:
+    ref = cast("dict[str, Any]", json.loads(Path(args.oracle).read_text()))
+    hyp_rows: dict[str, dict[str, Any]] = {}
     for line in Path(args.hyp).read_text().splitlines():
         if line.strip():
             r = json.loads(line)
@@ -97,9 +101,9 @@ def score(args):
     vosk_segments = utter_segments = 0
     word_pairs = word_within = 0
     endpoints_ref = endpoints_hyp = endpoints_matched = endpoints_within = 0
-    compute = []
-    per_take = []
-    step_ms = None
+    compute: list[int] = []
+    per_take: list[tuple[str, int, int, int, int]] = []
+    step_ms: int | None = None
     for take, r in sorted(ref.items()):
         h = hyp_rows.get(take)
         if h is None:
@@ -122,10 +126,10 @@ def score(args):
         vosk_segments += len(rs)
         utter_segments += len(hs)
         step_samples = RATE * r["block_ms"] // 1000
-        used = set()
+        used: set[int] = set()
         take_eq = take_tot = 0
         for s in rs:
-            best = None
+            best: int | None = None
             for k, t in enumerate(hs):
                 if k in used:
                     continue
@@ -189,7 +193,7 @@ def score(args):
     if compute:
         c = sorted(compute)
 
-        def p(q):
+        def p(q: float) -> float:
             return c[min(len(c) - 1, int(q * len(c)))] / 1000.0
 
         total_s = sum(compute) / 1e6
@@ -208,7 +212,7 @@ def score(args):
         Path(args.out).write_text(text)
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     o = sub.add_parser("oracle")

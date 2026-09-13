@@ -48,17 +48,29 @@ import random
 import sys
 import time
 from collections import Counter, defaultdict
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import speech_commands as sc  # noqa: E402
+
+Json = sc.Json
+# One advance's readings, each a text and its confidence, rank 0 first.
+Readings = tuple[tuple[str, float], ...]
+# What build_state records at one advance, and what decode_split keeps per stream.
+State = dict[str, Any]
+Stream = dict[str, Any]
+# Confusion counts per state, and the harness's tally of its derivation against the runtime's.
+Counts = dict[str, dict[str, int]]
+Parity = dict[str, float]
 
 RATE = sc.RATE
 SAMPLES_PER_MS = RATE // 1000
 
 GAP_FLOOR_DBFS = -50.0
-PAUSE_MS = (100, 800)
-FINISH_MS = (2000, 3000)
+PAUSE_MS: tuple[float, float] = (100, 800)
+FINISH_MS: tuple[float, float] = (2000, 3000)
 WORDS_PER_UTTERANCE = (1, 5)
 UTTERANCES_PER_STREAM = 10
 
@@ -78,13 +90,13 @@ BOOTSTRAPS = 1000
 # --- ground truth -----------------------------------------------------------------------------
 
 
-def energy_start(pcm, frame_ms=10, drop_db=20.0):
+def energy_start(pcm: bytes, frame_ms: int = 10, drop_db: float = 20.0) -> float | None:
     """Start, in seconds, of the first frame within `drop_db` of the clip's loudest frame: the
     mirror of sc.energy_end, which gives the last."""
     a = array.array("h")
     a.frombytes(pcm)
     n = RATE * frame_ms // 1000
-    levels = []
+    levels: list[float] = []
     for i in range(0, len(a) - n + 1, n):
         acc = 0
         for v in a[i : i + n]:
@@ -102,9 +114,9 @@ class GapSource:
     floor. Each recording keeps its own cursor, so no two gaps cut from one recording overlap
     until it wraps."""
 
-    def __init__(self, paths, floor_dbfs=GAP_FLOOR_DBFS):
+    def __init__(self, paths: Sequence[Path], floor_dbfs: float = GAP_FLOOR_DBFS) -> None:
         self.names = [p.name for p in paths]
-        self.audio = []
+        self.audio: list[array.array[int]] = []
         for p in paths:
             a = array.array("h")
             a.frombytes(sc.read_pcm(p))
@@ -113,7 +125,7 @@ class GapSource:
         self.turn = 0
         self.target = 32768.0 * 10.0 ** (floor_dbfs / 20.0)
 
-    def take(self, n):
+    def take(self, n: int) -> tuple[bytes, str]:
         i = self.turn % len(self.audio)
         self.turn += 1
         a = self.audio[i]
@@ -129,12 +141,18 @@ class GapSource:
         return out.tobytes(), self.names[i]
 
 
-def build_stream(rng, clips, gaps, utterances, pause_ms=PAUSE_MS):
+def build_stream(
+    rng: random.Random,
+    clips: list[sc.Clip],
+    gaps: GapSource,
+    utterances: int,
+    pause_ms: tuple[float, float] = PAUSE_MS,
+) -> tuple[bytes, list[Json], list[Json]]:
     """One stream and its truth: the PCM, each word with its position and energy span, each gap
     with its kind and length. The stream ends with a finish gap so the last word has one."""
-    parts = []
-    words = []
-    gap_rows = []
+    parts: list[bytes] = []
+    words: list[Json] = []
+    gap_rows: list[Json] = []
     pos = 0
     for u in range(utterances):
         n = rng.randint(*WORDS_PER_UTTERANCE)
@@ -174,23 +192,23 @@ class Truth:
     """Speech is the union of the words' energy spans; everything else, the gaps and the quiet
     heads and tails of the clips themselves, is silence."""
 
-    def __init__(self, words):
-        self.iv = [(w["onset"], w["offset"]) for w in words]
+    def __init__(self, words: Sequence[Json]) -> None:
+        self.iv: list[tuple[int, int]] = [(w["onset"], w["offset"]) for w in words]
         self.starts = [a for a, _ in self.iv]
 
-    def speech_at(self, s):
+    def speech_at(self, s: int) -> bool:
         i = bisect.bisect_right(self.starts, s) - 1
         return i >= 0 and s < self.iv[i][1]
 
-    def any_speech(self, a, b):
+    def any_speech(self, a: int, b: int) -> bool:
         i = bisect.bisect_right(self.starts, b) - 1
         return i >= 0 and self.iv[i][1] > a
 
-    def any_silence(self, a, b):
+    def any_silence(self, a: int, b: int) -> bool:
         i = bisect.bisect_right(self.starts, a) - 1
         return not (i >= 0 and self.iv[i][0] <= a and self.iv[i][1] >= b)
 
-    def forecast(self, fed, window):
+    def forecast(self, fed: int, window: int) -> str:
         """The state of the next `window` samples after the audio fed, from the truth alone."""
         a = fed - 1
         b = a + window
@@ -209,11 +227,11 @@ WORDLESS = ("[sil]", "[speech]")
 SPEECH_LABELS = {"advances": 0, "rank0": 0, "entries": 0}
 
 
-def canon(text):
+def canon(text: str) -> str:
     return "[sil]" if text in WORDLESS else text
 
 
-def beam_readings(p):
+def beam_readings(p: Json) -> Readings:
     alts = p.get("partial_alternatives") or []
     SPEECH_LABELS["advances"] += 1
     SPEECH_LABELS["rank0"] += bool(alts) and alts[0]["text"] == "[speech]"
@@ -221,11 +239,11 @@ def beam_readings(p):
     return tuple((canon(e["text"]), e["confidence"]) for e in alts)
 
 
-def word_list(text):
+def word_list(text: str) -> list[str]:
     return [w for w in text.split() if w not in WORDLESS]
 
 
-def reading_leads(readings):
+def reading_leads(readings: Readings) -> dict[str, float | None]:
     """Each reading's confidence less the best among the others: the gap for rank 0, a deficit
     for the rest, undefined where a reading stands alone."""
     if len(readings) < 2:
@@ -233,7 +251,7 @@ def reading_leads(readings):
     return {t: c - max(d for u, d in readings if u != t) for t, c in readings}
 
 
-def relation(w0, w):
+def relation(w0: Sequence[str], w: Sequence[str]) -> str:
     if w == w0:
         return "same"
     if len(w) < len(w0) and w0[: len(w)] == w:
@@ -243,7 +261,7 @@ def relation(w0, w):
     return "differs"
 
 
-def runtime_motion(p):
+def runtime_motion(p: Json) -> dict[str, tuple[str, float | None]] | None:
     """`relation` and `lead_delta` as the runtime reports them, by reading text, or None from a
     build that predates the keys. The runtime's history runs over every surviving group, so it
     reports a delta for a reading entering the list that this harness has no record of
@@ -259,7 +277,12 @@ def runtime_motion(p):
 RUNTIME_TOL = 2e-5
 
 
-def check_motion(rt, derived, rel, parity):
+def check_motion(
+    rt: Mapping[str, tuple[str, float | None]],
+    derived: Mapping[str, float],
+    rel: Mapping[str, str],
+    parity: Parity,
+) -> None:
     """The harness's derivation is the cross-check on the runtime's fields, over the readings it
     can see: a reading reported at both advances has its lead from the same two confidences
     either way."""
@@ -272,17 +295,18 @@ def check_motion(rt, derived, rel, parity):
         if mine is None:
             parity["runtime_only" if delta is not None else "neither"] += 1
             continue
+        assert delta is not None
         if abs(delta - mine) > RUNTIME_TOL:
             raise AssertionError(f"lead_delta {delta} from the runtime, {mine} derived, on {text!r}")
         parity["agreed"] += 1
         parity["max_diff"] = max(parity["max_diff"], abs(delta - mine))
 
 
-def empty_parity():
+def empty_parity() -> Parity:
     return dict(agreed=0, runtime_only=0, neither=0, max_diff=0.0)
 
 
-def trailing_sil(p):
+def trailing_sil(p: Json) -> tuple[float | None, int | None]:
     """The trailing silence a host reads: the `[sil]` entry after the last word. A `[speech]`
     entry after it (`[[rr:TD-10#Decision outcome]]`) is the best path entering a word's phones;
     the silence entry keeps its span and stops growing there."""
@@ -294,18 +318,18 @@ def trailing_sil(p):
     return None, None
 
 
-def last_word_entry(p):
+def last_word_entry(p: Json) -> Json | None:
     for e in reversed(p.get("partial_result") or []):
         if e["word"] not in WORDLESS:
-            return e
+            return cast(Json, e)
     return None
 
 
-def inner_sil_spans(p):
+def inner_sil_spans(p: Json) -> dict[int, float]:
     """The `[sil]` entries with a word on both sides, by the index of the word before them: the
     pause the decoder measured between two words."""
     e = p.get("partial_result") or []
-    out = {}
+    out: dict[int, float] = {}
     seen = 0
     for k, entry in enumerate(e):
         if entry["word"] not in WORDLESS:
@@ -315,12 +339,20 @@ def inner_sil_spans(p):
     return out
 
 
-def build_state(fed, seg, p, readings, prev, first_seen, parity=None):
+def build_state(
+    fed: int,
+    seg: int,
+    p: Json,
+    readings: Readings,
+    prev: State | None,
+    first_seen: dict[str, int],
+    parity: Parity | None = None,
+) -> State:
     texts = [t for t, _ in readings]
     for t in texts:
         first_seen.setdefault(t, fed)
     lead = reading_leads(readings)
-    derived = {}
+    derived: dict[str, float] = {}
     if prev is not None:
         for t in texts:
             before = prev["lead"].get(t)
@@ -329,7 +361,7 @@ def build_state(fed, seg, p, readings, prev, first_seen, parity=None):
     words = {t: word_list(t) for t in texts}
     w0 = words[texts[0]]
     rel = {t: relation(w0, words[t]) for t in texts}
-    delta = derived
+    delta: dict[str, float] = derived
     rt = runtime_motion(p)
     if rt is not None:
         check_motion(rt, derived, rel, parity if parity is not None else empty_parity())
@@ -363,7 +395,14 @@ def build_state(fed, seg, p, readings, prev, first_seen, parity=None):
     )
 
 
-def run_stream(eng, pcm, block_ms, alternatives, words_on=True, parity=None):
+def run_stream(
+    eng: sc.Engine,
+    pcm: bytes,
+    block_ms: int,
+    alternatives: int,
+    words_on: bool = True,
+    parity: Parity | None = None,
+) -> tuple[list[State], list[Json], list[Json]]:
     """Feed one stream in blocks, keeping every partial's readings with the position fed and
     every final with its own. A final clears the decoder's history, so the series is cut there:
     ages and lead deltas start again in the next segment."""
@@ -371,13 +410,15 @@ def run_stream(eng, pcm, block_ms, alternatives, words_on=True, parity=None):
     if words_on and hasattr(rec, "SetPartialWords"):
         rec.SetPartialWords(True)
     block = RATE * block_ms // 1000 * 2
-    states, blocks, finals = [], [], []
+    states: list[State] = []
+    blocks: list[Json] = []
+    finals: list[Json] = []
     fed = 0
     seg = 0
-    prev = None
-    prev_readings = None
-    first_seen = {}
-    prev_words0 = []
+    prev: State | None = None
+    prev_readings: Readings | None = None
+    first_seen: dict[str, int] = {}
+    prev_words0: list[str] = []
     for i in range(0, len(pcm), block):
         chunk = pcm[i : i + block]
         fed += len(chunk) // 2
@@ -421,20 +462,21 @@ def run_stream(eng, pcm, block_ms, alternatives, words_on=True, parity=None):
     return states, blocks, finals
 
 
-def never_shown(final):
+def never_shown(final: Mapping[str, Any]) -> bool:
     """A worded final none of whose words had held in a partial: every word's hold is zero.
     `[[rr:TD-11#Decision outcome]]`"""
     words = [e for e in final.get("result") or [] if sc.words_of(e["word"])]
     return bool(words) and all(e.get("stable_ms", None) == 0 for e in words)
 
 
-def run_stream_text(eng, pcm, block_ms, words_on=False):
+def run_stream_text(eng: sc.Engine, pcm: bytes, block_ms: int, words_on: bool = False) -> tuple[list[Json], list[Json]]:
     """The stock wheel's half: rank-0 text per block and the finals, no readings to move."""
     rec = eng.new()
     if words_on and hasattr(rec, "SetPartialWords"):
         rec.SetPartialWords(True)
     block = RATE * block_ms // 1000 * 2
-    blocks, finals = [], []
+    blocks: list[Json] = []
+    finals: list[Json] = []
     fed = 0
     for i in range(0, len(pcm), block):
         chunk = pcm[i : i + block]
@@ -452,14 +494,14 @@ def run_stream_text(eng, pcm, block_ms, words_on=False):
 # --- the rules --------------------------------------------------------------------------------
 
 
-def gaining_extender(st, ext_delta):
+def gaining_extender(st: State, ext_delta: float) -> bool:
     """A reading that is rank 0 plus exactly one word and is gaining on the field."""
     return any(
         len(e["extra"]) == 1 and e["lead_delta"] is not None and e["lead_delta"] >= ext_delta for e in st["extends"]
     )
 
 
-def gaining_extras(st, ext_delta):
+def gaining_extras(st: State, ext_delta: float) -> list[str]:
     """The extra words of the readings that are rank 0 plus one word and gaining, in rank order."""
     return [
         e["extra"][0]
@@ -468,22 +510,28 @@ def gaining_extras(st, ext_delta):
     ]
 
 
-def calls(states, bound_ms, sil_delta=None, ext_delta=None):
+def calls(
+    states: Sequence[State],
+    bound_ms: float,
+    sil_delta: float | None = None,
+    ext_delta: float | None = None,
+) -> list[str]:
     """One forecast per advance. R0 is sil_delta being None: a word arriving at rank 0 is speech
     beginning, the trailing span crossing the bound is speech ending, and a span that goes on
     growing is silence being kept. R1 reads the motion first: at an utterance's start the empty
     reading losing its lead means a word is coming, and mid-utterance an extending reading
     gaining on the field means the next word is forming."""
-    out = []
+    out: list[str] = []
     crossed = False
-    seg = None
+    seg: int | None = None
     for st in states:
         if st["seg"] != seg:
             seg, crossed = st["seg"], False
         w0 = st["words0"]
         span = st["sil_span"]
-        call = None
+        call: str | None = None
         if sil_delta is not None and not st["grew"]:
+            assert ext_delta is not None
             if not w0:
                 d = st["delta"].get("[sil]")
                 if d is not None and d <= sil_delta:
@@ -504,13 +552,13 @@ def calls(states, bound_ms, sil_delta=None, ext_delta=None):
     return out
 
 
-def block_calls(blocks, per_advance):
+def block_calls(blocks: Sequence[Json], per_advance: Sequence[str]) -> list[str | None]:
     """The call a host reads at every block: between advances the partial repeats, so the call
     does."""
     return [None if b["adv"] is None else per_advance[b["adv"]] for b in blocks]
 
 
-def tally(counts, truth, call):
+def tally(counts: Counts, truth: str, call: str) -> None:
     if call == truth:
         counts[truth]["tp"] += 1
     else:
@@ -518,28 +566,28 @@ def tally(counts, truth, call):
         counts[truth]["fn"] += 1
 
 
-def prf(c):
+def prf(c: Mapping[str, int]) -> tuple[float, float, float]:
     p = c["tp"] / (c["tp"] + c["fp"]) if c["tp"] + c["fp"] else float("nan")
     r = c["tp"] / (c["tp"] + c["fn"]) if c["tp"] + c["fn"] else float("nan")
     f = 2 * p * r / (p + r) if p == p and r == r and p + r else 0.0
     return p, r, f
 
 
-def add_counts(a, b):
+def add_counts(a: Counts, b: Counts) -> Counts:
     for s in STATES:
         for k in ("tp", "fp", "fn"):
             a[s][k] += b[s][k]
     return a
 
 
-def empty_counts():
+def empty_counts() -> Counts:
     return {s: dict(tp=0, fp=0, fn=0) for s in STATES}
 
 
 # --- benchmark A ------------------------------------------------------------------------------
 
 
-def label_blocks(stream):
+def label_blocks(stream: Stream) -> None:
     """The ground-truth forecast at every block, and the utterance each block belongs to, both
     fixed once so a grid of thresholds is scored against the same labels."""
     truth, words = stream["truth"], stream["words"]
@@ -552,23 +600,23 @@ def label_blocks(stream):
     ]
 
 
-def group_counts(stream, per_advance, w_ms):
+def group_counts(stream: Stream, per_advance: Sequence[str], w_ms: int) -> dict[int, Counts]:
     """Per-utterance confusion counts, so a bootstrap can resample utterances."""
     labels = stream["labels"][w_ms]
-    out = defaultdict(empty_counts)
+    out: defaultdict[int, Counts] = defaultdict(empty_counts)
     for utt, label, call in zip(stream["utt"], labels, block_calls(stream["blocks"], per_advance), strict=True):
         if call is not None:
             tally(out[utt], label, call)
     return out
 
 
-def transitions_of(stream, lookback_ms):
+def transitions_of(stream: Stream, lookback_ms: float) -> list[Json]:
     """Every ground-truth transition with the window a rule may call it in. The window reaches
     back lookback_ms and no further: a stream's gaps run to three seconds, and a call that
     early is not a forecast of the word that eventually arrives."""
     words = stream["words"]
     back = lookback_ms * SAMPLES_PER_MS
-    rows = []
+    rows: list[Json] = []
     for i, w in enumerate(words):
         prev_end = words[i - 1]["offset"] if i else 0
         nxt = words[i + 1]["onset"] if i + 1 < len(words) else stream["samples"]
@@ -595,19 +643,23 @@ def transitions_of(stream, lookback_ms):
     return rows
 
 
-def lead_times(streams, per_advance_by_stream, tolerance):
+def lead_times(
+    streams: Sequence[Stream],
+    per_advance_by_stream: Mapping[str, Sequence[str]],
+    tolerance: float,
+) -> tuple[dict[str, list[float | None]], dict[str, list[bool]]]:
     """Per true transition, the milliseconds from the first block a rule calls that state to the
     transition itself, negative before it. A transition is 'handled' when the call falls inside
     the tolerance window around the truth, which is the paired unit for McNemar."""
-    out = {"away": [], "toward": []}
-    handled = {"away": [], "toward": []}
+    out: dict[str, list[float | None]] = {"away": [], "toward": []}
+    handled: dict[str, list[bool]] = {"away": [], "toward": []}
     for s in streams:
         cb = block_calls(s["blocks"], per_advance_by_stream[s["key"]])
         feds = [b["fed"] for b in s["blocks"]]
         for tr in s["transitions"]:
             lo = bisect.bisect_left(feds, tr["lo"])
             hi = bisect.bisect_right(feds, tr["hi"])
-            first = None
+            first: int | None = None
             for k in range(lo, hi):
                 if cb[k] == tr["kind"]:
                     first = feds[k]
@@ -619,7 +671,12 @@ def lead_times(streams, per_advance_by_stream, tolerance):
     return out, handled
 
 
-def alarms(streams, per_advance_by_stream, kind, block_ms):
+def alarms(
+    streams: Sequence[Stream],
+    per_advance_by_stream: Mapping[str, Sequence[str]],
+    kind: str,
+    block_ms: int,
+) -> Json:
     """False calls where the truth cannot be that state: `away` inside a finish gap after the
     word has ended, or anywhere on the recordings. Counted as blocks and as distinct runs."""
     blocks = runs = total_blocks = 0
@@ -630,7 +687,7 @@ def alarms(streams, per_advance_by_stream, kind, block_ms):
             if kind == "finish"
             else [(0, s["samples"])]
         )
-        prev = None
+        prev: str | None = None
         for b, call in zip(s["blocks"], cb, strict=True):
             if not any(lo <= b["fed"] < hi for lo, hi in spans):
                 prev = None
@@ -645,16 +702,18 @@ def alarms(streams, per_advance_by_stream, kind, block_ms):
     return dict(blocks=blocks, runs=runs, minutes=minutes, per_min_blocks=blocks / minutes, per_min=runs / minutes)
 
 
-def eos_curve(streams, bound_grid, ext_delta):
+def eos_curve(
+    streams: Sequence[Stream], bound_grid: Sequence[int], ext_delta: float
+) -> tuple[dict[int, dict[str, int]], Counter[str], dict[int, list[float]]]:
     """Among the silent stretches, at each millisecond of trailing silence: the share of pauses
     whose span reaches it before the next word (a pause taken for a finish) and the share of
     finishes whose span reaches it at all. The motion variant refuses the call at an advance
     where an extending reading is gaining."""
     rows = {x: dict(pause=0, pause_motion=0, finish=0, finish_motion=0) for x in bound_grid}
-    totals = Counter()
-    early = {x: [] for x in bound_grid}
+    totals: Counter[str] = Counter()
+    early: dict[int, list[float]] = {x: [] for x in bound_grid}
     for s in streams:
-        by_seg = defaultdict(list)
+        by_seg: defaultdict[int, list[State]] = defaultdict(list)
         for st in s["states"]:
             by_seg[st["seg"]].append(st)
         finals = sorted(f["fed"] for f in s["finals"])
@@ -683,10 +742,15 @@ def eos_curve(streams, bound_grid, ext_delta):
 # --- benchmark B ------------------------------------------------------------------------------
 
 
-def eos_by_gap_length(streams, bound_ms, ext_delta, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
+def eos_by_gap_length(
+    streams: Sequence[Stream],
+    bound_ms: float,
+    ext_delta: float,
+    edges: Sequence[int] = (100, 200, 300, 400, 500, 600, 700, 800),
+) -> dict[str, dict[str, int]]:
     """At one bound, the share of pauses taken for a finish by the length of the pause that was
     built, since the headline share is a function of that distribution and nothing else."""
-    rows = {}
+    rows: dict[str, dict[str, int]] = {}
     for lo, hi in zip(edges, edges[1:], strict=False):
         rows[f"{lo}-{hi}"] = dict(n=0, mistaken=0, mistaken_motion=0)
     for s_ in streams:
@@ -710,14 +774,14 @@ def eos_by_gap_length(streams, bound_ms, ext_delta, edges=(100, 200, 300, 400, 5
     return rows
 
 
-def built_alike(a, b):
+def built_alike(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
     """Whether two runs' `stream_sizes` describe the same built streams. The counts the decode
     produces, finals and advances among them, are what a bound is there to change."""
     keys = ("streams", "words", "utterances", "pauses", "finishes", "transitions", "blocks", "minutes")
     return all(a[k] == b[k] for k in keys)
 
 
-def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
+def runtime_finals(streams: Sequence[Stream], edges: Sequence[int] = (100, 200, 300, 400, 500, 600, 700, 800)) -> Json:
     """The same question as `eos_curve`, asked of the finals the runtime emitted rather than of
     the spans the series recorded: over the same silent stretches, how many pauses got a final
     before the next word and how many finishes got one at all. With a host bound set this is what
@@ -726,12 +790,12 @@ def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
     The word counts are the price. A final's word entries carry spans measured from the start of
     the audio, so a truth word no entry covers was lost and one two entries cover was decoded
     twice, which is what a bound firing inside a word leaves behind."""
-    tot = Counter()
-    hits = Counter()
-    lead = []
+    tot: Counter[str] = Counter()
+    hits: Counter[str] = Counter()
+    lead: list[float] = []
     by_pause = {f"{lo}-{hi}": dict(n=0, mistaken=0) for lo, hi in zip(edges, edges[1:], strict=False)}
     finals = words_in_finals = unshown = 0
-    by_rule = Counter()
+    by_rule: Counter[str] = Counter()
     samples = 0
     words_total = lost = restarted = 0
     for s_ in streams:
@@ -797,14 +861,16 @@ def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
     )
 
 
-def transition_records(streams, ext_delta, lookback_ms, forward_ms=1500):
+def transition_records(
+    streams: Sequence[Stream], ext_delta: float, lookback_ms: float, forward_ms: float = 1500
+) -> tuple[list[Json], list[Json]]:
     """Per ground-truth transition into a word, inside a bounded window around its onset: when
     the rank-0 word list grew (the detection a host has today), when the word itself led, when a
     reading first extended rank 0 and what its extra word was, the decoder's own measure of the
     pause, and the latency from the onset. Also every advance in the window that carried an
     extending reading, so preview accuracy can be read against the lead still to run."""
-    rows = []
-    previews = []
+    rows: list[Json] = []
+    previews: list[Json] = []
     back = lookback_ms * SAMPLES_PER_MS
     fwd = forward_ms * SAMPLES_PER_MS
     for s_ in streams:
@@ -911,13 +977,13 @@ def transition_records(streams, ext_delta, lookback_ms, forward_ms=1500):
     return rows, previews
 
 
-def span_errors(streams):
+def span_errors(streams: Sequence[Stream]) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
     """The trailing `[sil]` span, per advance inside a gap, against two clocks: the silence that
     has elapsed since the word's energy offset, and the silence since the decoder's own end of
     that word. The second isolates the span's own lag from the difference between the two
     alignments."""
-    out = defaultdict(list)
-    decoded = defaultdict(list)
+    out: defaultdict[str, list[float]] = defaultdict(list)
+    decoded: defaultdict[str, list[float]] = defaultdict(list)
     for s_ in streams:
         for g in s_["gaps"]:
             w = s_["words"][g["after"]]
@@ -933,7 +999,11 @@ def span_errors(streams):
     return out, decoded
 
 
-def dying_extenders(streams, spans, one_word_only=True):
+def dying_extenders(
+    streams: Sequence[Stream],
+    spans: Callable[[Stream], Sequence[tuple[int, int]]],
+    one_word_only: bool = True,
+) -> Json:
     """Extending readings that appear where no word follows and never reach rank 0: the beam
     guessing at a word that is not coming. Counted per minute of the audio in spans, and
     split by whether rank 0 held words: over an empty rank 0 every word-carrying reading
@@ -943,8 +1013,8 @@ def dying_extenders(streams, spans, one_word_only=True):
     for s_ in streams:
         for lo, hi in spans(s_):
             total += hi - lo
-            seen = {True: set(), False: set()}
-            reached = set()
+            seen: dict[bool, set[tuple[str, ...]]] = {True: set(), False: set()}
+            reached: set[tuple[str, ...]] = set()
             for st in s_["states"]:
                 if not (lo <= st["fed"] < hi):
                     continue
@@ -957,7 +1027,7 @@ def dying_extenders(streams, spans, one_word_only=True):
                 out[k] += len([t for t in seen[k] if t not in reached])
     minutes = total / RATE / 60.0 if total else float("nan")
 
-    def per(c):
+    def per(c: float) -> float:
         return c / minutes if minutes == minutes and minutes else float("nan")
 
     return dict(
@@ -978,12 +1048,12 @@ SIL_CROSS_GRID = (0.0, -0.25, -0.5, -1.0, -2.0, -4.0)
 EXT_CROSS_GRID = (0.0, 0.25, 0.5, 1.0, 2.0, 4.0)
 
 
-def band_of(lead):
+def band_of(lead: float) -> str:
     a = abs(lead)
     return next(name for name, lo, hi in BANDS if lo <= a < hi)
 
 
-def rank_auc(pairs):
+def rank_auc(pairs: Iterable[tuple[float | None, object]]) -> float | None:
     """Rank-AUC of a score against a boolean label, ties at the mid-rank; 0.5 is no information
     and below 0.5 the signal is inverted."""
     xs = [(v, y) for v, y in pairs if v is not None]
@@ -1008,11 +1078,11 @@ def rank_auc(pairs):
 class Corr:
     """Pearson r and sign agreement accumulated in sums, since the pairs run to six figures."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.n = self.sx = self.sy = self.sxx = self.syy = self.sxy = 0.0
         self.signed = self.agree = 0
 
-    def add(self, x, y):
+    def add(self, x: float, y: float) -> None:
         self.n += 1
         self.sx += x
         self.sy += y
@@ -1023,7 +1093,7 @@ class Corr:
             self.signed += 1
             self.agree += (x > 0) == (y > 0)
 
-    def read(self):
+    def read(self) -> Json:
         n = self.n
         if n < 2:
             return dict(n=int(n), r=None, sign_agreement=None, signed=self.signed)
@@ -1039,12 +1109,12 @@ class Corr:
         )
 
 
-def momentum(streams):
+def momentum(streams: Sequence[Stream]) -> dict[str, Json]:
     """Does a lead's motion carry from one advance to the next: the correlation between a
     reading's lead_delta now and at the next advance, by the band its lead sits in and by what
     the reading is to rank 0. Three advances are needed for one pair, since each delta is itself
     a difference."""
-    acc = defaultdict(Corr)
+    acc: defaultdict[tuple[str, str], Corr] = defaultdict(Corr)
     for s_ in streams:
         states = s_["states"]
         for k in range(len(states) - 1):
@@ -1065,7 +1135,7 @@ def momentum(streams):
     return {f"{subset}|{band}": c.read() for (subset, band), c in acc.items()}
 
 
-def spread(values):
+def spread(values: Iterable[float | None]) -> Json:
     v = [x for x in values if x is not None]
     if not v:
         return dict(n=0, mean=None, sd=None, p10=None, p50=None, p90=None)
@@ -1081,10 +1151,10 @@ def spread(values):
     )
 
 
-def kept_silence_spans(stream, after_ms=1000, before_ms=500):
+def kept_silence_spans(stream: Stream, after_ms: int = 1000, before_ms: int = 500) -> list[tuple[int, int]]:
     """The interior of each finish gap: long after the word has ended and well before anything
     begins, which is silence being kept rather than a transition."""
-    out = []
+    out: list[tuple[int, int]] = []
     for g in stream["gaps"]:
         if g["kind"] != "finish":
             continue
@@ -1096,15 +1166,18 @@ def kept_silence_spans(stream, after_ms=1000, before_ms=500):
     return out
 
 
-def whole_stream_spans(stream, after_ms=1000):
+def whole_stream_spans(stream: Stream, after_ms: int = 1000) -> list[tuple[int, int]]:
     return [(after_ms * SAMPLES_PER_MS, stream["samples"])]
 
 
-def silence_signature(streams, spans):
+def silence_signature(streams: Sequence[Stream], spans: Callable[[Stream], Sequence[tuple[int, int]]]) -> Json:
     """In steady silence: the leading reading's lead over its best rival, that lead's motion, and
     how old the rival is. A lead that hovers while the rival stays young is a bound set by word
     hypotheses that are started and pruned, not a lead that is being won."""
-    leads, deltas, ages, rank1_ages = [], [], [], []
+    leads: list[float | None] = []
+    deltas: list[float | None] = []
+    ages: list[float | None] = []
+    rank1_ages: list[float | None] = []
     sil_leads = advances = fresh = 0
     for s_ in streams:
         windows = spans(s_)
@@ -1133,17 +1206,17 @@ def silence_signature(streams, spans):
     )
 
 
-def best_extends_delta(st):
+def best_extends_delta(st: State) -> float | None:
     for e in st["extends"]:
         if len(e["extra"]) == 1:
-            return e["lead_delta"]
+            return cast(float | None, e["lead_delta"])
     return None
 
 
-def aligned_velocity(streams):
+def aligned_velocity(streams: Sequence[Stream]) -> dict[str, dict[str, Json]]:
     """Every ground-truth onset and offset aligned at the advance that first covers it, with the
     motion of three readings at the advances around it."""
-    series = defaultdict(lambda: defaultdict(list))
+    series: defaultdict[tuple[str, int], defaultdict[str, list[float | None]]] = defaultdict(lambda: defaultdict(list))
     for s_ in streams:
         states = s_["states"]
         feds = [st["fed"] for st in states]
@@ -1165,10 +1238,10 @@ def aligned_velocity(streams):
     return {f"{kind}|{off}": {name: spread(v) for name, v in d.items()} for (kind, off), d in series.items()}
 
 
-def crossings(stream, signal, theta):
+def crossings(stream: Stream, signal: str, theta: float) -> list[int]:
     """The advances where one reading's motion crosses a threshold: the empty reading's lead
     falling, or a one-word extending reading's lead rising."""
-    out = []
+    out: list[int] = []
     for st in stream["states"]:
         if signal == "sil":
             if st["words0"]:
@@ -1185,14 +1258,14 @@ def crossings(stream, signal, theta):
     return out
 
 
-def crossing_scores(streams, signal, theta, lookback_ms, block_ms):
+def crossing_scores(streams: Sequence[Stream], signal: str, theta: float, lookback_ms: float, block_ms: int) -> Json:
     """A crossing counts as a hit when a word's onset follows it within the lookback; recall is
     over the onsets. False alarms are crossings in kept silence and, on the recordings, anywhere.
     """
     back = lookback_ms * SAMPLES_PER_MS
     hits = total = 0
     onsets = called = 0
-    leads = []
+    leads: list[float] = []
     alarm_events = 0
     alarm_samples = 0
     for s_ in streams:
@@ -1253,19 +1326,19 @@ ONSET_LABELS = {
 }
 
 
-def one_word_extenders(st):
+def one_word_extenders(st: State) -> list[Json]:
     """The readings that are rank 0 plus exactly one word. Where rank 0 is the empty reading every
     word-carrying reading is one of these, which is the README's rule before a first word."""
     return [e for e in st["extends"] if len(e["extra"]) == 1]
 
 
-def onset_fires(stream, rule, theta):
+def onset_fires(stream: Stream, rule: str, theta: float) -> list[int]:
     """The advances at which a rule first calls a word coming. A run of consecutive advances where
     the rule holds is one call, not one per advance, so the calls are events a host acts on."""
-    out = []
+    out: list[int] = []
     holding = False
-    clock = None
-    seg = None
+    clock = 0
+    seg: int | None = None
     for st in stream["states"]:
         if st["seg"] != seg:
             seg, clock, holding = st["seg"], st["fed"], False
@@ -1288,22 +1361,27 @@ def onset_fires(stream, rule, theta):
     return out
 
 
-def nonspeech_samples(stream):
+def nonspeech_samples(stream: Stream) -> int:
     speech = sum(w["offset"] - w["onset"] for w in stream["words"])
-    return max(0, stream["samples"] - speech)
+    return cast(int, max(0, stream["samples"] - speech))
 
 
-def match_calls(fires, words, back_ms=ONSET_BACK_MS, detect_ms=ONSET_DETECT_MS):
+def match_calls(
+    fires: Sequence[int],
+    words: Sequence[Json],
+    back_ms: float = ONSET_BACK_MS,
+    detect_ms: float = ONSET_DETECT_MS,
+) -> tuple[list[tuple[int, int]], list[int], list[bool]]:
     """One call to one word and no more. Each call in time order takes the earliest word still
     unclaimed whose onset falls between one advance before it and `back_ms` after it; every other
     call is a false alarm and every unclaimed word a miss."""
     back = back_ms * SAMPLES_PER_MS
     detect = detect_ms * SAMPLES_PER_MS
     claimed = [False] * len(words)
-    matched = []
-    alarms = []
+    matched: list[tuple[int, int]] = []
+    alarms: list[int] = []
     for f in fires:
-        take = None
+        take: int | None = None
         for i, w in enumerate(words):
             if claimed[i]:
                 continue
@@ -1320,12 +1398,12 @@ def match_calls(fires, words, back_ms=ONSET_BACK_MS, detect_ms=ONSET_DETECT_MS):
     return matched, alarms, claimed
 
 
-def onset_scores(streams, rule, theta):
+def onset_scores(streams: Sequence[Stream], rule: str, theta: float) -> Json:
     """One rule at one threshold over a set of streams, with the calls that could carry acoustic
     evidence of the word kept apart from the calls that could not."""
     calls = matched = onsets = 0
     before_clip = in_clip = after_onset = 0
-    leads = []
+    leads: list[float] = []
     alarm_calls = 0
     quiet_samples = 0
     for s_ in streams:
@@ -1371,7 +1449,7 @@ def onset_scores(streams, rule, theta):
     )
 
 
-def onset_study(val, test, noise):
+def onset_study(val: Sequence[Stream], test: Sequence[Stream], noise: Sequence[Stream]) -> Json:
     """Every rule fitted twice on the validation streams, once for its own best F1 and once to
     spend the same false alarms as the motion rule, and both read on the testing streams. The
     equal-alarm column is the attribution: a rule that calls more words by calling more often has
@@ -1392,11 +1470,11 @@ def onset_study(val, test, noise):
     return out
 
 
-def reversal(streams):
+def reversal(streams: Sequence[Stream]) -> dict[str, Json]:
     """The leading reading leading but losing: its lead is positive and its motion negative.
     Scored against rank 0 changing at the next advance and against rank 0's words differing from
     the final that closes the segment."""
-    rows = []
+    rows: list[Json] = []
     for s_ in streams:
         finals = {f["seg"]: sc.words_of(f["text"]) for f in s_["finals"]}
         states = s_["states"]
@@ -1418,7 +1496,7 @@ def reversal(streams):
                     unlike_final=st["words0"] != finals.get(st["seg"], []),
                 )
             )
-    out = {}
+    out: dict[str, Json] = {}
     for band in ("all",) + tuple(name for name, _, _ in BANDS):
         b = rows if band == "all" else [x for x in rows if x["band"] == band]
         if not b:
@@ -1441,14 +1519,19 @@ def reversal(streams):
 # --- statistics -------------------------------------------------------------------------------
 
 
-def bootstrap_diff(groups, metric, reps=BOOTSTRAPS, seed=7):
+def bootstrap_diff[Group](
+    groups: Sequence[Group],
+    metric: Callable[[Sequence[Group]], float],
+    reps: int = BOOTSTRAPS,
+    seed: int = 7,
+) -> Json | None:
     """Paired bootstrap over the groups (utterances, or transitions) of metric(b) - metric(a).
     Each group carries whatever the metric needs for both rules, so the pairing is kept."""
     if not groups:
         return None
     rng = random.Random(seed)
     base = metric(groups)
-    draws = []
+    draws: list[float] = []
     n = len(groups)
     for _ in range(reps):
         sample = [groups[rng.randrange(n)] for _ in range(n)]
@@ -1459,8 +1542,8 @@ def bootstrap_diff(groups, metric, reps=BOOTSTRAPS, seed=7):
     return dict(diff=base, lo=lo, hi=hi)
 
 
-def f1_metric(state):
-    def m(groups):
+def f1_metric(state: str) -> Callable[[Sequence[tuple[Counts, Counts]]], float]:
+    def m(groups: Sequence[tuple[Counts, Counts]]) -> float:
         a, b = empty_counts(), empty_counts()
         for ga, gb in groups:
             add_counts(a, ga)
@@ -1470,15 +1553,15 @@ def f1_metric(state):
     return m
 
 
-def mean_metric(index):
-    def m(groups):
-        vals = [g[index] for g in groups if g[index] is not None]
+def mean_metric(index: int) -> Callable[[Sequence[Sequence[float | None]]], float]:
+    def m(groups: Sequence[Sequence[float | None]]) -> float:
+        vals = [x for x in (g[index] for g in groups) if x is not None]
         return sum(vals) / len(vals) if vals else float("nan")
 
     return m
 
 
-def mcnemar_pair(a, b):
+def mcnemar_pair(a: Sequence[bool], b: Sequence[bool]) -> Json:
     """Discordant counts and the exact two-sided p: only_b is where the second rule alone is
     right."""
     only_a = sum(1 for x, y in zip(a, b, strict=True) if x and not y)
@@ -1492,13 +1575,13 @@ def mcnemar_pair(a, b):
     )
 
 
-def pval(x):
+def pval(x: float) -> str:
     """An exact p over a thousand discordant pairs underflows a float, where 0 would read as a
     measurement rather than as the bottom of the type."""
     return "< 1e-308" if x == 0 else f"{x:.3g}"
 
 
-def num(x, places=1):
+def num(x: float | None, places: int = 1) -> str:
     if x is None:
         return "-"
     if isinstance(x, float) and x != x:
@@ -1506,14 +1589,14 @@ def num(x, places=1):
     return f"{x:.{places}f}"
 
 
-def share(a, b):
+def share(a: int, b: int) -> str:
     return f"{a} / {b} ({100.0 * a / b:.1f}%)" if b else "-"
 
 
 # --- the run ----------------------------------------------------------------------------------
 
 
-def split_clips(data, name, rng):
+def split_clips(data: Path, name: str, rng: random.Random) -> list[sc.Clip]:
     listed = [x.strip() for x in (data / f"{name}_list.txt").read_text().splitlines() if x.strip()]
     keep = set(sc.DATASET_WORDS)
     rows = [(rel.split("/")[0], data / rel) for rel in listed if rel.split("/")[0] in keep]
@@ -1522,32 +1605,32 @@ def split_clips(data, name, rng):
 
 
 def decode_split(
-    eng,
-    data,
-    split,
-    args,
-    gaps_paths,
-    vosk_eng=None,
-    pause_ms=PAUSE_MS,
-    word_target=None,
-    tag=None,
-    parity=None,
-    gap_floor=GAP_FLOOR_DBFS,
-):
+    eng: sc.Engine,
+    data: Path,
+    split: str,
+    args: argparse.Namespace,
+    gaps_paths: Sequence[Path],
+    vosk_eng: sc.Engine | None = None,
+    pause_ms: tuple[float, float] = PAUSE_MS,
+    word_target: int | None = None,
+    tag: str | None = None,
+    parity: Parity | None = None,
+    gap_floor: float = GAP_FLOOR_DBFS,
+) -> tuple[list[Stream], Json]:
     """Build and decode this split's streams, one at a time, keeping the truth and the series but
     not the audio."""
     rng = random.Random(args.seed + (0 if split == "validation" else 1))
     clips = split_clips(data, split, rng)
     gaps = GapSource(gaps_paths, gap_floor)
-    streams = []
+    streams: list[Stream] = []
     n_words = 0
     want = args.words if word_target is None else word_target
     name = tag or split
-    vosk = dict(rows=[], partial_words=None)
+    vosk: Json = dict(rows=[], partial_words=None)
     while n_words < want and len(clips) > UTTERANCES_PER_STREAM * WORDS_PER_UTTERANCE[1]:
         pcm, words, gap_rows = build_stream(rng, clips, gaps, args.utterances, pause_ms)
         states, blocks, finals = run_stream(eng, pcm, args.block_ms, args.alternatives, parity=parity)
-        s = dict(
+        s: Stream = dict(
             key=f"{name}/{len(streams)}",
             split=name,
             words=words,
@@ -1574,8 +1657,8 @@ def decode_split(
     return streams, vosk
 
 
-def advance_intervals(streams):
-    out = []
+def advance_intervals(streams: Sequence[Stream]) -> list[float]:
+    out: list[float] = []
     for s in streams:
         for a, b in zip(s["states"], s["states"][1:], strict=False):
             if a["seg"] == b["seg"]:
@@ -1583,7 +1666,7 @@ def advance_intervals(streams):
     return out
 
 
-def fit_thresholds(streams, args):
+def fit_thresholds(streams: Sequence[Stream], args: argparse.Namespace) -> Json:
     """The bound first, on the state it decides; then the two motion thresholds, on theirs.
     Fitted on the validation streams only, at the shorter horizon, by the macro F1 over the four
     states, which a rule that calls one state everywhere cannot win; the per-state figures and
@@ -1592,7 +1675,7 @@ def fit_thresholds(streams, args):
 
     w = HORIZONS[0]
 
-    def scores_of(per_advance):
+    def scores_of(per_advance: Mapping[str, Sequence[str]]) -> Json:
         c = empty_counts()
         for s_ in streams:
             for g in group_counts(s_, per_advance[s_["key"]], w).values():
@@ -1605,11 +1688,11 @@ def fit_thresholds(streams, args):
             finish_alarms_per_min=alarms(streams, per_advance, "finish", args.block_ms)["per_min"],
         )
 
-    bound_scores = {}
+    bound_scores: dict[int, Json] = {}
     for b in BOUND_GRID:
         bound_scores[b] = scores_of({s_["key"]: calls(s_["states"], b) for s_ in streams})
     bound = max(bound_scores, key=lambda k: bound_scores[k]["macro_f1"])
-    motion = {}
+    motion: dict[tuple[float, float], Json] = {}
     for d in SIL_DELTA_GRID:
         for e in EXT_DELTA_GRID:
             motion[(d, e)] = scores_of({s_["key"]: calls(s_["states"], bound, d, e) for s_ in streams})
@@ -1623,7 +1706,7 @@ def fit_thresholds(streams, args):
     )
 
 
-def stream_sizes(streams):
+def stream_sizes(streams: Sequence[Stream]) -> Json:
     words = sum(len(s["words"]) for s in streams)
     pauses = sum(1 for s in streams for g in s["gaps"] if g["kind"] == "pause")
     finishes = sum(1 for s in streams for g in s["gaps"] if g["kind"] == "finish")
@@ -1641,14 +1724,21 @@ def stream_sizes(streams):
     )
 
 
-def recordings_pass(eng, paths, args, bound, sil_delta, ext_delta):
+def recordings_pass(
+    eng: sc.Engine,
+    paths: Sequence[Path],
+    args: argparse.Namespace,
+    bound: float,
+    sil_delta: float,
+    ext_delta: float,
+) -> tuple[list[Stream], dict[str, list[str]], dict[str, list[str]]]:
     """The recordings alone, fed continuously through one recognizer as the benchmark's noise
     pass does: every away call here is a false alarm."""
-    out = []
+    out: list[Stream] = []
     for p in paths:
         pcm = sc.read_pcm(p)
         states, blocks, finals = run_stream(eng, pcm, args.block_ms, args.alternatives)
-        s = dict(
+        s: Stream = dict(
             key=f"noise/{p.name}",
             words=[],
             gaps=[],
@@ -1664,11 +1754,17 @@ def recordings_pass(eng, paths, args, bound, sil_delta, ext_delta):
     return out, pa0, pa1
 
 
-def wordless_recordings(eng, vosk_eng, paths, args, level):
+def wordless_recordings(
+    eng: sc.Engine,
+    vosk_eng: sc.Engine | None,
+    paths: Sequence[Path],
+    args: argparse.Namespace,
+    level: float | None,
+) -> tuple[list[Stream], list[Json]]:
     """The recordings alone at one floor level, through both engines. `level` None is digital
     silence of the same length, which the floor's percentile treats apart from a room."""
-    out = []
-    rows = []
+    out: list[Stream] = []
+    rows: list[Json] = []
     for p in paths:
         pcm = sc.read_pcm(p)
         pcm = bytes(len(pcm)) if level is None else sc.scaled_to_floor(pcm, level)
@@ -1681,7 +1777,7 @@ def wordless_recordings(eng, vosk_eng, paths, args, level):
     return out, rows
 
 
-def write_streams(path, streams):
+def write_streams(path: str | Path, streams: Sequence[Stream]) -> None:
     with open(path, "w") as fh:
         for s in streams:
             row = dict(
@@ -1711,7 +1807,7 @@ GAP_FLOOR_GRID = (-70.0, -60.0, -50.0, -40.0)
 GAP_LENGTH_EDGES = (200, 400, 600, 800, 2400, 2700)
 
 
-def spoken_before(stream, finals):
+def spoken_before(stream: Stream, finals: Sequence[Json]) -> tuple[list[int], list[int]]:
     """How many of the stream's words have ended since the last final, per block and per final. The
     finals are the deciding engine's own, since its history is what a final of its clears. A
     word the partial still holds is not a phantom; a word beyond them is. A final is judged against
@@ -1719,10 +1815,10 @@ def spoken_before(stream, finals):
     ends = sorted(w["offset"] for w in stream["words"])
     marks = [f["fed"] for f in finals]
 
-    def ended_by(fed):
+    def ended_by(fed: int) -> int:
         return bisect.bisect_right(ends, fed)
 
-    per_block = []
+    per_block: list[int] = []
     base = 0
     fi = 0
     for b in stream["blocks"]:
@@ -1730,7 +1826,7 @@ def spoken_before(stream, finals):
             base = ended_by(marks[fi])
             fi += 1
         per_block.append(ended_by(b["fed"]) - base)
-    per_final = []
+    per_final: list[int] = []
     base = 0
     for m in marks:
         per_final.append(ended_by(m) - base)
@@ -1738,12 +1834,12 @@ def spoken_before(stream, finals):
     return per_block, per_final
 
 
-def wordless_spans(stream, kind):
+def wordless_spans(stream: Stream, kind: str) -> list[tuple[int, int, str, int]]:
     """The stretches a word would be a phantom in: a built stream's gaps, by kind, or the whole of
     a recording fed cold."""
     if not stream["gaps"]:
         return [(0, stream["samples"], "cold", stream["samples"])] if kind in ("cold", "all") else []
-    out = []
+    out: list[tuple[int, int, str, int]] = []
     for g in stream["gaps"]:
         if kind not in ("all", g["kind"]):
             continue
@@ -1754,7 +1850,7 @@ def wordless_spans(stream, kind):
 GAP_BUCKETS = [f"under {e} ms" for e in GAP_LENGTH_EDGES] + [f"{GAP_LENGTH_EDGES[-1]} ms or more"]
 
 
-def gap_bucket(samples):
+def gap_bucket(samples: int) -> str:
     ms = samples / SAMPLES_PER_MS
     for i, e in enumerate(GAP_LENGTH_EDGES):
         if ms < e:
@@ -1762,20 +1858,26 @@ def gap_bucket(samples):
     return GAP_BUCKETS[-1]
 
 
-def census_words(stream, spans, rank0, readings, finals):
+def census_words(
+    stream: Stream,
+    spans: Sequence[tuple[int, int, str, int]],
+    rank0: Callable[[int], list[str]],
+    readings: Callable[[int], list[list[str]]] | None,
+    finals: Sequence[Json],
+) -> dict[tuple[str, str], Counter[str]]:
     """One stream's census over `spans`, in one walk of the blocks. `rank0(i)` is the rank-0 word
     list at block i, `readings(i)` the rivals there or None where the engine offers none. Keyed by
     the span's kind and length, so a rate can be read against the span's own clock."""
     spoken, spoken_at_final = spoken_before(stream, finals)
     order = sorted(spans, key=lambda x: x[0])
     starts = [x[0] for x in order]
-    rows = defaultdict(Counter)
+    rows: defaultdict[tuple[str, str], Counter[str]] = defaultdict(Counter)
     for _, _, kind, samples in order:
         r = rows[(kind, gap_bucket(samples))]
         r["spans"] += 1
         r["samples"] += samples
 
-    def key_at(fed):
+    def key_at(fed: int) -> tuple[str, str] | None:
         j = bisect.bisect_left(starts, fed) - 1
         if j < 0:
             return None
@@ -1783,7 +1885,7 @@ def census_words(stream, spans, rank0, readings, finals):
         return (kind, gap_bucket(samples)) if s0 < fed <= e0 else None
 
     run = 0
-    last = None
+    last: tuple[str, str] | None = None
     for i, b in enumerate(stream["blocks"]):
         key = key_at(b["fed"])
         if key is None:
@@ -1812,12 +1914,12 @@ def census_words(stream, spans, rank0, readings, finals):
     return rows
 
 
-def utter_rank0(stream):
-    def rank0(i):
+def utter_rank0(stream: Stream) -> tuple[Callable[[int], list[str]], Callable[[int], list[list[str]]]]:
+    def rank0(i: int) -> list[str]:
         adv = stream["blocks"][i]["adv"]
         return stream["states"][adv]["words0"] if adv is not None else []
 
-    def readings(i):
+    def readings(i: int) -> list[list[str]]:
         adv = stream["blocks"][i]["adv"]
         if adv is None:
             return []
@@ -1826,12 +1928,15 @@ def utter_rank0(stream):
     return rank0, readings
 
 
-def vosk_rank0(row):
-    return (lambda i: row["blocks"][i]["words"] if i < len(row["blocks"]) else []), None
+def vosk_rank0(row: Json) -> tuple[Callable[[int], list[str]], None]:
+    def rank0(i: int) -> list[str]:
+        return cast(list[str], row["blocks"][i]["words"]) if i < len(row["blocks"]) else []
+
+    return rank0, None
 
 
-def census_totals(rows):
-    out = Counter()
+def census_totals(rows: Mapping[tuple[str, str], Counter[str]]) -> Counter[str]:
+    out: Counter[str] = Counter()
     for v in rows.values():
         for k, n in v.items():
             if k == "longest_run":
@@ -1841,7 +1946,7 @@ def census_totals(rows):
     return out
 
 
-def census_row(label, engine, c):
+def census_row(label: str, engine: str, c: Mapping[str, int]) -> str:
     minutes = c["samples"] / RATE / 60.0
     rival = f"{c['rival_blocks'] / minutes:.2f}" if c.get("with_rivals") else "no alternatives"
     return (
@@ -1851,7 +1956,7 @@ def census_row(label, engine, c):
     )
 
 
-def census_header(lines, what):
+def census_header(lines: list[str], what: str) -> None:
     lines.append("")
     lines.append(
         f"| {what} | engine | non-speech minutes | blocks | word at rank 0 /min | "
@@ -1860,9 +1965,11 @@ def census_header(lines, what):
     lines.append("|---|---|---|---|---|---|---|---|")
 
 
-def census_set(streams, vosk_rows, kind):
+def census_set(
+    streams: Sequence[Stream], vosk_rows: Sequence[Json] | None, kind: str
+) -> dict[str, dict[tuple[str, str], Counter[str]]]:
     """Both engines over one set of streams, keyed by span kind and length bucket."""
-    out = {}
+    out: dict[str, dict[tuple[str, str], Counter[str]]] = {}
     by_key = {r["key"]: r for r in (vosk_rows or [])}
     for s in streams:
         spans = wordless_spans(s, kind)
@@ -1879,7 +1986,15 @@ def census_set(streams, vosk_rows, kind):
     return out
 
 
-def wordless_section(report, a, test, noise_streams, vosk_rows, variants, lines):
+def wordless_section(
+    report: Json,
+    a: argparse.Namespace,
+    test: Sequence[Stream],
+    noise_streams: Sequence[tuple[float | None, Sequence[Stream], Sequence[Json]]],
+    vosk_rows: Sequence[Json] | None,
+    variants: Sequence[tuple[float, Sequence[Stream], Sequence[Json]]],
+    lines: list[str],
+) -> None:
     """The states page's half of the wordless coverage: a word standing where the stream says
     nothing was said, read off the runtime's own readings rather than off the audio, by the length
     of the pause or finish it stood in and by the floor the gap was built at.
@@ -1894,7 +2009,7 @@ def wordless_section(report, a, test, noise_streams, vosk_rows, variants, lines)
         "has finished saying since the last final, so a word still held is not one. Rates are per "
         "minute of the gaps themselves.",
     ]
-    out = {}
+    out: Json = {}
 
     lines += ["", "### By the length of the pause or the finish", ""]
     lines.append(f"The page's own testing streams, gaps built at {GAP_FLOOR_DBFS:g} dBFS.")
@@ -1902,9 +2017,9 @@ def wordless_section(report, a, test, noise_streams, vosk_rows, variants, lines)
     built = census_set(test, vosk_rows, "all")
     for engine in ("vosk", "utterpy"):
         for key in sorted(built.get(engine, {}), key=lambda k: (k[0], GAP_BUCKETS.index(k[1]))):
-            c = built[engine][key]
-            lines.append(census_row(f"{key[0]}, {key[1]}", engine, c))
-            out.setdefault("built", {}).setdefault(engine, {})[f"{key[0]}/{key[1]}"] = dict(c)
+            cnt = built[engine][key]
+            lines.append(census_row(f"{key[0]}, {key[1]}", engine, cnt))
+            out.setdefault("built", {}).setdefault(engine, {})[f"{key[0]}/{key[1]}"] = dict(cnt)
 
     lines += ["", "### The recordings fed cold, by floor level", ""]
     lines.append(
@@ -1917,9 +2032,9 @@ def wordless_section(report, a, test, noise_streams, vosk_rows, variants, lines)
         for engine in ("vosk", "utterpy"):
             if engine not in got:
                 continue
-            c = census_totals(got[engine])
-            lines.append(census_row("digital silence" if level is None else f"{level:g} dBFS", engine, c))
-            out.setdefault("recordings", {}).setdefault(engine, {})[str(level)] = dict(c)
+            cnt = census_totals(got[engine])
+            lines.append(census_row("digital silence" if level is None else f"{level:g} dBFS", engine, cnt))
+            out.setdefault("recordings", {}).setdefault(engine, {})[str(level)] = dict(cnt)
 
     if variants:
         lines += ["", "### The finish gaps, by the floor they were built at", ""]
@@ -1933,11 +2048,11 @@ def wordless_section(report, a, test, noise_streams, vosk_rows, variants, lines)
             for engine in ("vosk", "utterpy"):
                 if engine not in got:
                     continue
-                c = census_totals(got[engine])
-                lines.append(census_row(f"{level:g} dBFS", engine, c))
-                out.setdefault("gap_floor", {}).setdefault(engine, {})[f"{level:g}"] = dict(c)
+                cnt = census_totals(got[engine])
+                lines.append(census_row(f"{level:g} dBFS", engine, cnt))
+                out.setdefault("gap_floor", {}).setdefault(engine, {})[f"{level:g}"] = dict(cnt)
 
-    pairs = []
+    pairs: list[tuple[bool, bool]] = []
     for s in test:
         spans = wordless_spans(s, "all")
         rank0, readings = utter_rank0(s)
@@ -1976,7 +2091,7 @@ def wordless_section(report, a, test, noise_streams, vosk_rows, variants, lines)
     report["wordless"] = out
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--model", required=True)
@@ -2086,13 +2201,13 @@ def main():
     }
 
     # A1: per state precision and recall at each horizon.
-    a1 = {}
-    groups = {}
+    a1: dict[str, dict[str, dict[str, Json]]] = {}
+    groups: dict[tuple[str, int], dict[tuple[str, int], Counts]] = {}
     for w_ms in HORIZONS:
-        per_rule = {}
+        per_rule: dict[str, Counts] = {}
         for rule in ("R0", "R1"):
             total = empty_counts()
-            g = {}
+            g: dict[tuple[str, int], Counts] = {}
             for s in test:
                 for utt, c in group_counts(s, pa[rule][s["key"]], w_ms).items():
                     add_counts(total, c)
@@ -2117,8 +2232,8 @@ def main():
     report["A1_bootstrap"] = boot
 
     # A2: lead time per true transition, and McNemar at the horizon's tolerance.
-    a2 = {}
-    handled = {}
+    a2: dict[str, dict[str, Any]] = {}
+    handled: dict[str, dict[str, list[bool]]] = {}
     for rule in ("R0", "R1"):
         lt, hd = lead_times(test, pa[rule], HORIZONS[0] * SAMPLES_PER_MS)
         handled[rule] = hd
@@ -2350,7 +2465,7 @@ def main():
     report["C5_onset"] = onset_study(val, test, noise_streams)
     variants = {}
     for spec in [x for x in a.pause_variants.split(",") if x.strip()]:
-        lo, hi = (float(x) for x in spec.split("-"))
+        lo_ms, hi_ms = (float(x) for x in spec.split("-"))
         sc.note(f"pause variant {spec} ms")
         vstreams, _ = decode_split(
             eng,
@@ -2358,7 +2473,7 @@ def main():
             "testing",
             a,
             gaps_paths,
-            pause_ms=(lo, hi),
+            pause_ms=(lo_ms, hi_ms),
             word_target=a.variant_words,
             tag=f"pause{spec}",
             parity=parity,
@@ -2384,7 +2499,7 @@ def main():
     if floors:
         sc.note("wordless census: the recordings at each floor")
         noise_sets = [(level, *wordless_recordings(eng, vosk_eng, gaps_paths, a, level)) for level in floors]
-        variants = [(GAP_FLOOR_DBFS, test, vosk["rows"])]
+        gap_floors: list[tuple[float, Sequence[Stream], Sequence[Json]]] = [(GAP_FLOOR_DBFS, test, vosk["rows"])]
         for spec in [x for x in a.wordless_gap_floors.split(",") if x.strip()]:
             level = float(spec)
             sc.note(f"wordless census: streams with the gaps at {level:g} dBFS")
@@ -2399,9 +2514,9 @@ def main():
                 tag=f"gapfloor{level:g}",
                 gap_floor=level,
             )
-            variants.append((level, vs, vk["rows"]))
-        variants.sort(key=lambda x: x[0])
-        wordless_section(report, a, test, noise_sets, vosk["rows"], variants, lines)
+            gap_floors.append((level, vs, vk["rows"]))
+        gap_floors.sort(key=lambda x: x[0])
+        wordless_section(report, a, test, noise_sets, vosk["rows"], gap_floors, lines)
     reading = out.with_suffix(".reading.md")
     if reading.exists():
         lines += [reading.read_text().strip(), ""]
@@ -2410,23 +2525,25 @@ def main():
     sc.note(f"wrote {out.with_suffix('.md')}, {out.with_suffix('.json')}")
 
 
-def vosk_baseline(streams, vosk_rows, lookback_ms, forward_ms=1500):
+def vosk_baseline(
+    streams: Sequence[Stream], vosk_rows: Sequence[Json], lookback_ms: float, forward_ms: float = 1500
+) -> Json:
     """The stock wheel over the same streams: when a word first leads its partial, whether it is
     the right one, and how many finals the same audio produces. It has no readings, so it has no
     motion, and the same window bounds the search."""
     by_key = {r["key"]: r for r in vosk_rows}
     back = lookback_ms * SAMPLES_PER_MS
     fwd = forward_ms * SAMPLES_PER_MS
-    lat = []
-    label_lat = []
+    lat: list[float] = []
+    label_lat: list[float] = []
     correct = 0
     n = 0
     for s_ in streams:
         r = by_key.get(s_["key"])
         if r is None:
             continue
-        grew = []
-        led = []
+        grew: list[tuple[int, str]] = []
+        led: list[tuple[int, str]] = []
         prev = 0
         for b in r["blocks"]:
             if b["final"]:
@@ -2463,11 +2580,11 @@ def vosk_baseline(streams, vosk_rows, lookback_ms, forward_ms=1500):
     )
 
 
-def partial_words_check(eng, pcm, block_ms):
+def partial_words_check(eng: sc.Engine, pcm: bytes, block_ms: int) -> Json:
     """How many blocks carry partial text with partial words on and off. The stock wheel drops
     the in-progress word from its partial when words are requested, so its word times cannot be
     read on this audio at all; utter's partial is unchanged either way."""
-    out = {}
+    out: Json = {}
     for words_on in (False, True):
         blocks, _ = run_stream_text(eng, pcm, block_ms, words_on)
         out["on" if words_on else "off"] = dict(blocks=len(blocks), with_text=sum(1 for b in blocks if b["words"]))
@@ -2477,7 +2594,7 @@ def partial_words_check(eng, pcm, block_ms):
 # --- the page ---------------------------------------------------------------------------------
 
 
-def momentum_section(r, chosen):
+def momentum_section(r: Json, chosen: Json) -> list[str]:
     """What a reading's motion does over many advances, which a one-second clip cannot show."""
     o = r["C5_onset"]
     L = [
@@ -2693,7 +2810,7 @@ def momentum_section(r, chosen):
     return L
 
 
-def _bound_word_cost(rows):
+def _bound_word_cost(rows: Sequence[tuple[str, Json]]) -> str:
     """What the bound rows cost in words, read off the rows themselves so the sentence cannot
     drift from the table above it."""
     base = rows[0][1]
@@ -2709,7 +2826,7 @@ def _bound_word_cost(rows):
     )
 
 
-def runtime_finals_section(r, a):
+def runtime_finals_section(r: Json, a: argparse.Namespace) -> list[str]:
     """The finals the runtime emitted over the stretches the curve above measures, for this run's
     engine and for any bound run passed beside it."""
     rows = [(a.engine, r["A5"])] + sorted(r.get("A5_bound", {}).items())
@@ -2782,7 +2899,7 @@ def runtime_finals_section(r, a):
     return L
 
 
-def page(r, a, chosen):
+def page(r: Json, a: argparse.Namespace, chosen: Json) -> list[str]:
     p = r["provenance"]
     sz = r["sizes"]["testing"]
     vz = r["sizes"]["validation"]

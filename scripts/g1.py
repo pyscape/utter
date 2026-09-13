@@ -22,6 +22,7 @@ that produces the reference is recorded in docs/gates/g1-front-end.md.
 """
 
 import argparse
+import os
 import struct
 import subprocess
 import tempfile
@@ -29,9 +30,10 @@ import wave
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 
 
-def knf_mfcc(conf_text, samples):
+def knf_mfcc(conf_text: str, samples: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     # Imported here so the i-vector half runs on a machine without it.
     import kaldi_native_fbank as knf
 
@@ -61,15 +63,17 @@ def knf_mfcc(conf_text, samples):
     return np.array([m.get_frame(i) for i in range(n)], dtype=np.float32)
 
 
-def read_matrix_dump(path):
+def read_matrix_dump(path: str | os.PathLike[str]) -> npt.NDArray[np.float32]:
     data = Path(path).read_bytes()
     r, c = struct.unpack_from("<ii", data, 0)
     return np.frombuffer(data[8:], dtype="<f4").reshape(r, c)
 
 
-def read_kaldi_text_ark(path):
+def read_kaldi_text_ark(path: str) -> dict[str, npt.NDArray[np.float32]]:
     """The matrices in a `ark,t:` file, by utterance key."""
-    out, key, rows = {}, None, []
+    out: dict[str, npt.NDArray[np.float32]] = {}
+    key: str | None = None
+    rows: list[list[float]] = []
     for line in Path(path).read_text().splitlines():
         line = line.strip()
         if not line:
@@ -90,9 +94,9 @@ def read_kaldi_text_ark(path):
     return out
 
 
-def ivector_half(args):
+def ivector_half(args: argparse.Namespace) -> None:
     ref = read_kaldi_text_ark(args.kaldi)
-    rows = []
+    rows: list[tuple[str, int, int, float, float]] = []
     worst = 0.0
     for wav_path in args.wavs:
         stem = Path(wav_path).stem
@@ -118,7 +122,7 @@ def ivector_half(args):
     print(f"\nworst relative difference {worst:.2e} [G1 asks 1e-2]")
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--conf", help="MODEL/conf/mfcc.conf, for the MFCC half")
     ap.add_argument("--dump", help="path to the mfcc_dump binary")
@@ -137,7 +141,7 @@ def main():
         ap.error("the MFCC half needs --conf and --dump")
     conf = Path(args.conf).read_text()
     worst = 0.0
-    rows = []
+    rows: list[tuple[str, int, int, float, float]] = []
     for wav_path in args.wavs:
         with wave.open(wav_path) as w:
             pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
