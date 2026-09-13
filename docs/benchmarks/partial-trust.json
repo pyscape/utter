@@ -1,5 +1,5 @@
 {
-  "run": "2026-09-13 00:13:39Z",
+  "run": "2026-09-13 00:27:05Z",
   "split": "testing",
   "block_ms": 40,
   "alternatives": 5,
@@ -7,10 +7,10 @@
   "fit_on": "the validation split",
   "fit_clips": 8322,
   "provenance": {
-    "date": "2026-09-13 00:06:59Z",
-    "utter_revision": "03402da",
+    "date": "2026-09-13 00:21:31Z",
+    "utter_revision": "71e57bf",
     "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
-    "wheel_revision": "03402daff5b5711a6b8207da9404cb24e9b34c2a",
+    "wheel_revision": "71e57bf779540c3eb4c11e05bc38644206c2789c",
     "wheel_matches_head": true,
     "engines": {
       "utterpy": "0.0.1"
@@ -28,7 +28,7 @@
     "out": "docs/benchmarks/partial-trust.md",
     "clips": null,
     "from_clips": "docs/benchmarks/partial-trust.clips.jsonl",
-    "fit_clips": "/tmp/claude-1000/-home-jared-Repos-utter/e2d7397f-9480-4f46-afc9-99cc2f81013b/scratchpad/final/validation.clips.jsonl",
+    "fit_clips": "/tmp/claude-1000/-home-jared-Repos-utter/e2d7397f-9480-4f46-afc9-99cc2f81013b/scratchpad/f2/validation.clips.jsonl",
     "json": "docs/benchmarks/partial-trust.json",
     "split": "testing",
     "census": "docs/benchmarks/partial-trust.census.json",
