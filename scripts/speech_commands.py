@@ -345,6 +345,10 @@ def holm(pvalues):
     return out
 
 
+# Rooted pathspecs: git resolves a bare one against the caller's directory, which here is scripts.
+SOURCE_PATHS = (":/src", ":/scripts", ":/build.rs", ":/Cargo.toml", ":/Cargo.lock")
+
+
 def provenance(args, modules):
     """What a reader needs to judge the figures: the build, the engines, the machine."""
 
@@ -356,7 +360,11 @@ def provenance(args, modules):
 
     here = Path(__file__).resolve().parent
     rev = run(["git", "-C", str(here), "rev-parse", "--short", "HEAD"])
-    dirty = run(["git", "-C", str(here), "status", "--porcelain"])
+    # A page is written under docs/benchmarks by this script, so a run that writes one page and
+    # then decodes the next finds the checkout dirty by its own output. Only the sources the
+    # runtime and the harness are built from bear on what a figure means.
+    dirty = run(["git", "-C", str(here), "status", "--porcelain", "--"] + list(SOURCE_PATHS))
+    docs_dirty = run(["git", "-C", str(here), "status", "--porcelain", "--", ":/docs"])
     cpu = None
     try:
         for line in Path("/proc/cpuinfo").read_text().splitlines():
@@ -378,6 +386,8 @@ def provenance(args, modules):
     return dict(
         date=time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime()),
         utter_revision=head,
+        source_dirty=bool(dirty),
+        docs_dirty=bool(docs_dirty),
         wheel_path=wheel_path,
         wheel_revision=wheel_rev,
         wheel_matches_head=same_revision(wheel_rev, rev, bool(dirty)),
@@ -389,13 +399,13 @@ def provenance(args, modules):
     )
 
 
-def same_revision(wheel_rev, head, head_dirty):
-    """Whether the binding was built from the checkout as it stands. A dirty build never matches:
+def same_revision(wheel_rev, head, source_dirty):
+    """Whether the binding was built from the sources as they stand. A dirty build never matches:
     it was compiled from edits, and nothing names which."""
     if wheel_rev is None or head is None:
         return False
     built_dirty = wheel_rev.endswith("-dirty")
-    return wheel_rev.removesuffix("-dirty").startswith(head) and not built_dirty and not head_dirty
+    return wheel_rev.removesuffix("-dirty").startswith(head) and not built_dirty and not source_dirty
 
 
 def wheel_build():
@@ -425,9 +435,10 @@ def provenance_line(prov):
             f"binding {prov['wheel_path']}, which does not report the utter revision it was built "
             "from, so the revision above is the checkout's and not the runtime's"
         )
+    docs = " Pages under `docs` were modified at the time of the run." if prov.get("docs_dirty") else ""
     return (
         f"Run {prov['date']}, utter {prov['utter_revision']}, {engines}, model {prov['model']}, "
-        f"{prov['cpu']}, Python {prov['python']}. Decoded by the {wheel}."
+        f"{prov['cpu']}, Python {prov['python']}. Decoded by the {wheel}.{docs}"
     )
 
 
