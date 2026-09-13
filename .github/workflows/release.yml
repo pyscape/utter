@@ -56,9 +56,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
-      - uses: rust-lang/crates-io-auth-action@v1.0.5
+      - name: Whether crates.io already has this version (the first release of a crate is
+          published by hand, before a trusted publisher can be attached to it)
+        id: registry
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -A "utter release workflow" \
+            "https://crates.io/api/v1/crates/utter/${GITHUB_REF_NAME#v}")
+          echo "published=$([ "$code" = 200 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.registry.outputs.published != 'true'
+        uses: rust-lang/crates-io-auth-action@v1.0.5
         id: auth
-      - run: cargo publish --locked
+      - if: steps.registry.outputs.published != 'true'
+        run: cargo publish --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
       - uses: actions/download-artifact@v7
