@@ -1477,13 +1477,23 @@ def split_clips(data, name, rng):
 
 
 def decode_split(
-    eng, data, split, args, gaps_paths, vosk_eng=None, pause_ms=PAUSE_MS, word_target=None, tag=None, parity=None
+    eng,
+    data,
+    split,
+    args,
+    gaps_paths,
+    vosk_eng=None,
+    pause_ms=PAUSE_MS,
+    word_target=None,
+    tag=None,
+    parity=None,
+    gap_floor=GAP_FLOOR_DBFS,
 ):
     """Build and decode this split's streams, one at a time, keeping the truth and the series but
     not the audio."""
     rng = random.Random(args.seed + (0 if split == "validation" else 1))
     clips = split_clips(data, split, rng)
-    gaps = GapSource(gaps_paths)
+    gaps = GapSource(gaps_paths, gap_floor)
     streams = []
     n_words = 0
     want = args.words if word_target is None else word_target
@@ -1609,6 +1619,23 @@ def recordings_pass(eng, paths, args, bound, sil_delta, ext_delta):
     return out, pa0, pa1
 
 
+def wordless_recordings(eng, vosk_eng, paths, args, level):
+    """The recordings alone at one floor level, through both engines. `level` None is digital
+    silence of the same length, which the floor's percentile treats apart from a room."""
+    out = []
+    rows = []
+    for p in paths:
+        pcm = sc.read_pcm(p)
+        pcm = bytes(len(pcm)) if level is None else sc.scaled_to_floor(pcm, level)
+        states, blocks, finals = run_stream(eng, pcm, args.block_ms, args.alternatives)
+        key = f"noise/{p.name}"
+        out.append(dict(key=key, words=[], gaps=[], samples=len(pcm) // 2, states=states, blocks=blocks, finals=finals))
+        if vosk_eng is not None:
+            vb, vf = run_stream_text(vosk_eng, pcm, args.block_ms)
+            rows.append(dict(key=key, blocks=vb, finals=vf))
+    return out, rows
+
+
 def write_streams(path, streams):
     with open(path, "w") as fh:
         for s in streams:
@@ -1633,6 +1660,275 @@ def write_streams(path, streams):
                 stable=[[b["fed"], b["word"], b["stable"]] for b in s["blocks"] if b["stable"]],
             )
             fh.write(json.dumps(row) + "\n")
+
+
+GAP_FLOOR_GRID = (-70.0, -60.0, -50.0, -40.0)
+GAP_LENGTH_EDGES = (200, 400, 600, 800, 2400, 2700)
+
+
+def spoken_before(stream, finals):
+    """How many of the stream's words have ended since the last final, per block and per final. The
+    finals are the deciding engine's own, since its history is what a final of its clears. A
+    word the partial still holds is not a phantom; a word beyond them is. A final is judged against
+    what was spoken before it closed, since closing is what clears the count."""
+    ends = sorted(w["offset"] for w in stream["words"])
+    marks = [f["fed"] for f in finals]
+
+    def ended_by(fed):
+        return bisect.bisect_right(ends, fed)
+
+    per_block = []
+    base = 0
+    fi = 0
+    for b in stream["blocks"]:
+        while fi < len(marks) and marks[fi] <= b["fed"]:
+            base = ended_by(marks[fi])
+            fi += 1
+        per_block.append(ended_by(b["fed"]) - base)
+    per_final = []
+    base = 0
+    for m in marks:
+        per_final.append(ended_by(m) - base)
+        base = ended_by(m)
+    return per_block, per_final
+
+
+def wordless_spans(stream, kind):
+    """The stretches a word would be a phantom in: a built stream's gaps, by kind, or the whole of
+    a recording fed cold."""
+    if not stream["gaps"]:
+        return [(0, stream["samples"], "cold", stream["samples"])] if kind in ("cold", "all") else []
+    out = []
+    for g in stream["gaps"]:
+        if kind not in ("all", g["kind"]):
+            continue
+        out.append((g["pos"], g["pos"] + g["samples"], g["kind"], g["samples"]))
+    return out
+
+
+GAP_BUCKETS = [f"under {e} ms" for e in GAP_LENGTH_EDGES] + [f"{GAP_LENGTH_EDGES[-1]} ms or more"]
+
+
+def gap_bucket(samples):
+    ms = samples / SAMPLES_PER_MS
+    for i, e in enumerate(GAP_LENGTH_EDGES):
+        if ms < e:
+            return GAP_BUCKETS[i]
+    return GAP_BUCKETS[-1]
+
+
+def census_words(stream, spans, rank0, readings, finals):
+    """One stream's census over `spans`, in one walk of the blocks. `rank0(i)` is the rank-0 word
+    list at block i, `readings(i)` the rivals there or None where the engine offers none. Keyed by
+    the span's kind and length, so a rate can be read against the span's own clock."""
+    spoken, spoken_at_final = spoken_before(stream, finals)
+    order = sorted(spans, key=lambda x: x[0])
+    starts = [x[0] for x in order]
+    rows = defaultdict(Counter)
+    for _, _, kind, samples in order:
+        r = rows[(kind, gap_bucket(samples))]
+        r["spans"] += 1
+        r["samples"] += samples
+
+    def key_at(fed):
+        j = bisect.bisect_left(starts, fed) - 1
+        if j < 0:
+            return None
+        s0, e0, kind, samples = order[j]
+        return (kind, gap_bucket(samples)) if s0 < fed <= e0 else None
+
+    run = 0
+    last = None
+    for i, b in enumerate(stream["blocks"]):
+        key = key_at(b["fed"])
+        if key is None:
+            run, last = 0, None
+            continue
+        if key != last:
+            run, last = 0, key
+        r = rows[key]
+        r["blocks"] += 1
+        if readings is not None:
+            r["with_rivals"] += 1
+        said = spoken[i]
+        if len(rank0(i)) <= said:
+            run = 0
+            continue
+        r["word_blocks"] += 1
+        run += 1
+        r["longest_run"] = max(r["longest_run"], run)
+        rv = readings(i) if readings is not None else None
+        if rv is not None and any(len(w) > said for w in rv[1:]):
+            r["rival_blocks"] += 1
+    for j, f in enumerate(finals):
+        key = key_at(f["fed"])
+        if key is not None and len(word_list(f["text"])) > spoken_at_final[j]:
+            rows[key]["phantom_finals"] += 1
+    return rows
+
+
+def utter_rank0(stream):
+    def rank0(i):
+        adv = stream["blocks"][i]["adv"]
+        return stream["states"][adv]["words0"] if adv is not None else []
+
+    def readings(i):
+        adv = stream["blocks"][i]["adv"]
+        if adv is None:
+            return []
+        return [word_list(t) for t, _ in stream["states"][adv]["readings"]]
+
+    return rank0, readings
+
+
+def vosk_rank0(row):
+    return (lambda i: row["blocks"][i]["words"] if i < len(row["blocks"]) else []), None
+
+
+def census_totals(rows):
+    out = Counter()
+    for v in rows.values():
+        for k, n in v.items():
+            if k == "longest_run":
+                out[k] = max(out[k], n)
+            else:
+                out[k] += n
+    return out
+
+
+def census_row(label, engine, c):
+    minutes = c["samples"] / RATE / 60.0
+    rival = f"{c['rival_blocks'] / minutes:.2f}" if c.get("with_rivals") else "no alternatives"
+    return (
+        f"| {label} | {engine} | {minutes:.1f} | {c['blocks']} | "
+        f"{c['word_blocks'] / minutes if minutes else float('nan'):.2f} | {rival} | "
+        f"{c['phantom_finals'] / minutes if minutes else float('nan'):.2f} | {c['longest_run']} |"
+    )
+
+
+def census_header(lines, what):
+    lines.append("")
+    lines.append(
+        f"| {what} | engine | non-speech minutes | blocks | word at rank 0 /min | "
+        "word among the rivals /min | finals with a word /min | longest run of blocks |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
+
+
+def census_set(streams, vosk_rows, kind):
+    """Both engines over one set of streams, keyed by span kind and length bucket."""
+    out = {}
+    by_key = {r["key"]: r for r in (vosk_rows or [])}
+    for s in streams:
+        spans = wordless_spans(s, kind)
+        if not spans:
+            continue
+        rank0, readings = utter_rank0(s)
+        for key, c in census_words(s, spans, rank0, readings, s["finals"]).items():
+            out.setdefault("utterpy", {}).setdefault(key, Counter()).update(c)
+        row = by_key.get(s["key"])
+        if row is not None:
+            vr, _ = vosk_rank0(row)
+            for key, c in census_words(s, spans, vr, None, row["finals"]).items():
+                out.setdefault("vosk", {}).setdefault(key, Counter()).update(c)
+    return out
+
+
+def wordless_section(report, a, test, noise_streams, vosk_rows, variants, lines):
+    """The states page's half of the wordless coverage: a word standing where the stream says
+    nothing was said, read off the runtime's own readings rather than off the audio, by the length
+    of the pause or finish it stood in and by the floor the gap was built at.
+    `[[rr:TD-8#Measurements count a word whose own span carries no speech]]`"""
+    lines += [
+        "",
+        "## Words in the stream's own silences",
+        "",
+        "The census of `[[rr:Words on wordless audio]]` read off the built streams instead of the "
+        "recordings: every gap between words and after the last one, and the recordings fed cold "
+        "beside them. A word at rank 0 counts when the partial holds more words than the stream "
+        "has finished saying since the last final, so a word still held is not one. Rates are per "
+        "minute of the gaps themselves.",
+    ]
+    out = {}
+
+    lines += ["", "### By the length of the pause or the finish", ""]
+    lines.append(f"The page's own testing streams, gaps built at {GAP_FLOOR_DBFS:g} dBFS.")
+    census_header(lines, "gap")
+    built = census_set(test, vosk_rows, "all")
+    for engine in ("vosk", "utterpy"):
+        for key in sorted(built.get(engine, {}), key=lambda k: (k[0], GAP_BUCKETS.index(k[1]))):
+            c = built[engine][key]
+            lines.append(census_row(f"{key[0]}, {key[1]}", engine, c))
+            out.setdefault("built", {}).setdefault(engine, {})[f"{key[0]}/{key[1]}"] = dict(c)
+
+    lines += ["", "### The recordings fed cold, by floor level", ""]
+    lines.append(
+        "The same recordings the gaps are cut from, fed whole through one recognizer, scaled so "
+        "their floor sits at each level."
+    )
+    census_header(lines, "floor")
+    for level, streams, rows in noise_streams:
+        got = census_set(streams, rows, "cold")
+        for engine in ("vosk", "utterpy"):
+            if engine not in got:
+                continue
+            c = census_totals(got[engine])
+            lines.append(census_row("digital silence" if level is None else f"{level:g} dBFS", engine, c))
+            out.setdefault("recordings", {}).setdefault(engine, {})[str(level)] = dict(c)
+
+    if variants:
+        lines += ["", "### The finish gaps, by the floor they were built at", ""]
+        lines.append(
+            "Testing streams rebuilt with the gaps scaled to each floor, so the stretch after a "
+            "spoken word is measured at the level a new microphone would put it."
+        )
+        census_header(lines, "gap floor")
+        for level, streams, rows in variants:
+            got = census_set(streams, rows, "finish")
+            for engine in ("vosk", "utterpy"):
+                if engine not in got:
+                    continue
+                c = census_totals(got[engine])
+                lines.append(census_row(f"{level:g} dBFS", engine, c))
+                out.setdefault("gap_floor", {}).setdefault(engine, {})[f"{level:g}"] = dict(c)
+
+    pairs = []
+    for s in test:
+        spans = wordless_spans(s, "all")
+        rank0, readings = utter_rank0(s)
+        u = census_totals(census_words(s, spans, rank0, readings, s["finals"]))
+        row = {r["key"]: r for r in (vosk_rows or [])}.get(s["key"])
+        if row is None:
+            continue
+        vr, _ = vosk_rank0(row)
+        v = census_totals(census_words(s, spans, vr, None, row["finals"]))
+        pairs.append((u["word_blocks"] > 0, v["word_blocks"] > 0))
+    if pairs:
+        b = sum(1 for x, y in pairs if x and not y)
+        c = sum(1 for x, y in pairs if y and not x)
+        out["mcnemar_engines"] = dict(b=b, c=c, p=sc.mcnemar(b, c))
+        lines += [
+            "",
+            f"Paired over the {len(pairs)} testing streams, a stream carrying any word at rank 0 in "
+            f"a gap: utterpy only {b}, vosk only {c}, exact two-sided p = {sc.mcnemar(b, c):.3g}.",
+        ]
+    lines += [
+        "",
+        "Three things to read off these tables. The rate is not flat across a gap's length: it is "
+        "highest in the short pauses, where the decoder is still inside the utterance and no "
+        "endpoint has fired, and it falls as the gap lengthens and the rules close the stretch, "
+        "which is the mechanism `[[rr:TD-8#A word on a quiet block was spoken and is reported]]` "
+        "describes rather than a second one. The floor the gap is built at moves the finals and "
+        "barely moves rank 0, so a host that gates on level is gating the right half. And the two "
+        "engines are read on the same blocks here, so any cell where they differ is a one-way "
+        "excess and is reported as such; the paired test over streams is the test of it.",
+        "",
+        "The gap-floor table's own rows are not one sample: the page's own streams carry the whole "
+        "testing split and each rebuilt set carries fewer words, so read the rates and not the "
+        "block counts across it.",
+        "",
+    ]
+    report["wordless"] = out
 
 
 def main():
@@ -1661,6 +1957,17 @@ def main():
         help="extra testing streams built with these pause ranges in ms, for the onset rule alone; empty to skip",
     )
     ap.add_argument("--variant-words", type=int, default=600, help="words per pause-variant stream set")
+    ap.add_argument(
+        "--wordless-floors",
+        default="silence,-70,-60,-50,-40",
+        help="floor levels the recordings are scaled to for the wordless census, empty to skip it",
+    )
+    ap.add_argument(
+        "--wordless-gap-floors",
+        default="-70,-60,-40",
+        help="extra testing streams built with the gaps at these floors, beside the page's own; empty to skip",
+    )
+    ap.add_argument("--wordless-words", type=int, default=600, help="words per gap-floor variant stream set")
     ap.add_argument("--no-streams", action="store_true", help="skip the per-stream JSON lines")
     ap.add_argument(
         "--bound-runs",
@@ -2019,6 +2326,28 @@ def main():
     if not a.no_streams:
         write_streams(out.with_suffix(".streams.jsonl"), test + noise_streams)
     lines = page(report, a, chosen)
+    floors = [None if v.strip() == "silence" else float(v) for v in a.wordless_floors.split(",") if v.strip()]
+    if floors:
+        sc.note("wordless census: the recordings at each floor")
+        noise_sets = [(level, *wordless_recordings(eng, vosk_eng, gaps_paths, a, level)) for level in floors]
+        variants = [(GAP_FLOOR_DBFS, test, vosk["rows"])]
+        for spec in [x for x in a.wordless_gap_floors.split(",") if x.strip()]:
+            level = float(spec)
+            sc.note(f"wordless census: streams with the gaps at {level:g} dBFS")
+            vs, vk = decode_split(
+                eng,
+                data,
+                "testing",
+                a,
+                gaps_paths,
+                vosk_eng,
+                word_target=a.wordless_words,
+                tag=f"gapfloor{level:g}",
+                gap_floor=level,
+            )
+            variants.append((level, vs, vk["rows"]))
+        variants.sort(key=lambda x: x[0])
+        wordless_section(report, a, test, noise_sets, vosk["rows"], variants, lines)
     reading = out.with_suffix(".reading.md")
     if reading.exists():
         lines += [reading.read_text().strip(), ""]
