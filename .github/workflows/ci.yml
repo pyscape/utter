@@ -97,6 +97,20 @@ jobs:
             || compgen -G "target/release/*utter*.dylib"
           test -f include/utter.h
 
+  targets:
+    # Platforms nothing ships for yet: the library keeps compiling for them, so a consumer
+    # that needs one starts from a build that passes rather than a port.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - run: |
+          for target in x86_64-unknown-linux-musl aarch64-linux-android aarch64-apple-ios \
+              wasm32-wasip1 x86_64-pc-windows-gnu x86_64-unknown-freebsd; do
+            rustup target add "$target"
+            cargo check --release --lib --target "$target"
+          done
+
   miri:
     # The unit tests under Miri: the raw-pointer code in the C API and the kernels, checked for
     # aliasing and bounds. Feature detection reports no AVX2 under Miri, so the portable kernels
