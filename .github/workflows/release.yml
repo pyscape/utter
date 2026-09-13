@@ -124,6 +124,7 @@ jobs:
     permissions:
       id-token: write
       contents: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install
@@ -145,6 +146,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Provenance for every archive, verifiable with `gh attestation verify`
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f  # v3.2.0
+        with:
+          subject-path: dist/*
       - name: GitHub release with the shared libraries and header attached
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
