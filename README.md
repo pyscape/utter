@@ -6,6 +6,44 @@ every block, the distinct hypotheses alive in the search beam, word
 times, runtime word-list grammars, and Kaldi endpointing. No C
 toolchain, no Docker, no cloud.
 
+## A faster end of speech, if you ask for it
+
+Kaldi's endpoint rules wait for the trailing silence after a word to
+reach their own bounds, half a second at the earliest and longer while
+the utterance is short, so a final lands a median 870 ms after the
+word's energy ends. utter keeps those rules for parity and adds one
+bound of the host's beside them, off by default: a final once the
+trailing silence reaches the milliseconds you name, and, if you give a
+margin, no final while a reading that extends the partial by a further
+word is within that many nats of the leader. The margin exists because
+the silence clock cannot see a word beginning: the next word's label is
+not on the best path while the pause before it still counts, but the
+beam already holds that word as a rival, and the veto reads it
+`[[rr:TD-8#A host may add one endpoint bound of its own, off by default]]`.
+
+```rust
+rec.set_endpoint_bound(300.0, 8.0);   // ms of trailing silence, veto margin in nats
+```
+
+Python: `rec.SetEndpointBound(300, 8)`; C: `utter_recognizer_set_endpoint_bound`.
+
+Measured on the runtime's own finals with the bound at 300 ms: every
+finish arrives about 200 ms sooner, median 866 to 660 ms and p90 1001
+to 799 ms on the built streams and 870 to 660 ms on single-word clips;
+the same finishes are called, 732 of 750; no word is lost or split on
+800 single-word clips and three fewer are lost on the streams. The
+cost is pauses inside an utterance taken for its end: 64.6% of built
+pauses under the stock rules, 82.9% under the bound, and the added
+share is largest, 23 to 28 points, on pauses shorter than the half
+second the model's own rule waits. The 8 nat veto gives back a few
+points of that for 20 ms of latency
+`[[rr:The same stretches, from the finals the runtime emitted]]`
+`[[rr:Endpoint latency]]`. The pauses there are built uniform from
+100 to 800 ms, so the mistake rate is a property of that distribution;
+on real speech it depends on how your speakers pause, and a host whose
+utterances carry several words should read the states page's
+pause-length table before choosing a bound.
+
 ## Status
 
 Pre-alpha, and not published anywhere yet. The streaming path is built
