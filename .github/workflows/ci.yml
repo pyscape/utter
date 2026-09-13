@@ -17,7 +17,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: The toolchain rust-toolchain.toml pins, with its components
         run: rustup toolchain install
       - name: The crate builds on the rust-version the manifest promises
@@ -27,23 +27,25 @@ jobs:
           cargo "+$msrv" check --all-targets
       - run: cargo fmt --check
       - run: cargo clippy --release --all-targets -- -D warnings
-      - uses: EmbarkStudios/cargo-deny-action@v2.1.1
-      - uses: actions/setup-python@v7
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25  # v2.1.1
+      - name: A breaking change to the public API needs a version bump past the published crate
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239  # v2.9
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install ruff yamllint==1.38.0 mypy==2.3.1
+      - run: pip install --require-hashes -r .github/requirements/lint.txt
       - run: ruff check scripts && ruff format --check scripts
       - run: mypy
       - name: The C header compiles as C and C++
         run: |
           gcc -x c -std=c99 -fsyntax-only -Wall -Wextra -Werror include/utter.h
           g++ -x c++ -std=c++11 -fsyntax-only -Wall -Wextra -Werror include/utter.h
-      - uses: taiki-e/install-action@v2.87.12
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375  # v2.87.12
         with:
           tool: cbindgen@0.29.4
       - name: The C header declares exactly the exported functions, with their signatures
         run: python3 scripts/check_header.py
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         id: rr
         with:
           path: ~/.cargo/bin/rr
@@ -52,7 +54,7 @@ jobs:
         run: cargo install --git https://github.com/pyscape/ripref --rev "$RR_REV" --locked
       - name: Every rr marker resolves to one anchor
         run: rr index && rr verify
-      - uses: crate-ci/typos@v1.50.1
+      - uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b  # v1.50.1
       - run: yamllint --strict .
       - run: npx --yes markdownlint-cli2@0.23.2
       - run: |
@@ -72,9 +74,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # The arm runner is where the portable kernels run under test; every x86 host takes
+        # the AVX2 path at run time.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install
       - name: The crate has no dependencies
         shell: bash
@@ -102,7 +106,7 @@ jobs:
     # that needs one starts from a build that passes rather than a port.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install
       - run: |
           for target in x86_64-unknown-linux-musl aarch64-linux-android aarch64-apple-ios \
@@ -117,7 +121,7 @@ jobs:
     # run; the model tests skip without a model.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install nightly --profile minimal --component miri
       - run: cargo +nightly miri test --lib
 
@@ -126,9 +130,9 @@ jobs:
     # model tests together. The model zip is cached between runs.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install && rustup component add llvm-tools-preview
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         id: model
         with:
           path: models/vosk-model-small-en-us-0.15
@@ -140,19 +144,24 @@ jobs:
           curl -sfL -o models/model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
           unzip -q models/model.zip -d models
           rm models/model.zip
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375  # v2.87.12
+        with:
+          tool: cargo-llvm-cov
       - name: Tests with coverage
         env:
           UTTER_TEST_MODEL: ${{ github.workspace }}/models/vosk-model-small-en-us-0.15
         run: |
-          cargo llvm-cov --release --lcov --output-path lcov.info --fail-under-lines 60
+          # The four diagnostic tools need a corpus and a model directory each; stream, which
+          # the releases ship, is measured through its test.
+          cargo llvm-cov --release --lcov --output-path lcov.info --fail-under-lines 85 \
+            --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump)\.rs'
           cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: coverage-lcov
           path: lcov.info
       - name: Coveralls
-        uses: coverallsapp/github-action@v2
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329  # v2.3.8
         with:
           file: lcov.info
           format: lcov

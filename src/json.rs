@@ -139,4 +139,38 @@ mod tests {
         assert!(parse_string_array("[1]").is_err());
         assert_eq!(parse_string_array("[]").unwrap().len(), 0);
     }
+
+    #[test]
+    fn every_escape_and_every_malformed_shape() {
+        let v = parse_string_array(r#"["\/\b\f\n\r\t\\", "\u00e9", "\ud83d\ude00", "\ud83d"]"#)
+            .unwrap();
+        assert_eq!(v[0], "/\u{8}\u{c}\n\r\t\\");
+        assert_eq!(v[1], "é");
+        assert_eq!(v[2], "😀");
+        assert_eq!(v[3], "\u{FFFD}");
+        for bad in [
+            "",
+            "   ",
+            "yes",
+            "[\"a\"",
+            "[\"a",
+            "[\"a\\",
+            "[\"a\\q\"]",
+            "[\"\\u12\"]",
+            "[\"\\uzzzz\"]",
+            "[\"a\" \"b\"]",
+            "[\"a\"}",
+        ] {
+            assert!(parse_string_array(bad).is_err(), "{bad:?}");
+        }
+        // A trailing comma and anything after the closing bracket are accepted.
+        assert_eq!(parse_string_array("[\"a\",] x").unwrap(), vec!["a"]);
+    }
+
+    #[test]
+    fn writes_control_characters_as_escapes() {
+        let mut out = String::new();
+        write_string(&mut out, "a\"b\\c\nd\re\tf\u{1}g");
+        assert_eq!(out, r#""a\"b\\c\nd\re\tf\u0001g""#);
+    }
 }

@@ -329,8 +329,127 @@ fn c_abi_round_trip() {
         assert!(fin.contains("\"text\": \"no\"") || endpoints > 0, "{fin}");
         assert!(utter_recognizer_decoded_sample(rec) > 0);
         utter_recognizer_free(rec);
+
+        // Every setter, every result shape, and the unknown-word constructor on a second
+        // recognizer; the result strings stay readable until the next call.
+        let rec = utter_recognizer_new_grm_unk(model, 16000.0, grammar.as_ptr(), 1.5);
+        assert!(!rec.is_null());
+        utter_recognizer_set_words(rec, 1);
+        utter_recognizer_set_partial_words(rec, 1);
+        utter_recognizer_set_alternatives(rec, 3);
+        utter_recognizer_set_max_alternatives(rec, 2);
+        utter_recognizer_set_endpoint_bound(rec, 300.0, 8.0);
+        let samples = clip("yes");
+        for block in samples.chunks(640) {
+            utter_recognizer_accept_waveform_s(rec, block.as_ptr(), block.len() as i32);
+            let partial = CStr::from_ptr(utter_recognizer_partial_result(rec))
+                .to_str()
+                .unwrap();
+            assert!(partial.starts_with('{'), "{partial}");
+        }
+        let result = CStr::from_ptr(utter_recognizer_result(rec))
+            .to_str()
+            .unwrap();
+        assert!(result.contains("\"alternatives\""), "{result}");
+        utter_recognizer_reset(rec);
+        utter_recognizer_set_endpoint_bound(rec, 0.0, 0.0);
+        utter_recognizer_set_alternatives(rec, -1);
+        utter_recognizer_set_max_alternatives(rec, -1);
+        assert_eq!(
+            utter_recognizer_accept_waveform_s(rec, samples.as_ptr(), 0),
+            0
+        );
+        assert_eq!(
+            utter_recognizer_accept_waveform_s(rec, std::ptr::null(), 640),
+            0
+        );
+        utter_recognizer_free(rec);
+
+        // Null handles and bad inputs are answered, never dereferenced.
+        let null_rec: *mut UtterRecognizer = std::ptr::null_mut();
+        assert_eq!(
+            utter_recognizer_accept_waveform_s(null_rec, samples.as_ptr(), 640),
+            -1
+        );
+        assert!(utter_recognizer_partial_result(null_rec).is_null());
+        assert!(utter_recognizer_result(null_rec).is_null());
+        assert!(utter_recognizer_final_result(null_rec).is_null());
+        assert_eq!(utter_recognizer_decoded_sample(null_rec), 0);
+        utter_recognizer_set_words(null_rec, 1);
+        utter_recognizer_reset(null_rec);
+        utter_recognizer_free(null_rec);
+        let missing = CString::new("nosuchword").unwrap();
+        assert_eq!(utter_model_find_word(model, missing.as_ptr()), -1);
+        assert_eq!(utter_model_find_word(std::ptr::null(), yes.as_ptr()), -1);
+        let bad = CString::new("not json").unwrap();
+        assert!(utter_recognizer_new_grm(model, 16000.0, bad.as_ptr()).is_null());
+        assert!(utter_recognizer_new_grm(std::ptr::null(), 16000.0, grammar.as_ptr()).is_null());
         utter_model_free(model);
+        utter_model_free(std::ptr::null_mut());
+        let nowhere = CString::new("/nonexistent/model").unwrap();
+        assert!(utter_model_new(nowhere.as_ptr()).is_null());
+        assert!(utter_model_new(std::ptr::null()).is_null());
     }
+}
+
+/// The stream tool, as the gates and benchmarks run it: one JSON line per take, over named
+/// files and over a corpus directory, with the traces and counters on.
+#[test]
+fn stream_tool_writes_one_line_per_take() {
+    let Some(dir) = model_dir() else { return };
+    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data");
+    let out = std::env::temp_dir().join(format!("utter-stream-{}", std::process::id()));
+    std::fs::create_dir_all(&out).unwrap();
+    let grammar = out.join("grammar.json");
+    std::fs::write(&grammar, "[\"yes\", \"no\", \"seven\"]").unwrap();
+    let run = |args: &[&str]| {
+        let o = std::process::Command::new(env!("CARGO_BIN_EXE_stream"))
+            .arg("--model")
+            .arg(&dir)
+            .arg("--grammar")
+            .arg(&grammar)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8(o.stdout).unwrap()
+    };
+    let lines = run(&[
+        data.join("yes.wav").to_str().unwrap(),
+        data.join("no.wav").to_str().unwrap(),
+        "--alternatives",
+        "2",
+        "--partial-words",
+        "--census",
+        "--trace-groups",
+        "--endpoint-ms",
+        "300",
+        "--endpoint-veto",
+        "8",
+        "--threads",
+        "2",
+        "--dither",
+        "0",
+    ]);
+    let lines: Vec<&str> = lines.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("\"take\": \"yes\""), "{}", lines[0]);
+    assert!(lines[1].contains("\"census\""), "{}", lines[1]);
+    let corpus = run(&[
+        "--corpus",
+        data.to_str().unwrap(),
+        "--unknown-cost",
+        "1.0",
+        "--silence-weight",
+        "0.01",
+        "--block-ms",
+        "20",
+        "--threads",
+        "1",
+    ]);
+    assert_eq!(corpus.lines().count(), 3);
+    assert!(run(&["--help"]).contains("--corpus"));
+    std::fs::remove_dir_all(&out).unwrap();
 }
 
 #[test]

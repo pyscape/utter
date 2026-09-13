@@ -1,9 +1,14 @@
 # utter
 
 [![CI](https://github.com/pyscape/utter/actions/workflows/ci.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/ci.yml)
-[![docs](https://github.com/pyscape/utter/actions/workflows/docs.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/docs.yml)
+[![docs.rs](https://img.shields.io/docsrs/utter)](https://docs.rs/utter)
 [![crates.io](https://img.shields.io/crates/v/utter)](https://crates.io/crates/utter)
 [![PyPI](https://img.shields.io/pypi/v/utterpy)](https://pypi.org/project/utterpy/)
+[![MSRV](https://img.shields.io/crates/msrv/utter)](Cargo.toml)
+[![Coverage](https://img.shields.io/coverallsCoverage/github/pyscape/utter?branch=main)](https://coveralls.io/github/pyscape/utter?branch=main)
+[![CodeQL](https://github.com/pyscape/utter/actions/workflows/codeql.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/codeql.yml)
+[![Scorecard](https://api.scorecard.dev/projects/github.com/pyscape/utter/badge)](https://scorecard.dev/viewer/?uri=github.com/pyscape/utter)
+[![Dependencies](https://deps.rs/repo/github/pyscape/utter/status.svg)](https://deps.rs/repo/github/pyscape/utter)
 [![License: MIT AND Apache-2.0](https://img.shields.io/badge/license-MIT%20AND%20Apache--2.0-blue.svg)](LICENSE)
 
 A pure-Rust streaming speech recognizer for [Vosk](https://alphacephei.com/vosk/)
@@ -182,6 +187,17 @@ library on the loader's path at run time:
 ```bash
 cc host.c -I include -L target/release -lutter -o host
 LD_LIBRARY_PATH=target/release ./host
+```
+
+The [releases](https://github.com/pyscape/utter/releases) carry the
+library, the `stream` tool and the header for Linux, Windows and
+macOS. The macOS build is universal and signed ad hoc, not notarized;
+a copy that came through a browser is quarantined until
+`xattr -d com.apple.quarantine libutter.dylib` clears it. Every archive
+carries a build provenance attestation:
+
+```bash
+gh attestation verify utter-linux-x86_64.tar.gz -R pyscape/utter
 ```
 
 ## What a partial tells you
