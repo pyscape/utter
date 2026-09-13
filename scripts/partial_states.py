@@ -2639,6 +2639,22 @@ def momentum_section(r, chosen):
     return L
 
 
+def _bound_word_cost(rows):
+    """What the bound rows cost in words, read off the rows themselves so the sentence cannot
+    drift from the table above it."""
+    base = rows[0][1]
+    lost = [d["lost"] for _, d in rows[1:]]
+    twice = sorted({d["restarted"] for _, d in rows})
+    span = f"{min(lost)}" if min(lost) == max(lost) else f"{min(lost)} to {max(lost)}"
+    same = f"the same {twice[0]}" if len(twice) == 1 else f"{twice[0]} to {twice[-1]}"
+    return (
+        f"Below 300 ms the price is not in the words. Against the {base['lost']} of "
+        f"{base['words']} the stock rules leave no final covering, the bounds leave {span}, and "
+        f"the count two finals each decode is {same} at every row, the stock one included: what a "
+        "bound shorter than 300 ms gives up is finishes called, not words."
+    )
+
+
 def runtime_finals_section(r, a):
     """The finals the runtime emitted over the stretches the curve above measures, for this run's
     engine and for any bound run passed beside it."""
@@ -2678,6 +2694,16 @@ def runtime_finals_section(r, a):
         "finishes sooner than that without ending more pauses and without costing words, and the "
         "last two columns are where a bound firing inside a word shows up: a word no final "
         "covers, or one that two of them each decode.",
+        "",
+        _bound_word_cost(rows),
+        "",
+        "A bound shorter than one decoding advance does not thereby fire at the first advance "
+        "that sees silence. The rule is read once per advance, 240 ms at this block size, but the "
+        "trailing silence it compares against is counted in the model's own subsampled frames of "
+        "30 ms (`[[rr:endpoint_detected]]`), and at the first advance holding any trailing "
+        "silence that span already stands anywhere from 30 ms to a full advance: 100 ms fires at "
+        "that advance on the stretches where it does and one advance later on the rest, so it "
+        "neither coincides with every shorter bound nor with 300.",
         "",
         "By the length of the pause that was built, as the series table above gives it:",
         "",

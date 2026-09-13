@@ -1060,6 +1060,16 @@ def endpoint_pass(modules, model, clips, block_ms, grammar, lines, report, count
             "nats of the leader."
         )
         lines.append("")
+        lines.append(
+            "A bound shorter than one decoding advance does not thereby fire at the first advance "
+            "that sees silence. The rule is read once per advance, 240 ms at this block size, but "
+            "the trailing silence it compares against is counted in the model's own subsampled "
+            "frames of 30 ms (`[[rr:endpoint_detected]]`), and at the first advance holding any "
+            "trailing silence that span already stands anywhere from 30 ms to a full advance: "
+            "100 ms fires at that advance on the clips where it does and one advance later on the "
+            "rest, so it neither coincides with every shorter bound nor with 300."
+        )
+        lines.append("")
     lines.append("| engine | endpointed | after the clip's energy end p50 / p90 / p99 | never within the silence |")
     lines.append("|---|---|---|---|")
     out = {}
@@ -1176,6 +1186,21 @@ def bound_words_section(chosen, words_by_engine, bound, lines, report):
         f"Stock `{base}` was right on {out[bound[0]]['base_right']} of the {len(chosen)} under the "
         "same grammar and padding, which is the row every bound is paired against."
     )
+    lines.append("")
+    worst = max((o["differs"] for o in out.values()), default=0)
+    if worst:
+        lines.append(
+            f"The bounds differ from stock `{base}` on up to {worst} of the {len(chosen)}; a word "
+            "lost shows in *said nothing* and a word decoded twice in *said more words*."
+        )
+    else:
+        lines.append(
+            "Nothing here separates one bound from another or from the stock rules, the bounds "
+            "below 300 ms included: a clip carries one word and every bound fires in the silence "
+            "after it, so no word is lost, none is decoded twice, and the paired test has nothing "
+            "to weigh. Where a short bound can fall inside an utterance is the built streams, and "
+            "the states page measures it there."
+        )
     lines.append("")
     report["endpoint"]["bound_words"] = out
 
