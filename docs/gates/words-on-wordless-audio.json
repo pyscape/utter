@@ -372,13 +372,13 @@
   }
  },
  "provenance": {
-  "date": "2026-09-13 05:02:27Z",
-  "utter_revision": "01732af+dirty",
-  "source_dirty": true,
-  "docs_dirty": true,
+  "date": "2026-09-13 05:11:02Z",
+  "utter_revision": "ec82d1c",
+  "source_dirty": false,
+  "docs_dirty": false,
   "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
-  "wheel_revision": "d47027baeb022a173e093abe0e147c16f4f43cd9",
-  "wheel_matches_head": false,
+  "wheel_revision": "ec82d1cffd8f9ca50cfc6901693d44d36376e97c",
+  "wheel_matches_head": true,
   "engines": {
    "vosk": "0.3.45",
    "utterpy": "0.0.1"
@@ -388,7 +388,7 @@
   "python": "3.14.4",
   "block_ms": 40
  },
- "provenance_line": "Run 2026-09-13 05:02:27Z, utter 01732af+dirty, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter d47027baeb022a173e093abe0e147c16f4f43cd9, **not** the checkout as it stands (01732af+dirty). Pages under `docs` were modified at the time of the run.",
+ "provenance_line": "Run 2026-09-13 05:11:02Z, utter ec82d1c, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter ec82d1cffd8f9ca50cfc6901693d44d36376e97c, the checkout's HEAD.",
  "args": {
   "corpus": "the 2026-08-30 replay set",
   "model": "vosk-model-small-en-us-0.15",

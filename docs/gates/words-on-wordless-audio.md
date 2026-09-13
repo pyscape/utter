@@ -5,7 +5,7 @@ Ruling: `[[rr:TD-8#Measurements count a word whose own span carries no speech]]`
 ## What ran
 
 - Model: `vosk-model-small-en-us-0.15`; the first consumer's grammar, and the leading fractions of it.
-- Run 2026-09-13 05:02:27Z, utter 01732af+dirty, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter d47027baeb022a173e093abe0e147c16f4f43cd9, **not** the checkout as it stands (01732af+dirty). Pages under `docs` were modified at the time of the run.
+- Run 2026-09-13 05:11:02Z, utter ec82d1c, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter ec82d1cffd8f9ca50cfc6901693d44d36376e97c, the checkout's HEAD.
 - Corpus: the 2026-08-30 replay set, 33 takes, 28.6 minutes, of which 24.8 minutes are wordless blocks.
 - 40 ms blocks, both engines fed identically, scored by `scripts/wordless_census.py`.
 - A block is wordless by the audio alone: its last 400 ms within 8 dB of the floor at that moment, the floor computed host-side by the runtime's own definition so the stock wheel is judged by the same rule. Neither engine's reading enters the labelling, so both are scored on one set of blocks. The block counts still differ by a handful between the engines, which is the blocks each consumed as a final rather than a partial.
