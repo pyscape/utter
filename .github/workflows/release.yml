@@ -1,0 +1,72 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  libraries:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            lib: target/release/libutter.so
+            name: utter-linux-x86_64
+          - os: windows-latest
+            lib: target/release/utter.dll
+            name: utter-windows-x86_64
+          - os: macos-latest
+            lib: target/release/libutter.dylib
+            name: utter-macos-arm64
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - name: The tag is the manifest's version
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          test "v$version" = "${GITHUB_REF_NAME}"
+      - run: cargo test --release
+      - run: cargo build --release --lib
+      - shell: bash
+        run: |
+          mkdir "${{ matrix.name }}"
+          cp "${{ matrix.lib }}" include/utter.h LICENSE "${{ matrix.name }}/"
+          cp third_party/Vosk-Rust/LICENSE "${{ matrix.name }}/LICENSE-Apache-2.0"
+          cp third_party/Vosk-Rust/NOTICE "${{ matrix.name }}/NOTICE"
+          tar -czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+  publish:
+    # crates.io trusted publishing: the crate on crates.io names this repository and workflow as
+    # its publisher, and the action trades the job's OIDC token for a short-lived registry token.
+    needs: [libraries]
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: rust-lang/crates-io-auth-action@v1.0.5
+        id: auth
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: GitHub release with the shared libraries and header attached
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          files: dist/*
+          generate_release_notes: true

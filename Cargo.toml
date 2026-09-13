@@ -5,6 +5,28 @@ edition = "2021"
 license = "MIT AND Apache-2.0"
 description = "Pure-Rust streaming decoder for Vosk models: partials, alternatives, word intervals, endpointing"
 repository = "https://github.com/pyscape/utter"
+# The oldest toolchain CI checks the crate on; rust-toolchain.toml pins the one it builds with.
+rust-version = "1.93"
+keywords = ["speech", "recognition", "vosk", "kaldi", "streaming"]
+categories = ["multimedia::audio", "science"]
+# The published crate is the library, its tests and its C header; the decision records,
+# gate and benchmark pages and the scripts that write them stay in the repository.
+exclude = [
+  "/docs",
+  "/usecases",
+  "/scripts",
+  "/.github",
+  "/.agents",
+  "/.gitignore",
+  "/rust-toolchain.toml",
+  "/.markdownlint-cli2.jsonc",
+  "/.rr.toml",
+  "/.typos.toml",
+  "/.yamllint.yaml",
+  "/deny.toml",
+  "/mypy.ini",
+  "/ruff.toml",
+]
 
 [lib]
 crate-type = ["rlib", "cdylib"]
