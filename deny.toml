@@ -1,0 +1,12 @@
+[licenses]
+allow = ["MIT"]
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+# The crate has no dependencies; a name enters the allow list only with a decision record.
+deny = [{ crate = "*", reason = "no dependencies without a decision record" }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

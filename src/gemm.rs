@@ -69,20 +69,26 @@ mod avx2 {
     #[target_feature(enable = "avx2,fma")]
     pub unsafe fn dot4(a: &[f32], b0: &[f32], b1: &[f32], b2: &[f32], b3: &[f32]) -> [f32; 4] {
         let k = a.len();
+        assert!(b0.len() == k && b1.len() == k && b2.len() == k && b3.len() == k);
         let mut c0 = _mm256_setzero_ps();
         let mut c1 = _mm256_setzero_ps();
         let mut c2 = _mm256_setzero_ps();
         let mut c3 = _mm256_setzero_ps();
         let mut i = 0;
         while i + 8 <= k {
-            let x = _mm256_loadu_ps(a.as_ptr().add(i));
-            c0 = _mm256_fmadd_ps(x, _mm256_loadu_ps(b0.as_ptr().add(i)), c0);
-            c1 = _mm256_fmadd_ps(x, _mm256_loadu_ps(b1.as_ptr().add(i)), c1);
-            c2 = _mm256_fmadd_ps(x, _mm256_loadu_ps(b2.as_ptr().add(i)), c2);
-            c3 = _mm256_fmadd_ps(x, _mm256_loadu_ps(b3.as_ptr().add(i)), c3);
+            // SAFETY: every slice holds k floats and i + 8 <= k, so each unaligned load stays in
+            // bounds; the caller checked for AVX2 and FMA.
+            unsafe {
+                let x = _mm256_loadu_ps(a.as_ptr().add(i));
+                c0 = _mm256_fmadd_ps(x, _mm256_loadu_ps(b0.as_ptr().add(i)), c0);
+                c1 = _mm256_fmadd_ps(x, _mm256_loadu_ps(b1.as_ptr().add(i)), c1);
+                c2 = _mm256_fmadd_ps(x, _mm256_loadu_ps(b2.as_ptr().add(i)), c2);
+                c3 = _mm256_fmadd_ps(x, _mm256_loadu_ps(b3.as_ptr().add(i)), c3);
+            }
             i += 8;
         }
-        let mut out = [hsum(c0), hsum(c1), hsum(c2), hsum(c3)];
+        // SAFETY: the caller checked for AVX2 and FMA.
+        let mut out = unsafe { [hsum(c0), hsum(c1), hsum(c2), hsum(c3)] };
         while i < k {
             out[0] += a[i] * b0[i];
             out[1] += a[i] * b1[i];
@@ -116,25 +122,34 @@ mod avx2 {
     #[target_feature(enable = "avx2,fma")]
     pub unsafe fn dot4x3(a: [&[f32]; 4], b: [&[f32]; 3], out: &mut [[f32; 3]; 4]) {
         let k = a[0].len();
+        assert!(a.iter().all(|r| r.len() == k) && b.iter().all(|r| r.len() == k));
         let mut acc = [[_mm256_setzero_ps(); 3]; 4];
         let mut i = 0;
         while i + 8 <= k {
-            let b0 = _mm256_loadu_ps(b[0].as_ptr().add(i));
-            let b1 = _mm256_loadu_ps(b[1].as_ptr().add(i));
-            let b2 = _mm256_loadu_ps(b[2].as_ptr().add(i));
-            for r in 0..4 {
-                let x = _mm256_loadu_ps(a[r].as_ptr().add(i));
-                acc[r][0] = _mm256_fmadd_ps(x, b0, acc[r][0]);
-                acc[r][1] = _mm256_fmadd_ps(x, b1, acc[r][1]);
-                acc[r][2] = _mm256_fmadd_ps(x, b2, acc[r][2]);
+            // SAFETY: every slice holds k floats and i + 8 <= k, so each unaligned load stays in
+            // bounds; the caller checked for AVX2 and FMA.
+            unsafe {
+                let b0 = _mm256_loadu_ps(b[0].as_ptr().add(i));
+                let b1 = _mm256_loadu_ps(b[1].as_ptr().add(i));
+                let b2 = _mm256_loadu_ps(b[2].as_ptr().add(i));
+                for r in 0..4 {
+                    let x = _mm256_loadu_ps(a[r].as_ptr().add(i));
+                    acc[r][0] = _mm256_fmadd_ps(x, b0, acc[r][0]);
+                    acc[r][1] = _mm256_fmadd_ps(x, b1, acc[r][1]);
+                    acc[r][2] = _mm256_fmadd_ps(x, b2, acc[r][2]);
+                }
             }
             i += 8;
         }
         let mut st = [0.0f32; 24];
         let p = st.as_mut_ptr();
-        _mm256_storeu_ps(p, hsum4(acc[0][0], acc[0][1], acc[0][2], acc[1][0]));
-        _mm256_storeu_ps(p.add(8), hsum4(acc[1][1], acc[1][2], acc[2][0], acc[2][1]));
-        _mm256_storeu_ps(p.add(16), hsum4(acc[2][2], acc[3][0], acc[3][1], acc[3][2]));
+        // SAFETY: three unaligned stores of eight floats fill the 24-float scratch exactly; the
+        // caller checked for AVX2 and FMA.
+        unsafe {
+            _mm256_storeu_ps(p, hsum4(acc[0][0], acc[0][1], acc[0][2], acc[1][0]));
+            _mm256_storeu_ps(p.add(8), hsum4(acc[1][1], acc[1][2], acc[2][0], acc[2][1]));
+            _mm256_storeu_ps(p.add(16), hsum4(acc[2][2], acc[3][0], acc[3][1], acc[3][2]));
+        }
         const LANE: [usize; 4] = [0, 4, 1, 5];
         for r in 0..4 {
             for c in 0..3 {
@@ -155,17 +170,23 @@ mod avx2 {
     #[target_feature(enable = "avx2,fma")]
     pub unsafe fn dot1(a: &[f32], b: &[f32]) -> f32 {
         let k = a.len();
+        assert_eq!(b.len(), k);
         let mut c = _mm256_setzero_ps();
         let mut i = 0;
         while i + 8 <= k {
-            c = _mm256_fmadd_ps(
-                _mm256_loadu_ps(a.as_ptr().add(i)),
-                _mm256_loadu_ps(b.as_ptr().add(i)),
-                c,
-            );
+            // SAFETY: both slices hold k floats and i + 8 <= k, so each unaligned load stays in
+            // bounds; the caller checked for AVX2 and FMA.
+            unsafe {
+                c = _mm256_fmadd_ps(
+                    _mm256_loadu_ps(a.as_ptr().add(i)),
+                    _mm256_loadu_ps(b.as_ptr().add(i)),
+                    c,
+                );
+            }
             i += 8;
         }
-        let mut s = hsum(c);
+        // SAFETY: the caller checked for AVX2 and FMA.
+        let mut s = unsafe { hsum(c) };
         while i < k {
             s += a[i] * b[i];
             i += 1;
@@ -235,6 +256,7 @@ pub fn gemm_abt(
                         &b[(j + 2) * k..(j + 3) * k],
                     ];
                     let mut out = [[0.0f32; 3]; 4];
+                    // SAFETY: `avx` is the runtime AVX2 and FMA check; the rows are k long.
                     unsafe { avx2::dot4x3(ra, rb, &mut out) };
                     for r in 0..4 {
                         c[(i + r) * n + j..(i + r) * n + j + 3].copy_from_slice(&out[r]);
@@ -244,6 +266,7 @@ pub fn gemm_abt(
                 while j < j1 {
                     let br = &b[j * k..(j + 1) * k];
                     for r in 0..4 {
+                        // SAFETY: `avx` is the runtime AVX2 and FMA check; the rows are k long.
                         c[(i + r) * n + j] = unsafe { avx2::dot1(ra[r], br) };
                     }
                     j += 1;
@@ -263,6 +286,7 @@ pub fn gemm_abt(
                     &b[(j + 3) * k..(j + 4) * k],
                 );
                 let d = if avx {
+                    // SAFETY: `avx` is the runtime AVX2 and FMA check; the rows are k long.
                     #[cfg(target_arch = "x86_64")]
                     unsafe {
                         avx2::dot4(ar, b0, b1, b2, b3)
@@ -278,6 +302,7 @@ pub fn gemm_abt(
             while j < j1 {
                 let br = &b[j * k..(j + 1) * k];
                 cr[j] = if avx {
+                    // SAFETY: `avx` is the runtime AVX2 and FMA check; the rows are k long.
                     #[cfg(target_arch = "x86_64")]
                     unsafe {
                         avx2::dot1(ar, br)
@@ -330,6 +355,9 @@ mod tests {
     }
 
     #[test]
+    // Interpreted, the 24x1280x96 product runs for many minutes; the test below holds the same
+    // contract on the portable kernels, the only ones Miri reaches.
+    #[cfg_attr(miri, ignore)]
     fn accumulation_order_is_the_contract() {
         // shapes that exercise the 4x3 tile, its column tail, and a k that is not a multiple
         // of eight

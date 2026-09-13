@@ -50,7 +50,11 @@
 //! [guide]: https://github.com/pyscape/utter/blob/main/docs/guide/
 
 // Index loops over parallel slices read as the mathematics does; the lint's iterator forms do not.
-#![warn(missing_docs)]
+#![warn(
+    missing_docs,
+    unsafe_op_in_unsafe_fn,
+    clippy::undocumented_unsafe_blocks
+)]
 #![allow(
     clippy::needless_range_loop,
     clippy::too_many_arguments,

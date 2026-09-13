@@ -1,0 +1,8 @@
+[files]
+extend-exclude = ["target/", "third_party/", "models/", "tests/data/", ".ref-cache/"]
+
+[default.extend-words]
+# variable names in the benchmark scripts, and the hyphenated prefix in "mis-scored"
+strat = "strat"
+thr = "thr"
+mis = "mis"

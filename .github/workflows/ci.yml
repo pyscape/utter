@@ -9,32 +9,49 @@ on:
 permissions:
   contents: read
 
+env:
+  # ripref is unreleased; the pin is a commit on https://github.com/pyscape/ripref
+  RR_REV: 75de191ca06fd8e417da4c4a1257687a6404f475
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: The toolchain rust-toolchain.toml pins, with its components
+        run: rustup toolchain install
       - run: cargo fmt --check
       - run: cargo clippy --release --all-targets -- -D warnings
       - name: The crate docs build with no broken links
         run: cargo doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+      - uses: EmbarkStudios/cargo-deny-action@v2.1.1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install ruff yamllint==1.38.0 && ruff check scripts && ruff format --check scripts
-      - name: The C header compiles as C and C++ and declares exactly the exported symbols
+      - run: pip install ruff yamllint==1.38.0 mypy==2.3.1
+      - run: ruff check scripts && ruff format --check scripts
+      - run: mypy
+      - name: The C header compiles as C and C++
         run: |
           gcc -x c -std=c99 -fsyntax-only -Wall -Wextra -Werror include/utter.h
           g++ -x c++ -std=c++11 -fsyntax-only -Wall -Wextra -Werror include/utter.h
-          grep -oE '\butter_[a-z_]+\(' include/utter.h | tr -d '(' | sort -u > header.txt
-          grep -rhoE 'pub (unsafe )?extern "C" fn utter_[a-z_]+' src \
-            | grep -oE 'utter_[a-z_]+' | sort -u > exports.txt
-          diff header.txt exports.txt
+      - uses: taiki-e/install-action@v2.87.12
+        with:
+          tool: cbindgen@0.29.4
+      - name: The C header declares exactly the exported functions, with their signatures
+        run: python3 scripts/check_header.py
+      - uses: actions/cache@v6
+        id: rr
+        with:
+          path: ~/.cargo/bin/rr
+          key: rr-${{ env.RR_REV }}-${{ hashFiles('rust-toolchain.toml') }}
+      - if: steps.rr.outputs.cache-hit != 'true'
+        run: cargo install --git https://github.com/pyscape/ripref --rev "$RR_REV" --locked
+      - name: Every rr marker resolves to one anchor
+        run: rr index && rr verify
+      - uses: crate-ci/typos@v1.50.1
       - run: yamllint --strict .
       - run: npx --yes markdownlint-cli2@0.23.2
       - run: |
@@ -42,8 +59,11 @@ jobs:
           npx --yes @taplo/cli@0.7.0 fmt --check '**/*.toml' '.rr.toml'
       - name: Workflows lint, their shell through shellcheck
         run: |
-          curl -sfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash \
-            | bash -s -- 1.7.12
+          curl -sfL -o actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" \
+            | sha256sum --check
+          tar -xzf actionlint.tar.gz actionlint
           ./actionlint -color
 
   build:
@@ -54,7 +74,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - name: The crate has no dependencies
         shell: bash
         run: |
@@ -63,6 +83,8 @@ jobs:
         shell: bash
         run: |
           ! git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|(^|/)target/'
+      - name: Debug tests, with the overflow checks release drops
+        run: cargo test
       - run: cargo build --release --all-targets
       - run: cargo test --release
       - run: cargo build --release --lib
@@ -74,15 +96,23 @@ jobs:
             || compgen -G "target/release/*utter*.dylib"
           test -f include/utter.h
 
+  miri:
+    # The unit tests under Miri: the raw-pointer code in the C API and the kernels, checked for
+    # aliasing and bounds. Feature detection reports no AVX2 under Miri, so the portable kernels
+    # run; the model tests skip without a model.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install nightly --profile minimal --component miri
+      - run: cargo +nightly miri test --lib
+
   model-tests:
     # Integration tests against the stock small English model, and line coverage over unit and
     # model tests together. The model zip is cached between runs.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
+      - run: rustup toolchain install && rustup component add llvm-tools-preview
       - uses: actions/cache@v6
         id: model
         with:
