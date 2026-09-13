@@ -16,12 +16,21 @@ jobs:
           - os: ubuntu-latest
             lib: target/release/libutter.so
             name: utter-linux-x86_64
+          - os: ubuntu-24.04-arm
+            lib: target/release/libutter.so
+            name: utter-linux-aarch64
           - os: windows-latest
             lib: target/release/utter.dll
             name: utter-windows-x86_64
+          - os: windows-11-arm
+            lib: target/release/utter.dll
+            name: utter-windows-arm64
           - os: macos-latest
             lib: target/release/libutter.dylib
             name: utter-macos-arm64
+          - os: macos-15-intel
+            lib: target/release/libutter.dylib
+            name: utter-macos-x86_64
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
