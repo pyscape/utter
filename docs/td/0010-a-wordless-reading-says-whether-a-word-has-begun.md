@@ -67,12 +67,15 @@ the same words.
 - `[sil]` now means what the README said it meant. Its lead and the
   trailing `[sil]` entry's span keep their readings in
   `[[rr:TD-8#End of speech is the endpoint, and the trailing silence entry is its clock]]`.
-  A `[speech]` entry after a trailing silence is the decoder leaving
-  silence, which is where its own rules stop counting. A host whose
-  clock is the entry reads through a `[speech]` entry whose energy sits
-  at the floor, `[[rr:TD-8#The gate is the host's and is relative to the floor]]`:
-  the room read as a word's first phone. The states page measures that
-  clock.
+  A `[speech]` entry after a trailing silence is the best path leaving
+  silence, which is where the rules stop counting, as Kaldi's do on the
+  same path. The `[sil]` entry stays, with the span it reached, so a
+  host that reads the last `[sil]` entry reads what it read before;
+  whether the `[speech]` entry is a word or the room is its energy
+  against the floor, `[[rr:TD-8#The gate is the host's and is relative to the floor]]`.
+  The runtime's floor on a stream built from clips that carry digital
+  silence sits well below a gap's noise, so the states page reads the
+  `[sil]` entry alone and its figures do not move.
 - On a noise floor the acoustic model reads as speech, a stream shows
   `[speech]` where it showed `[sil]`, and a host's quiet-room test must
   read the floor, `[[rr:TD-8#The runtime reports the floor]]`, not the

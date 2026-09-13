@@ -225,8 +225,10 @@ beside the text.
 A note on the trailing `[sil]` entry: it ends at the last frame the
 decoder has processed, not at the last sample you fed, so it runs one
 chunk behind the audio. A `[speech]` entry after it is the decoder
-leaving silence for a word's first phone; when that entry's energy sits
-at the floor it is the room, and your clock runs through it. If you add your own threshold to that span,
+leaving silence for a word's first phone, where its own endpoint rules
+stop counting; the `[sil]` entry keeps its span and stops growing. On a
+quiet room that is the noise floor read as a word, and the `[speech]`
+entry's `energy_dbfs` against `floor_dbfs` is what tells you so. If you add your own threshold to that span,
 you are adding it to a clock that lags.
 
 Turning on partial words in stock Vosk switches it to a lattice-based
@@ -299,12 +301,9 @@ quiet = top["text"] == "[sil]" and abs(top["lead_delta"] or 0) < 0.5
 prefix = next((a for a in alts if a["relation"] == "prefix"), None)
 doubt  = prefix["confidence"] - top["confidence"] if prefix else None
 
-r = json.loads(p)
-entries, floor = r["partial_result"], r["floor_dbfs"]
-if entries and entries[-1]["word"] == "[speech]" and entries[-1]["energy_dbfs"] < floor + 8:
-    entries = entries[:-1] + [dict(entries[-2], end_sample=entries[-1]["end_sample"])]  # the room, not a word
-tail  = entries[-1]
-ended = tail["word"] == "[sil]" and (tail["end_sample"] - tail["start_sample"]) / 16000 > 0.5
+sils  = [e for e in json.loads(p)["partial_result"] if e["word"] == "[sil]"]
+tail  = sils[-1] if sils else None
+ended = tail is not None and (tail["end_sample"] - tail["start_sample"]) / 16000 > 0.5
 ```
 
 What `lead_delta` does not do is improve the trust read: measured over

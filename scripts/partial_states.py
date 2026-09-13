@@ -282,28 +282,15 @@ def empty_parity():
     return dict(agreed=0, runtime_only=0, neither=0, max_diff=0.0)
 
 
-# dB above the floor a host still calls silence, the gate's margin the other pages sweep.
-# [[rr:TD-8#The gate is the host's and is relative to the floor]]
-FLOOR_MARGIN_DB = 8.0
-
-
 def trailing_sil(p):
-    """The trailing silence a host reads: the `[sil]` entry after the last word, running through a
-    `[speech]` entry after it whose energy sits at the floor, which is the room read as a word's
-    first phone and not a word (`[[rr:TD-10#Decision outcome]]`)."""
+    """The trailing silence a host reads: the `[sil]` entry after the last word. A `[speech]`
+    entry after it (`[[rr:TD-10#Decision outcome]]`) is the best path entering a word's phones;
+    the silence entry keeps its span and stops growing there."""
     e = p.get("partial_result") or []
-    k = len(e) - 1
-    end = None
-    if k >= 0 and e[k]["word"] == "[speech]":
-        floor = p.get("floor_dbfs")
-        if floor is None or e[k]["energy_dbfs"] >= floor + FLOOR_MARGIN_DB:
-            return None, None
-        end = e[k]["end_sample"]
-        k -= 1
-    if k >= 0 and e[k]["word"] == "[sil]":
-        if end is None:
-            end = e[k]["end_sample"]
-        return (end - e[k]["start_sample"]) / SAMPLES_PER_MS, e[k]["start_sample"]
+    if e and e[-1]["word"] == "[speech]":
+        e = e[:-1]
+    if e and e[-1]["word"] == "[sil]":
+        return (e[-1]["end_sample"] - e[-1]["start_sample"]) / SAMPLES_PER_MS, e[-1]["start_sample"]
     return None, None
 
 

@@ -1,8 +1,10 @@
 # Reading a partial's trust
 
-Run 2026-09-13 01:13:46Z, utter 76cf75d+dirty, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 76cf75d44a7752d0b07b178dc49082a32fac0a96, **not** the checkout as it stands (76cf75d+dirty).
+Run 2026-09-13 14:39:32Z, utter d1c410c, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty, **not** the checkout as it stands (d1c410c). Pages under `docs` were modified at the time of the run.
 
 utterpy over the Speech Commands testing split, 9230 clips whose first word appeared in a partial that carried a runner-up, 92-entry grammar, 40 ms blocks, 5 alternatives, every coefficient and bar fitted on the validation split. Measured by `scripts/partial_trust.py`.
+
+The reading with no word on it is `[sil]` on silence phones and `[speech]` inside a word's phones (`[[rr:TD-10#Decision outcome]]`); the figures key it as one reading. It led as `[speech]` on 30318 of the 270907 blocks read here.
 
 The first word a host sees is revised before the utterance ends on 1147 of 9230 (12.4%). A host that wants to act early needs to know, at the moment a word appears, whether it is one of those. The signals the partial carries at that moment, each scored by rank-AUC against whether the word survived:
 
