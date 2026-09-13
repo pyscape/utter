@@ -1,6 +1,6 @@
 # Silence direction and word transitions on a built stream
 
-Run 2026-09-13 02:17:34Z, utter 2038a5b, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter 2038a5b12a8da5db31a4657d153862494e88fd5f, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
+Run 2026-09-13 04:19:38Z, utter d47027b, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter d47027baeb022a173e093abe0e147c16f4f43cd9, the checkout's HEAD.
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 40 ms blocks, 8 partial alternatives, partial words on, seed 20260912. Measured by `scripts/partial_states.py`.
 
@@ -384,3 +384,67 @@ Its partial word times could not be used at all. With partial words on, 24 of 13
 The words are isolated read commands joined with built gaps. They carry no coarticulation across the join and no sentence prosody, and every pause is a splice rather than a speaker drawing breath, so the transitions here are cleaner than dictation and the pauses are more uniform. TD-8's figures come from the first consumer's private gate corpus; this page is the reproducible counterpart, not a replacement. The gaps are the dataset's own recordings scaled to one floor, so the floor does not move within a stream as it does between rooms.
 
 Every figure above is in `partial-states.json`, and `partial-states.streams.jsonl` carries, per stream, the ground truth, the finals and the whole advance series with each reading's confidence, lead delta and relation, so another rule can be scored on the same streams without decoding them again.
+
+## Words in the stream's own silences
+
+The census of `[[rr:Words on wordless audio]]` read off the built streams instead of the recordings: every gap between words and after the last one, and the recordings fed cold beside them. A word at rank 0 counts when the partial holds more words than the stream has finished saying since the last final, so a word still held is not one. Rates are per minute of the gaps themselves.
+
+### By the length of the pause or the finish
+
+The page's own testing streams, gaps built at -50 dBFS.
+
+| gap | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
+|---|---|---|---|---|---|---|---|
+| finish, under 2400 ms | vosk | 10.8 | 16176 | 1.95 | no alternatives | 0.19 | 21 |
+| finish, under 2700 ms | vosk | 9.3 | 13938 | 0.00 | no alternatives | 0.00 | 0 |
+| finish, 2700 ms or more | vosk | 11.3 | 16992 | 1.15 | no alternatives | 0.09 | 13 |
+| pause, under 200 ms | vosk | 0.5 | 768 | 3.90 | no alternatives | 1.95 | 2 |
+| pause, under 400 ms | vosk | 2.0 | 3035 | 9.85 | no alternatives | 0.49 | 20 |
+| pause, under 600 ms | vosk | 3.6 | 5342 | 3.37 | no alternatives | 0.28 | 12 |
+| pause, under 800 ms | vosk | 4.8 | 7272 | 0.62 | no alternatives | 0.00 | 3 |
+| finish, under 2400 ms | utterpy | 10.8 | 16176 | 1.95 | 1.95 | 0.19 | 21 |
+| finish, under 2700 ms | utterpy | 9.3 | 13938 | 0.00 | 0.00 | 0.00 | 0 |
+| finish, 2700 ms or more | utterpy | 11.3 | 16992 | 1.15 | 1.15 | 0.18 | 13 |
+| pause, under 200 ms | utterpy | 0.5 | 768 | 3.90 | 3.90 | 1.95 | 2 |
+| pause, under 400 ms | utterpy | 2.0 | 3035 | 9.85 | 9.85 | 0.49 | 20 |
+| pause, under 600 ms | utterpy | 3.6 | 5342 | 3.37 | 3.37 | 0.28 | 12 |
+| pause, under 800 ms | utterpy | 4.8 | 7272 | 0.62 | 0.00 | 0.00 | 3 |
+
+### The recordings fed cold, by floor level
+
+The same recordings the gaps are cut from, fed whole through one recognizer, scaled so their floor sits at each level.
+
+| floor | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
+|---|---|---|---|---|---|---|---|
+| digital silence | vosk | 6.7 | 9987 | 0.00 | no alternatives | 0.00 | 0 |
+| digital silence | utterpy | 6.7 | 9987 | 0.00 | 0.00 | 0.00 | 0 |
+| -70 dBFS | vosk | 6.7 | 9987 | 0.00 | no alternatives | 2.25 | 0 |
+| -70 dBFS | utterpy | 6.7 | 9987 | 0.00 | 0.00 | 2.25 | 0 |
+| -60 dBFS | vosk | 6.7 | 9987 | 0.00 | no alternatives | 2.25 | 0 |
+| -60 dBFS | utterpy | 6.7 | 9987 | 0.00 | 0.00 | 2.40 | 0 |
+| -50 dBFS | vosk | 6.7 | 9987 | 0.00 | no alternatives | 2.25 | 0 |
+| -50 dBFS | utterpy | 6.7 | 9987 | 0.00 | 0.00 | 2.25 | 0 |
+| -40 dBFS | vosk | 6.7 | 9987 | 0.00 | no alternatives | 1.95 | 0 |
+| -40 dBFS | utterpy | 6.7 | 9987 | 0.90 | 0.90 | 1.95 | 6 |
+
+### The finish gaps, by the floor they were built at
+
+Testing streams rebuilt with the gaps scaled to each floor, so the stretch after a spoken word is measured at the level a new microphone would put it.
+
+| gap floor | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
+|---|---|---|---|---|---|---|---|
+| -70 dBFS | vosk | 8.3 | 12475 | 0.00 | no alternatives | 0.00 | 0 |
+| -70 dBFS | utterpy | 8.3 | 12475 | 0.00 | 0.00 | 0.12 | 0 |
+| -60 dBFS | vosk | 8.3 | 12475 | 0.00 | no alternatives | 0.00 | 0 |
+| -60 dBFS | utterpy | 8.3 | 12475 | 0.00 | 0.00 | 0.12 | 0 |
+| -50 dBFS | vosk | 31.4 | 47106 | 1.08 | no alternatives | 0.10 | 21 |
+| -50 dBFS | utterpy | 31.4 | 47106 | 1.08 | 1.08 | 0.13 | 21 |
+| -40 dBFS | vosk | 8.3 | 12475 | 0.00 | no alternatives | 0.00 | 0 |
+| -40 dBFS | utterpy | 8.3 | 12475 | 0.00 | 0.00 | 0.12 | 0 |
+
+Paired over the 75 testing streams, a stream carrying any word at rank 0 in a gap: utterpy only 0, vosk only 0, exact two-sided p = 1.
+
+Three things to read off these tables. The rate is not flat across a gap's length: it is highest in the short pauses, where the decoder is still inside the utterance and no endpoint has fired, and it falls as the gap lengthens and the rules close the stretch, which is the mechanism `[[rr:TD-8#A word on a quiet block was spoken and is reported]]` describes rather than a second one. The floor the gap is built at moves the finals and barely moves rank 0, so a host that gates on level is gating the right half. And the two engines are read on the same blocks here, so any cell where they differ is a one-way excess and is reported as such; the paired test over streams is the test of it.
+
+The gap-floor table's own rows are not one sample: the page's own streams carry the whole testing split and each rebuilt set carries fewer words, so read the rates and not the block counts across it.
+
