@@ -104,11 +104,9 @@ impl<'m> LoopedNnet<'m> {
         let scale = self.model.conf.acoustic_scale;
         let (first, rows, cols) = self.streamer.advance(&view, &ivector);
         for (i, row) in rows.chunks_exact(cols).enumerate() {
-            let t = first + i as i64;
-            if t < 0 {
+            let Ok(t) = usize::try_from(first + i as i64) else {
                 continue;
-            }
-            let t = t as usize;
+            };
             if t.is_multiple_of(sf) {
                 assert_eq!(t / sf, self.outputs.len(), "output rows out of order");
                 self.outputs.push(row.iter().map(|v| v * scale).collect());

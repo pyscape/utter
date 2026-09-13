@@ -16,6 +16,7 @@ fn arc(i: i32, o: i32, w: f32, n: u32) -> FstArc {
 }
 
 #[test]
+#[allow(clippy::cast_possible_truncation)]
 fn wav_reader_reads_pcm16() {
     let dir = std::env::temp_dir().join(format!("utter-wav-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -78,6 +79,7 @@ fn json_writer_escapes() {
 }
 
 #[test]
+#[allow(clippy::cast_precision_loss)]
 fn mfcc_frame_count_and_shape() {
     let opts = utter::mfcc::MfccOptions::from_conf(
         "--sample-frequency=16000\n--num-mel-bins=40\n--num-ceps=40\n--dither=0\n",

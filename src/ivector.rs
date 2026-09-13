@@ -4,6 +4,9 @@
 //! and the i-vector estimated by conjugate gradient, most recent estimate for every frame.
 // [[rr:TD-2#Front end: the i-vector branch]]
 
+// Frame counts and dimensions take part in the f64 statistics arithmetic.
+#![allow(clippy::cast_precision_loss)]
+
 use crate::kaldi_io::{err, parse_text_matrix, KaldiReader};
 use std::io::Result;
 
@@ -19,6 +22,8 @@ pub struct DiagGmm {
 }
 
 impl DiagGmm {
+    // The gconsts are summed in f64 and kept, as Kaldi keeps them, in f32.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn parse(bytes: &[u8]) -> Result<DiagGmm> {
         let mut r = KaldiReader::new(bytes);
         r.expect_binary()?;
@@ -205,7 +210,7 @@ fn linear_cgd(a: &[f64], n: usize, b: &[f64], x: &mut [f64], max_iters: i32) {
     let residual_factor = 0.01f64 * 0.01;
     let inv_residual_factor = 1.0 / residual_factor;
     let mut k = 0i32;
-    while (k as usize) < n + 5 && k != max_iters {
+    while usize::try_from(k).is_ok_and(|i| i < n + 5) && k != max_iters {
         sp_mat_vec(a, n, &p, &mut ap);
         let alpha = -dot(&p, &r) / dot(&p, &ap);
         for i in 0..n {
@@ -266,7 +271,7 @@ impl IvectorExtractor {
         r.expect_token("<w_vec>")?;
         let _w_vec = r.read_double_vec()?;
         r.expect_token("<M>")?;
-        let size = r.read_i32()? as usize;
+        let size = r.read_dim()?;
         let mut m = Vec::with_capacity(size);
         for _ in 0..size {
             m.push(r.read_double_matrix()?);
@@ -621,7 +626,7 @@ impl<'a> IvectorStream<'a> {
     /// are reached.
     pub fn update_frame_weights(&mut self, deltas: &[(usize, f32)]) {
         for &(frame, w) in deltas {
-            let idx = self.delta_values.len() as u32;
+            let idx = u32::try_from(self.delta_values.len()).expect("too many frame weights");
             self.delta_values.push(w);
             self.delta_weights.push(std::cmp::Reverse((frame, idx)));
             if frame as i64 > self.most_recent_frame_with_weight {
@@ -740,6 +745,7 @@ impl<'a> IvectorStream<'a> {
     /// and the result depends on the order frames are asked for. The fork leaves the
     /// statistics undefined when the first frame asked for is quiet; zero is what a fresh
     /// process gives. `[[rr:i-vector: against the wheel's Kaldi, passed once its quiet-frame rule was matched]]`
+    #[allow(clippy::cast_possible_truncation)]
     fn cmvn_frame(&mut self, t: usize, out: &mut [f32]) {
         let info = self.info;
         let o = &info.opts;
@@ -780,7 +786,7 @@ impl<'a> IvectorStream<'a> {
         for (n, t2) in
             (t as i64 - o.left_context as i64..=t as i64 + o.right_context as i64).enumerate()
         {
-            let t2 = t2.clamp(0, total as i64 - 1) as usize;
+            let t2 = usize::try_from(t2.clamp(0, total as i64 - 1)).unwrap_or(0);
             if normalized {
                 self.cmvn_frame(t2, &mut tmp);
                 spliced[n * dim..(n + 1) * dim].copy_from_slice(&tmp);
@@ -847,6 +853,7 @@ impl<'a> IvectorStream<'a> {
     /// The i-vector feature for `frame` (must be below `num_frames_ready`): statistics are
     /// brought up to that frame and the estimate refreshed, the prior mean removed from
     /// dimension 0.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn get_frame(&mut self, frame: usize, out: &mut [f32]) {
         assert!(frame < self.num_frames_ready(), "i-vector frame not ready");
         if frame >= self.num_frames_stats {

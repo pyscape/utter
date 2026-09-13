@@ -24,7 +24,7 @@ impl TransitionModel {
         let marker = b"<Tuples> ";
         let pos = find(data, marker, 0).ok_or_else(|| err("no <Tuples>"))? + marker.len();
         let mut kr = KaldiReader::new(&data[pos..]);
-        let n = kr.read_i32()? as usize;
+        let n = kr.read_dim()?;
         let mut tid2pdf = vec![-1i32; 2 * n + 1];
         let mut tid2phone = vec![0i32; 2 * n + 1];
         let mut num_pdfs = 0i32;
@@ -42,7 +42,7 @@ impl TransitionModel {
         Ok(TransitionModel {
             tid2pdf,
             tid2phone,
-            num_pdfs: num_pdfs as usize,
+            num_pdfs: usize::try_from(num_pdfs).unwrap_or(0),
             num_transition_states: n,
         })
     }

@@ -5,6 +5,9 @@
 //! Kaldi's `RandGauss` replaced by a plain Box-Muller on a fixed-seed generator.
 // [[rr:TD-2#Front end: MFCC]]
 
+// Bin indices, frame lengths and sample counts all take part in the filterbank arithmetic.
+#![allow(clippy::cast_precision_loss)]
+
 use crate::fft::RealFft;
 use crate::nnet3::Mat;
 use std::f32::consts::PI;
@@ -46,6 +49,9 @@ impl Default for MfccOptions {
 
 impl MfccOptions {
     /// Parse Kaldi's `--key=value` lines from `conf/mfcc.conf`; unknown keys are ignored.
+    // Every option arrives as a number; a count that is negative or huge saturates to a zero
+    // the caller fails on rather than wrapping.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn from_conf(txt: &str) -> MfccOptions {
         let mut o = MfccOptions::default();
         for line in txt.lines() {
@@ -97,6 +103,7 @@ pub struct Mfcc {
 }
 
 impl Mfcc {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn new(o: &MfccOptions) -> Mfcc {
         let sr = o.sample_rate;
         let frame_len = (o.frame_length_ms * 0.001 * sr).round() as usize;
@@ -201,6 +208,7 @@ impl Mfcc {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn gauss(&mut self) -> f32 {
         // xorshift64* for two uniforms, then Box-Muller.
         let mut next = || {

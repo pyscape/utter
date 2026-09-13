@@ -91,10 +91,10 @@ fn forward_chunked(
         let iv = ivec(begin, end);
         let win_begin = begin as i64 - lctx as i64;
         let win_end = end as i64 + rctx as i64;
-        let win_len = (win_end - win_begin) as usize;
+        let win_len = usize::try_from(win_end - win_begin).expect("window after begin");
         let mut window = Mat::new(win_len, feats.c);
         for (i, ti) in (win_begin..win_end).enumerate() {
-            let src = ti.clamp(0, t as i64 - 1) as usize;
+            let src = usize::try_from(ti.clamp(0, t as i64 - 1)).expect("clamped at zero");
             window.d[i * feats.c..(i + 1) * feats.c].copy_from_slice(feats.row(src));
         }
         let y = net.forward_window(window, &iv);
@@ -112,6 +112,7 @@ fn forward_chunked(
     out
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn decode_take(
     model: &Model,
     graph: &utter::fst::VectorFst,

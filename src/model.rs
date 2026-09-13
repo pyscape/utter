@@ -343,7 +343,7 @@ impl Model {
         if let (Some(cost), Some(&id)) = (unknown_cost, self.word_ids.get(unk)) {
             for st in g.states.iter_mut() {
                 for a in st.arcs.iter_mut() {
-                    if a.ilabel == id as i32 {
+                    if i64::from(a.ilabel) == id {
                         a.weight += cost;
                     }
                 }
@@ -369,13 +369,16 @@ impl Model {
 
     /// The model's unknown-word symbol id, when the word table has one.
     pub fn unknown_word(&self) -> Option<Label> {
-        self.word_ids.get("[unk]").map(|&i| i as Label)
+        self.word_ids
+            .get("[unk]")
+            .and_then(|&i| Label::try_from(i).ok())
     }
 
     /// The word with this id, or `""` when the table has none.
     pub fn word(&self, id: Label) -> &str {
-        self.words
-            .get(id as usize)
+        usize::try_from(id)
+            .ok()
+            .and_then(|i| self.words.get(i))
             .map(String::as_str)
             .unwrap_or("")
     }

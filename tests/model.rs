@@ -179,6 +179,7 @@ fn num_of_key(json: &str, key: &str) -> f64 {
     rest[..end].parse().unwrap()
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn rms_dbfs(samples: &[i16]) -> f64 {
     if samples.is_empty() {
         return -999.0;
@@ -193,6 +194,7 @@ fn rms_dbfs(samples: &[i16]) -> f64 {
 }
 
 #[test]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn a_final_word_carries_the_energy_under_its_span() {
     let Some(dir) = model_dir() else { return };
     let m = Model::open(&dir).unwrap();
@@ -298,6 +300,7 @@ fn grammar_bounds_and_unknown_option() {
 }
 
 #[test]
+#[allow(clippy::cast_possible_truncation)]
 fn c_abi_round_trip() {
     let Some(dir) = model_dir() else { return };
     use std::ffi::{CStr, CString};
@@ -563,6 +566,7 @@ fn first_group_of(record: &str) -> String {
 /// `[[rr:TD-10#Decision outcome]]`: a wordless reading is `[sil]` or `[speech]`, never empty,
 /// and the text agrees with the tail of the word list.
 #[test]
+#[allow(clippy::cast_possible_truncation)]
 fn a_wordless_reading_names_what_its_tail_is() {
     let Some(dir) = model_dir() else { return };
     let m = Model::open(&dir).unwrap();

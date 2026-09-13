@@ -72,6 +72,11 @@ pub struct Token {
     pub seq: u32,
 }
 
+/// The frame a link records. 2^32 frames is over a year of audio in one utterance.
+fn frame_id(n: usize) -> u32 {
+    u32::try_from(n).expect("frame count exceeds u32")
+}
+
 #[derive(Clone, Debug)]
 pub struct DecoderConfig {
     pub beam: f32,
@@ -263,8 +268,11 @@ impl<'g> Decoder<'g> {
         self.num_frames_decoded += 1;
     }
 
+    // Transition ids and pdf ids are non-negative; a negative one indexes past the slice and
+    // panics either way.
+    #[allow(clippy::cast_sign_loss)]
     fn process_emitting(&mut self, loglikes: &[f32]) -> f32 {
-        let frame = self.num_frames_decoded as u32;
+        let frame = frame_id(self.num_frames_decoded);
         let (cur_cutoff, adaptive_beam, best_state) = self.get_cutoff();
         let prev = std::mem::take(&mut self.cur);
         let mut next: StateMap<Token> =
@@ -348,8 +356,9 @@ impl<'g> Decoder<'g> {
         next_cutoff
     }
 
+    #[allow(clippy::cast_sign_loss)]
     fn process_nonemitting(&mut self, cutoff: f32) {
-        let frame = self.num_frames_decoded as u32;
+        let frame = frame_id(self.num_frames_decoded);
         self.queue.clear();
         for &s in self.cur.keys() {
             if self.has_eps[s as usize] {

@@ -4,6 +4,9 @@
 //! output is already deterministic (one arc per label per state), so only connect follows.
 // [[rr:TD-2#The graph: the grammar as a bigram]]
 
+// Log probabilities are accumulated in f64 and stored in the graph's f32 arc weights.
+#![allow(clippy::cast_possible_truncation)]
+
 use crate::fst::{Arc, StateId, VectorFst, NO_STATE};
 use std::collections::{BTreeMap, HashMap};
 
@@ -166,8 +169,8 @@ pub fn grammar_fst(
             if token.is_empty() {
                 continue;
             }
-            match word_ids.get(token) {
-                Some(&id) => sentence.push(id as i32),
+            match word_ids.get(token).and_then(|&id| i32::try_from(id).ok()) {
+                Some(id) => sentence.push(id),
                 None => warn(format!("Ignoring word missing in vocabulary: '{token}'")),
             }
         }

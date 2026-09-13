@@ -6,6 +6,9 @@
 // [[rr:TD-2#Dependency policy]]
 // [[rr:TD-2#Front end: MFCC]]
 
+// The twiddle factors are computed in f64 over bin indices and stored as f32.
+#![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+
 use std::f64::consts::PI;
 
 pub struct RealFft {

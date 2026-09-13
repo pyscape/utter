@@ -77,6 +77,8 @@ fn member(set: &[(Label, Label)], label: Label) -> bool {
 
 /// `reach`: per HCLr state, the reachable output labels as sorted `[begin, end)` intervals,
 /// and the label that stands for a reachable final state.
+// The lookahead weight is summed in f64 and stored in the graph's f32 arc weight.
+#[allow(clippy::cast_possible_truncation)]
 pub fn compose(
     hcl: &VectorFst,
     g: &VectorFst,

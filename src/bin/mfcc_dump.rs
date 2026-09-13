@@ -21,8 +21,8 @@ fn main() {
         mfcc.accept(chunk);
     }
     let mut out = std::io::BufWriter::new(std::fs::File::create(&args[2]).expect("out"));
-    let rows = mfcc.frames.len() as i32;
-    let cols = mfcc.dim() as i32;
+    let rows = i32::try_from(mfcc.frames.len()).expect("header dimension fits i32");
+    let cols = i32::try_from(mfcc.dim()).expect("header dimension fits i32");
     out.write_all(&rows.to_le_bytes()).unwrap();
     out.write_all(&cols.to_le_bytes()).unwrap();
     for f in &mfcc.frames {

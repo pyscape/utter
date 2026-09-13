@@ -331,6 +331,9 @@ pub fn gemm_abt(
 
 #[cfg(test)]
 mod tests {
+    // The test matrices are filled from their own index.
+    #![allow(clippy::cast_precision_loss)]
+
     use super::*;
 
     /// The accumulation order `[[rr:TD-3#Accumulation order is part of the contract]]` fixes:

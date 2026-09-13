@@ -9,6 +9,10 @@
 //! the network's context, see `Nnet3::context`.
 // [[rr:TD-2#The network]]
 
+// Row windows are i64 and matrix extents usize; every index below is non-negative and within
+// the window by the clamp or the assert above it.
+#![allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+
 use crate::gemm::gemm_abt;
 
 use crate::kaldi_io::{find, KaldiReader};

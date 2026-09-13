@@ -151,6 +151,7 @@ impl FloorTracker {
     const HOP_SECONDS: f64 = 0.05;
     const HISTORY_HOPS: usize = 200;
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn new(sample_rate: f32) -> Self {
         FloorTracker {
             hop: ((sample_rate as f64 * Self::HOP_SECONDS).round() as usize).max(1),
@@ -175,6 +176,7 @@ impl FloorTracker {
         }
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn dbfs(&self) -> Option<f64> {
         if self.hop_sum_sq.len() < 2 {
             return None;
@@ -497,6 +499,11 @@ impl<'m> Recognizer<'m> {
         }
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
     fn frame_samples(&self) -> u64 {
         // one output frame is subsampling x 10 ms
         (self.model.conf.frame_subsampling_factor as f64
@@ -740,6 +747,7 @@ impl<'m> Recognizer<'m> {
     /// libvosk's `AcceptWaveform`: feed 16-bit mono PCM at the recognizer's rate. Any block
     /// size; the decoder advances in 200 ms chunks internally and the partial is current to the
     /// last decoded frame.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn accept(&mut self, samples: &[i16]) -> Step {
         if !(self.state == State::Running || self.state == State::Initialized) {
             self.clean_up();
@@ -783,6 +791,7 @@ impl<'m> Recognizer<'m> {
 
     /// The first of the model's rules that fires, else the host's bound if it does.
     // [[rr:TD-11#Decision outcome]]
+    #[allow(clippy::cast_precision_loss)]
     pub fn endpoint_reason(&self) -> Option<Endpoint> {
         let dec = self.decoder.as_ref()?;
         let n = dec.num_frames_decoded();
@@ -813,7 +822,9 @@ impl<'m> Recognizer<'m> {
                 && utterance >= r.min_utterance_length
         };
         if let Some(i) = conf.rules.iter().position(fires) {
-            return Some(Endpoint::Rule(i as u8 + 1));
+            return Some(Endpoint::Rule(
+                u8::try_from(i).expect("rule index fits a byte") + 1,
+            ));
         }
         if !self.endpoint_rule.as_ref().is_some_and(fires) {
             return None;
@@ -838,6 +849,11 @@ impl<'m> Recognizer<'m> {
     /// Milliseconds each entry of a path's word list has held its place in the partial, read off
     /// the stable list by position: zero where the list holds something else, which is a word
     /// the final carries and no partial showed. `[[rr:TD-11#Decision outcome]]`
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
     fn holds(&self, path: &Path, now: u64) -> Vec<(Entry, u64)> {
         self.entries(path)
             .into_iter()
@@ -974,6 +990,7 @@ impl<'m> Recognizer<'m> {
         spans
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn seconds(&self, frame: usize) -> f64 {
         self.samples_round_start as f64 / self.sample_rate as f64
             + (self.frame_offset + frame) as f64 * 0.03
@@ -983,6 +1000,7 @@ impl<'m> Recognizer<'m> {
         self.samples_round_start + (self.frame_offset + frame) as u64 * self.frame_samples()
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn energy_dbfs(&self, start_sample: u64, end_sample: u64) -> f64 {
         let lo = start_sample.saturating_sub(self.samples_round_start) as usize;
         let hi = (end_sample.saturating_sub(self.samples_round_start) as usize).min(self.pcm.len());
@@ -1147,6 +1165,11 @@ impl<'m> Recognizer<'m> {
     /// [`set_alternatives`](Self::set_alternatives) is on, word entries when
     /// [`set_partial_words`](Self::set_partial_words) is on, and the noise floor.
     /// Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-partial-result>.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
     pub fn partial(&mut self) -> &str {
         let empty = |this: &mut Self| {
             let mut out = format!("{{\"partial\": \"{SIL}\"");
@@ -1360,6 +1383,13 @@ impl<'m> Recognizer<'m> {
 
 #[cfg(test)]
 mod tests {
+    // The test signals are generated from sample counts and decibel levels.
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+
     use super::*;
 
     const RATE: f32 = 16000.0;

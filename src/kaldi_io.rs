@@ -72,6 +72,12 @@ impl<R: Read> KaldiReader<R> {
         Ok(i32::from_le_bytes(b))
     }
 
+    /// An i32 count or dimension: a negative one would wrap into an enormous allocation.
+    pub fn read_dim(&mut self) -> Result<usize> {
+        let n = self.read_i32()?;
+        usize::try_from(n).map_err(|_| err(&format!("negative dimension {n}")))
+    }
+
     pub fn read_f32(&mut self) -> Result<f32> {
         let sz = self.byte()?;
         if sz != 4 {
@@ -102,11 +108,7 @@ impl<R: Read> KaldiReader<R> {
     }
 
     pub fn read_i32_vec(&mut self) -> Result<Vec<i32>> {
-        let n = self.read_i32()?;
-        if n < 0 {
-            return Err(err("negative vector length"));
-        }
-        let n = n as usize;
+        let n = self.read_dim()?;
         let mut buf = vec![0u8; n * 4];
         self.r.read_exact(&mut buf)?;
         Ok(buf
@@ -141,29 +143,29 @@ impl<R: Read> KaldiReader<R> {
 
     pub fn read_float_vec(&mut self) -> Result<Vec<f32>> {
         self.expect_token("FV")?;
-        let dim = self.read_i32()? as usize;
+        let dim = self.read_dim()?;
         self.read_f32_raw(dim)
     }
 
     /// Returns (rows, cols, row-major data).
     pub fn read_float_matrix(&mut self) -> Result<(usize, usize, Vec<f32>)> {
         self.expect_token("FM")?;
-        let rows = self.read_i32()? as usize;
-        let cols = self.read_i32()? as usize;
+        let rows = self.read_dim()?;
+        let cols = self.read_dim()?;
         let data = self.read_f32_raw(rows * cols)?;
         Ok((rows, cols, data))
     }
 
     pub fn read_double_vec(&mut self) -> Result<Vec<f64>> {
         self.expect_token("DV")?;
-        let dim = self.read_i32()? as usize;
+        let dim = self.read_dim()?;
         self.read_f64_raw(dim)
     }
 
     pub fn read_double_matrix(&mut self) -> Result<(usize, usize, Vec<f64>)> {
         self.expect_token("DM")?;
-        let rows = self.read_i32()? as usize;
-        let cols = self.read_i32()? as usize;
+        let rows = self.read_dim()?;
+        let cols = self.read_dim()?;
         let data = self.read_f64_raw(rows * cols)?;
         Ok((rows, cols, data))
     }
@@ -172,7 +174,7 @@ impl<R: Read> KaldiReader<R> {
     /// row by row (Kaldi's `SpMatrix` layout). Returns (dim, packed data).
     pub fn read_packed_double(&mut self) -> Result<(usize, Vec<f64>)> {
         self.expect_token("DP")?;
-        let dim = self.read_i32()? as usize;
+        let dim = self.read_dim()?;
         let data = self.read_f64_raw(dim * (dim + 1) / 2)?;
         Ok((dim, data))
     }

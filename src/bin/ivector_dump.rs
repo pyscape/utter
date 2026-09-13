@@ -45,8 +45,10 @@ fn main() {
     let mut row = vec![0.0f32; dim];
     let frames: Vec<usize> = (0..ready).step_by(period).collect();
     let mut out = std::io::BufWriter::new(std::fs::File::create(&args[2]).expect("out"));
-    out.write_all(&(frames.len() as i32).to_le_bytes()).unwrap();
-    out.write_all(&(dim as i32).to_le_bytes()).unwrap();
+    let rows = i32::try_from(frames.len()).expect("header dimension fits i32");
+    let cols = i32::try_from(dim).expect("header dimension fits i32");
+    out.write_all(&rows.to_le_bytes()).unwrap();
+    out.write_all(&cols.to_le_bytes()).unwrap();
     for f in frames {
         iv.get_frame(f, &mut row);
         for v in &row {

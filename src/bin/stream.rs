@@ -165,6 +165,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run) -> String {
     let w = read_wav(wav).expect("wav");
     let t0 = Instant::now();

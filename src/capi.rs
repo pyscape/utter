@@ -66,7 +66,11 @@ pub unsafe extern "C" fn utter_model_find_word(
     let (Some(m), Some(w)) = (unsafe { model.as_ref() }, cstr(word)) else {
         return -1;
     };
-    m.inner.word_ids.get(w).map(|&i| i as c_int).unwrap_or(-1)
+    m.inner
+        .word_ids
+        .get(w)
+        .and_then(|&i| c_int::try_from(i).ok())
+        .unwrap_or(-1)
 }
 
 unsafe fn new_recognizer(
@@ -180,7 +184,7 @@ pub unsafe extern "C" fn utter_recognizer_set_endpoint_bound(
 pub unsafe extern "C" fn utter_recognizer_set_alternatives(rec: *mut UtterRecognizer, n: c_int) {
     // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
     if let Some(r) = unsafe { rec.as_mut() } {
-        r.inner.set_alternatives(n.max(0) as usize);
+        r.inner.set_alternatives(usize::try_from(n).unwrap_or(0));
     }
 }
 
@@ -192,7 +196,8 @@ pub unsafe extern "C" fn utter_recognizer_set_max_alternatives(
 ) {
     // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
     if let Some(r) = unsafe { rec.as_mut() } {
-        r.inner.set_max_alternatives(n.max(0) as usize);
+        r.inner
+            .set_max_alternatives(usize::try_from(n).unwrap_or(0));
     }
 }
 
@@ -208,11 +213,14 @@ pub unsafe extern "C" fn utter_recognizer_accept_waveform_s(
     let Some(r) = (unsafe { rec.as_mut() }) else {
         return -1;
     };
-    if data.is_null() || length <= 0 {
+    let Ok(len) = usize::try_from(length) else {
+        return 0;
+    };
+    if data.is_null() || len == 0 {
         return 0;
     }
     // SAFETY: `data` is non-null and, as libvosk's contract has it, points at `length` samples.
-    let samples = unsafe { std::slice::from_raw_parts(data, length as usize) };
+    let samples = unsafe { std::slice::from_raw_parts(data, len) };
     r.inner.accept(samples).endpoint as c_int
 }
 

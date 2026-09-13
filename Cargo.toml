@@ -11,6 +11,12 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 
+# On every target, unlike an attribute in lib.rs.
+[lints.clippy]
+cast_possible_truncation = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+
 [[bench]]
 name = "kernels"
 harness = false

@@ -13,6 +13,7 @@
 //! much as this, and the minimum is the only summary that does not move when a neighbour wakes up.
 //! The spread against the median is printed beside it, because a minimum alone cannot say whether
 //! the run was quiet enough to believe.
+
 use std::hint::black_box;
 use std::time::Instant;
 use utter::gemm::gemm_abt;
@@ -99,12 +100,14 @@ fn time<F: FnMut()>(reps: usize, mut f: F) -> (f64, f64) {
 
 /// Deterministic operands. The kernel's cost does not depend on the values, but reusing one
 /// buffer across shapes would let a shape inherit the previous one's cache state.
+#[allow(clippy::cast_precision_loss)]
 fn operand(n: usize, seed: usize) -> Vec<f32> {
     (0..n)
         .map(|i| ((((i + seed) * 2654435761) % 65521) as f32 / 32760.0) - 1.0)
         .collect()
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn bench_gemm(args: &Args) {
     println!(
         "gemm_abt, {} rows per call, minimum of {}\n",
@@ -140,6 +143,7 @@ fn bench_gemm(args: &Args) {
     );
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn bench_compile_grammar(args: &Args, dir: &str) -> Result<(), String> {
     let model = Model::open(std::path::Path::new(dir)).map_err(|e| format!("{dir}: {e:?}"))?;
     // The vocabulary in a fixed order: a HashMap's own order is seeded per process, and a sweep
