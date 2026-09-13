@@ -1104,7 +1104,7 @@ impl<'m> Recognizer<'m> {
                         if j > 0 {
                             out.push_str(", ");
                         }
-                        self.write_word(&mut out, span, false, false, now);
+                        self.write_word(&mut out, span, false, true, now);
                     }
                     out.push_str("], ");
                 }

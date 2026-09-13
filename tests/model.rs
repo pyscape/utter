@@ -196,30 +196,49 @@ fn rms_dbfs(samples: &[i16]) -> f64 {
 fn a_final_word_carries_the_energy_under_its_span() {
     let Some(dir) = model_dir() else { return };
     let m = Model::open(&dir).unwrap();
-    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
-    rec.set_words(true);
     let samples = clip("seven");
-    let (_, finals) = decode(&mut rec, &samples);
-    let mut words = 0;
-    for f in &finals {
-        let Some((_, rest)) = f.split_once("\"result\": [") else {
-            continue;
-        };
-        let array = &rest[..rest.find(']').unwrap()];
-        for w in array.split("}, {") {
-            if !w.contains("\"start_sample\": ") {
-                continue;
+    // the plain final and every alternative of an n-best final alike
+    for max_alternatives in [1, 4] {
+        let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+        rec.set_words(true);
+        rec.set_max_alternatives(max_alternatives);
+        let (_, finals) = decode(&mut rec, &samples);
+        let mut words = 0;
+        let mut arrays = 0;
+        for f in &finals {
+            for (_, rest) in f.match_indices("\"result\": [").map(|(i, _)| f.split_at(i)) {
+                let rest = &rest["\"result\": [".len()..];
+                let array = &rest[..rest.find(']').unwrap()];
+                arrays += 1;
+                for w in array.split("}, {") {
+                    if !w.contains("\"start_sample\": ") {
+                        continue;
+                    }
+                    let start = num_of_key(w, "\"start_sample\": ") as usize;
+                    // a final flushes the pipeline, so the last frame can end past the audio fed
+                    let end = (num_of_key(w, "\"end_sample\": ") as usize).min(samples.len());
+                    let want = rms_dbfs(&samples[start.min(end)..end]);
+                    assert!(
+                        w.contains("\"energy_dbfs\": "),
+                        "no energy on {w} at n={max_alternatives}"
+                    );
+                    let got = num_of_key(w, "\"energy_dbfs\": ");
+                    assert!((got - want).abs() < 1e-3, "{w}: {got} against {want}");
+                    words += 1;
+                }
             }
-            let start = num_of_key(w, "\"start_sample\": ") as usize;
-            // a final flushes the pipeline, so the last frame can end past the audio fed
-            let end = (num_of_key(w, "\"end_sample\": ") as usize).min(samples.len());
-            let want = rms_dbfs(&samples[start.min(end)..end]);
-            let got = num_of_key(w, "\"energy_dbfs\": ");
-            assert!((got - want).abs() < 1e-3, "{w}: {got} against {want}");
-            words += 1;
+        }
+        assert!(
+            words > 0,
+            "no final word at n={max_alternatives}: {finals:?}"
+        );
+        if max_alternatives > 1 {
+            assert!(
+                arrays > 1,
+                "one result array at n={max_alternatives}: {finals:?}"
+            );
         }
     }
-    assert!(words > 0, "no final word: {finals:?}");
 }
 
 #[test]
