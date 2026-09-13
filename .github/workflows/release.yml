@@ -13,11 +13,16 @@ jobs:
     strategy:
       matrix:
         include:
+          # The Linux libraries are linked against glibc 2.28, the floor the utterpy wheel has
+          # through manylinux_2_28, so RHEL 8, Ubuntu 20.04 and Debian 11 load them; the runner's
+          # own glibc would set the floor at 2.34.
           - os: ubuntu-latest
-            lib: target/release/libutter.so
+            glibc_target: x86_64-unknown-linux-gnu
+            lib: target/x86_64-unknown-linux-gnu/release/libutter.so
             name: utter-linux-x86_64
           - os: ubuntu-24.04-arm
-            lib: target/release/libutter.so
+            glibc_target: aarch64-unknown-linux-gnu
+            lib: target/aarch64-unknown-linux-gnu/release/libutter.so
             name: utter-linux-aarch64
           - os: windows-latest
             lib: target/release/utter.dll
@@ -44,14 +49,26 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           test "v$version" = "${GITHUB_REF_NAME}"
       - run: cargo test --release
-      - if: matrix.archive != false
+      - if: matrix.archive != false && !matrix.glibc_target
         run: cargo build --release --lib --bin stream
+      - if: matrix.glibc_target
+        run: |
+          pip install cargo-zigbuild==0.23.4
+          cargo zigbuild --release --lib --bin stream --target "${{ matrix.glibc_target }}.2.28"
+          for b in "${{ matrix.lib }}" "target/${{ matrix.glibc_target }}/release/stream"; do
+            strip --strip-debug "$b"
+            need=$(objdump -T "$b" | grep -oE 'GLIBC_[0-9.]+' | sort -t. -k2,2n -k3,3n | tail -1)
+            echo "$b needs $need"
+            test "$need" = GLIBC_2.28
+          done
       - if: matrix.archive != false
         shell: bash
+        env:
+          BUILD_DIR: target/${{ matrix.glibc_target && format('{0}/', matrix.glibc_target) || '' }}release
         run: |
           mkdir "${{ matrix.name }}"
           cp "${{ matrix.lib }}" include/utter.h LICENSE "${{ matrix.name }}/"
-          cp target/release/stream${{ runner.os == 'Windows' && '.exe' || '' }} "${{ matrix.name }}/"
+          cp "$BUILD_DIR"/stream${{ runner.os == 'Windows' && '.exe' || '' }} "${{ matrix.name }}/"
           cp third_party/Vosk-Rust/LICENSE "${{ matrix.name }}/LICENSE-Apache-2.0"
           cp third_party/Vosk-Rust/NOTICE "${{ matrix.name }}/NOTICE"
           if [ "$RUNNER_OS" = Windows ]; then
