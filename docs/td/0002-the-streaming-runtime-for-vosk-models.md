@@ -180,7 +180,8 @@ or `[speech]` once it has entered a word's phones (see "Silence and
 unknown speech announce themselves" and `[[rr:TD-10#Decision outcome]]`). Final and
 `alternatives` shapes keep libvosk's key layout; `conf` on final words
 is emitted as 1.0 and documented as a constant, since no lattice
-posterior exists.
+posterior exists. A final also says what closed it and each of its
+words how long it had held in the partial, `[[rr:TD-11#Decision outcome]]`.
 
 Time base: `start` and `end` in seconds are `samples_round_start /
 sample_rate + (frame_offset + output_frame) * 0.03`, libvosk's formula;

@@ -211,16 +211,17 @@ for Vosk keeps working; the new keys are added after the old ones.
 | `confidence` | The reading's path score in nats. A raw cost, not a probability. | Compare readings to each other; never read it alone. |
 | `relation` | How the reading relates to the partial as a word sequence: `same`, `prefix` (it lacks the partial's tail), `extends` (it has one more word), `differs`. | Pick the readings that matter: a competing phrase, a missing last word, a possible next word. |
 | `lead_delta` | How much the reading's lead over the field changed since the last decoding advance, in nats. `null` when it has no history yet. | A reading that extends the partial and is gaining is the next word forming. Treat `null` as unknown, not zero. |
-| `stable_ms` | How long the word has held its place in the partial. | The hold to wait out before acting on the word. |
+| `stable_ms` | How long the word has held its place in the partial; on a final word, how long it had held when the final was cut. | The hold to wait out before acting on the word. A final word with a hold of zero was never shown in a partial. |
 | `energy_dbfs` | The loudness of the audio under the word. | Tell a spoken word from one the decoder read into a quiet room. |
 | `floor_dbfs` | The room's noise floor over the last ten seconds. | Set your silence threshold relative to this, so it travels between microphones. |
 | `start_sample`, `end_sample` | The word's span in samples of the audio you fed. | One clock shared with your own code; nothing to align. |
 | `[sil]` | The reading carries no word and sits on silence. | Instead of an empty string or a word forced onto silence, you see that the decoder heard nothing. |
 | `[speech]` | The reading carries no word, but the path has entered a word's phones that the grammar cannot yet tell apart. | A word is forming. On a noise floor the model hears as speech, this is what a quiet room reads; check `floor_dbfs` before calling it silence. |
+| `endpoint` | On a final: what closed the utterance. `rule1` to `rule5` are the model's rules, `rule5` the 20 s length cap; `bound` is your own endpoint bound; `flush` is `FinalResult`; `host` is `Result` with no rule fired. | Tell a final a silence rule closed from one the length cap forced. |
 
-Finals carry the same `energy_dbfs` on every word, including the words
-of each alternative when you ask for more than one, and `floor_dbfs`
-beside the text.
+Finals carry the same `energy_dbfs` and `stable_ms` on every word,
+including the words of each alternative when you ask for more than one,
+and `endpoint` and `floor_dbfs` beside the text.
 
 A note on the trailing `[sil]` entry: it ends at the last frame the
 decoder has processed, not at the last sample you fed, so it runs one
@@ -289,6 +290,13 @@ disproved.
 against a threshold of your choosing. Or let the recognizer do it for
 you, below.
 
+**Was this final's word ever said?** On a quiet room the model can read
+the noise floor as a word's first phone, and the 20 s length cap then
+closes the stretch with a grammar word spanning it, as stock Vosk does.
+That final says `rule5`, and its word carries a hold of zero because no
+partial showed it. The same hold rule you apply to partial words applies
+here.
+
 ```python
 alts = json.loads(p)["partial_alternatives"]
 top  = alts[0]
@@ -304,6 +312,9 @@ doubt  = prefix["confidence"] - top["confidence"] if prefix else None
 sils  = [e for e in json.loads(p)["partial_result"] if e["word"] == "[sil]"]
 tail  = sils[-1] if sils else None
 ended = tail is not None and (tail["end_sample"] - tail["start_sample"]) / 16000 > 0.5
+
+f = json.loads(final)
+said = f["endpoint"] != "rule5" or any(w["stable_ms"] > 0 for w in f["result"])
 ```
 
 What `lead_delta` does not do is improve the trust read: measured over

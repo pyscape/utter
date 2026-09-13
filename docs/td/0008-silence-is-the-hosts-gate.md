@@ -160,7 +160,8 @@ libvosk's removes bracketed tokens first, as the gates do.
 With words on, each final word carries `energy_dbfs`, the mean RMS in
 dBFS of the PCM under its span, as a partial word does,
 `[[rr:energy_dbfs]]`. A final that closes a silent stretch thereby says
-so itself.
+so itself, and since `[[rr:TD-11#Decision outcome]]` says which rule
+closed it and that no partial showed its word.
 
 ### The runtime reports the floor
 

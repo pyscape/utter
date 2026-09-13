@@ -51,3 +51,4 @@ reaches for the rejected option. Implemented by is optional, because
 | TD-8 | Silence is the host's gate, on a floor the runtime reports |
 | TD-9 | Each reading carries its relation to the partial and the motion of its lead |
 | TD-10 | A wordless reading says whether a word has begun |
+| TD-11 | A final says what closed it and how long its words held |

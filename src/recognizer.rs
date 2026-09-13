@@ -82,6 +82,27 @@ impl Default for RecognizerOptions {
     }
 }
 
+/// What closed an utterance: one of the model's numbered rules, the host's bound, the flush of
+/// `final_result`, or the host calling `result` with no rule fired.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Endpoint {
+    Rule(u8),
+    Bound,
+    Flush,
+    Host,
+}
+
+impl Endpoint {
+    pub fn label(self) -> String {
+        match self {
+            Endpoint::Rule(n) => format!("rule{n}"),
+            Endpoint::Bound => "bound".into(),
+            Endpoint::Flush => "flush".into(),
+            Endpoint::Host => "host".into(),
+        }
+    }
+}
+
 /// What an entry of a word list spans.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryWord {
@@ -223,6 +244,8 @@ pub struct Recognizer<'m> {
     silence_weighting: SilenceWeighting,
     endpoint_rule: Option<crate::model::EndpointRule>,
     endpoint_veto_nats: Option<f32>,
+    /// The rule that fired on the last `accept`, with the frame count it fired at.
+    last_endpoint: Option<(usize, Endpoint)>,
     frame_offset: usize,
     samples_processed: u64,
     samples_round_start: u64,
@@ -334,6 +357,7 @@ impl<'m> Recognizer<'m> {
             silence_weighting: sw,
             endpoint_rule: options.endpoint_rule.clone(),
             endpoint_veto_nats: None,
+            last_endpoint: None,
             model,
             graph,
             sample_rate,
@@ -707,12 +731,16 @@ impl<'m> Recognizer<'m> {
         self.floor.feed(samples);
         self.samples_processed += samples.len() as u64;
         self.update_stable();
-        let endpoint = self.endpoint_detected();
+        let reason = self.endpoint_reason();
+        let endpoint = reason.is_some();
         let decoded = self
             .decoder
             .as_ref()
             .map(|d| d.num_frames_decoded())
             .unwrap_or(0);
+        if let Some(r) = reason {
+            self.last_endpoint = Some((decoded, r));
+        }
         let sample =
             self.samples_round_start + (self.frame_offset + decoded) as u64 * self.frame_samples();
         Step { endpoint, sample }
@@ -720,12 +748,16 @@ impl<'m> Recognizer<'m> {
 
     /// libvosk's `EndpointDetected` over the current decoding.
     pub fn endpoint_detected(&self) -> bool {
-        let Some(dec) = self.decoder.as_ref() else {
-            return false;
-        };
+        self.endpoint_reason().is_some()
+    }
+
+    /// The first of the model's rules that fires, else the host's bound if it does.
+    /// `[[rr:TD-11#Decision outcome]]`
+    pub fn endpoint_reason(&self) -> Option<Endpoint> {
+        let dec = self.decoder.as_ref()?;
         let n = dec.num_frames_decoded();
         if n == 0 {
-            return false;
+            return None;
         }
         let conf = &self.model.conf;
         let shift =
@@ -750,23 +782,66 @@ impl<'m> Recognizer<'m> {
                 && relative <= r.max_relative_cost
                 && utterance >= r.min_utterance_length
         };
-        if conf.rules.iter().any(fires) {
-            return true;
+        if let Some(i) = conf.rules.iter().position(fires) {
+            return Some(Endpoint::Rule(i as u8 + 1));
         }
         if !self.endpoint_rule.as_ref().is_some_and(fires) {
-            return false;
+            return None;
         }
-        match self.endpoint_veto_nats {
-            None => true,
+        let vetoed = match self.endpoint_veto_nats {
+            None => false,
             Some(nats) => {
                 let alts = dec.alternatives(false, usize::MAX);
-                let Some(top) = alts.first() else { return true };
-                !alts.iter().skip(1).any(|a| {
+                let Some(top) = alts.first() else {
+                    return Some(Endpoint::Bound);
+                };
+                alts.iter().skip(1).any(|a| {
                     a.words.len() > top.words.len()
                         && a.words[..top.words.len()] == top.words[..]
                         && a.cost - top.cost <= nats
                 })
             }
+        };
+        (!vetoed).then_some(Endpoint::Bound)
+    }
+
+    /// Milliseconds each entry of a path's word list has held its place in the partial, read off
+    /// the stable list by position: zero where the list holds something else, which is a word
+    /// the final carries and no partial showed. `[[rr:TD-11#Decision outcome]]`
+    fn holds(&self, path: &Path, now: u64) -> Vec<(Entry, u64)> {
+        self.entries(path)
+            .into_iter()
+            .enumerate()
+            .map(|(j, e)| {
+                let token = match e.word {
+                    EntryWord::Word(w) => w,
+                    EntryWord::Silence => -1,
+                    EntryWord::Speech => -2,
+                };
+                let since = match self.stable.get(j) {
+                    Some(&(t, since)) if t == token => since,
+                    _ => now,
+                };
+                let ms = ((now - since) as f64 / self.sample_rate as f64 * 1000.0).round() as u64;
+                (e, ms)
+            })
+            .collect()
+    }
+
+    fn write_final_words(&self, out: &mut String, path: &Path, now: u64) {
+        let mut first = true;
+        for (span, hold) in self.holds(path, now) {
+            if !matches!(span.word, EntryWord::Word(_)) {
+                continue;
+            }
+            if !first {
+                out.push_str(", ");
+            }
+            first = false;
+            // [[rr:TD-8#A final word carries its energy]]
+            self.write_word(out, &span, true, true, now);
+            out.pop();
+            out.push_str(&format!(", \"stable_ms\": {hold}}}"));
         }
     }
 
@@ -866,18 +941,6 @@ impl<'m> Recognizer<'m> {
             next_word += 1;
         }
         spans
-    }
-
-    /// Words only, libvosk's final word list.
-    fn word_entries(&self, path: &Path) -> Vec<Entry> {
-        self.align(path)
-            .into_iter()
-            .map(|s| Entry {
-                word: EntryWord::Word(s.word),
-                start_frame: s.start_frame,
-                end_frame: s.end_frame,
-            })
-            .collect()
     }
 
     fn seconds(&self, frame: usize) -> f64 {
@@ -1136,7 +1199,7 @@ impl<'m> Recognizer<'m> {
         &self.last_result
     }
 
-    fn final_json(&self) -> String {
+    fn final_json(&self, reason: Endpoint) -> String {
         let Some(dec) = self.decoder.as_ref() else {
             return "{\"text\": \"\"}".into();
         };
@@ -1158,12 +1221,7 @@ impl<'m> Recognizer<'m> {
                 ));
                 if self.words {
                     out.push_str("\"result\": [");
-                    for (j, span) in self.word_entries(alt).iter().enumerate() {
-                        if j > 0 {
-                            out.push_str(", ");
-                        }
-                        self.write_word(&mut out, span, false, true, now);
-                    }
+                    self.write_final_words(&mut out, alt, now);
                     out.push_str("], ");
                 }
                 out.push_str("\"text\": ");
@@ -1171,6 +1229,7 @@ impl<'m> Recognizer<'m> {
                 out.push('}');
             }
             out.push(']');
+            out.push_str(&format!(", \"endpoint\": \"{}\"", reason.label()));
             self.push_floor(&mut out);
             out.push('}');
             return out;
@@ -1178,17 +1237,12 @@ impl<'m> Recognizer<'m> {
         let path = dec.best_path(true).unwrap_or_default();
         if self.words {
             out.push_str("\"result\": [");
-            for (j, span) in self.word_entries(&path).iter().enumerate() {
-                if j > 0 {
-                    out.push_str(", ");
-                }
-                // [[rr:TD-8#A final word carries its energy]]
-                self.write_word(&mut out, span, true, true, now);
-            }
+            self.write_final_words(&mut out, &path, now);
             out.push_str("], ");
         }
         out.push_str("\"text\": ");
         write_string(&mut out, &self.text_of_path(&path));
+        out.push_str(&format!(", \"endpoint\": \"{}\"", reason.label()));
         self.push_floor(&mut out);
         out.push('}');
         out
@@ -1201,8 +1255,14 @@ impl<'m> Recognizer<'m> {
             self.last_result = "{\"text\": \"\"}".into();
             return &self.last_result;
         }
+        self.update_stable();
+        let decoded = self.decoder.as_ref().map(|d| d.num_frames_decoded());
+        let reason = match self.last_endpoint.take() {
+            Some((at, r)) if Some(at) == decoded => r,
+            _ => Endpoint::Host,
+        };
         self.state = State::Endpoint;
-        self.last_result = self.final_json();
+        self.last_result = self.final_json(reason);
         &self.last_result
     }
 
@@ -1217,8 +1277,10 @@ impl<'m> Recognizer<'m> {
         }
         self.update_silence_weights();
         self.advance_decoding();
+        self.update_stable();
+        self.last_endpoint = None;
         self.state = State::Finalized;
-        self.last_result = self.final_json();
+        self.last_result = self.final_json(Endpoint::Flush);
         // libvosk drops the pipeline here; the next accept rebuilds it.
         if let Some(d) = &self.decoder {
             self.frame_offset += d.num_frames_decoded();

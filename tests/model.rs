@@ -613,3 +613,39 @@ fn a_wordless_reading_names_what_its_tail_is() {
         }
     }
 }
+
+/// `[[rr:TD-11#Decision outcome]]`: every final says what closed it, and every final word says
+/// how long it had held in the partial.
+#[test]
+fn a_final_says_what_closed_it_and_how_long_its_words_held() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let mut audio = clip("yes");
+    audio.extend(vec![0i16; 16000]);
+    audio.extend(clip("seven"));
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    rec.set_words(true);
+    let (_, finals) = decode(&mut rec, &audio);
+    let labels: Vec<String> = finals
+        .iter()
+        .map(|f| text_of_key(f, "\"endpoint\": "))
+        .collect();
+    assert_eq!(
+        labels.last().map(String::as_str),
+        Some("flush"),
+        "{finals:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l.starts_with("rule")),
+        "a model rule closes the pause: {labels:?}"
+    );
+    for f in &finals {
+        let n_words = f.matches("\"word\": ").count();
+        let n_holds = f.matches("\"stable_ms\": ").count();
+        assert_eq!(n_words, n_holds, "{f}");
+        if text_of(f) == "yes" {
+            let hold: f64 = num_of_key(f, "\"stable_ms\": ");
+            assert!(hold >= 200.0, "a spoken word held before its final: {f}");
+        }
+    }
+}

@@ -383,7 +383,9 @@ def run_stream(eng, pcm, block_ms, alternatives, words_on=True, parity=None):
         fed += len(chunk) // 2
         if rec.AcceptWaveform(chunk):
             f = json.loads(rec.Result())
-            finals.append(dict(fed=fed, seg=seg, text=f.get("text", ""), result=f.get("result") or []))
+            finals.append(
+                dict(fed=fed, seg=seg, text=f.get("text", ""), result=f.get("result") or [], endpoint=f.get("endpoint"))
+            )
             blocks.append(dict(fed=fed, adv=None, final=True, stable=None, word=None))
             seg += 1
             prev, prev_readings, first_seen, prev_words0 = None, None, {}, []
@@ -413,8 +415,17 @@ def run_stream(eng, pcm, block_ms, alternatives, words_on=True, parity=None):
             )
         )
     f = json.loads(rec.FinalResult())
-    finals.append(dict(fed=fed, seg=seg, text=f.get("text", ""), result=f.get("result") or []))
+    finals.append(
+        dict(fed=fed, seg=seg, text=f.get("text", ""), result=f.get("result") or [], endpoint=f.get("endpoint"))
+    )
     return states, blocks, finals
+
+
+def never_shown(final):
+    """A worded final none of whose words had held in a partial: every word's hold is zero.
+    `[[rr:TD-11#Decision outcome]]`"""
+    words = [e for e in final.get("result") or [] if sc.words_of(e["word"])]
+    return bool(words) and all(e.get("stable_ms", None) == 0 for e in words)
 
 
 def run_stream_text(eng, pcm, block_ms, words_on=False):
@@ -719,7 +730,8 @@ def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
     hits = Counter()
     lead = []
     by_pause = {f"{lo}-{hi}": dict(n=0, mistaken=0) for lo, hi in zip(edges, edges[1:])}
-    finals = words_in_finals = 0
+    finals = words_in_finals = unshown = 0
+    by_rule = Counter()
     samples = 0
     words_total = lost = restarted = 0
     for s_ in streams:
@@ -753,6 +765,10 @@ def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
             restarted += covering > 1
         finals += len(s_["finals"])
         words_in_finals += sum(1 for f in s_["finals"] if sc.words_of(f["text"]))
+        unshown += sum(1 for f in s_["finals"] if never_shown(f))
+        for f in s_["finals"]:
+            if sc.words_of(f["text"]):
+                by_rule[f.get("endpoint") or "?"] += 1
         samples += s_["samples"]
     minutes = samples / RATE / 60.0
     return dict(
@@ -764,6 +780,8 @@ def runtime_finals(streams, edges=(100, 200, 300, 400, 500, 600, 700, 800)):
         by_pause=by_pause,
         finals=finals,
         finals_with_a_word=words_in_finals,
+        finals_never_shown=unshown,
+        worded_finals_by_endpoint=dict(by_rule),
         finals_per_min=finals / minutes if minutes else float("nan"),
         minutes=minutes,
         words=words_total,
@@ -2124,6 +2142,10 @@ def main():
         R1=alarms(noise_streams, npa1, "all", a.block_ms),
         finals=sum(len(s_["finals"]) for s_ in noise_streams),
         finals_with_a_word=sum(1 for s_ in noise_streams for f in s_["finals"] if sc.words_of(f["text"])),
+        finals_never_shown=sum(1 for s_ in noise_streams for f in s_["finals"] if never_shown(f)),
+        worded_finals_by_endpoint=dict(
+            Counter(f.get("endpoint") or "?" for s_ in noise_streams for f in s_["finals"] if sc.words_of(f["text"]))
+        ),
         minutes=sum(s["samples"] for s in noise_streams) / RATE / 60.0,
     )
 
@@ -2692,8 +2714,8 @@ def runtime_finals_section(r, a):
         "nats within which a reading extending the partial vetoes the final.",
         "",
         "| engine | pauses ended | finishes called | ms after the word's energy end p50 / p90 | "
-        "finals | with a word | per minute | words lost | words decoded twice |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "finals | with a word | never shown | per minute | words lost | words decoded twice |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for name, d in rows:
         tot = d["totals"]
@@ -2701,9 +2723,18 @@ def runtime_finals_section(r, a):
             f"| {name} | {share(d['pauses_mistaken'], tot.get('pause', 0))} | "
             f"{share(d['finishes_called'], tot.get('finish', 0))} | "
             f"{num(d['finish_ms_p50'])} / {num(d['finish_ms_p90'])} | {d['finals']} | "
-            f"{d['finals_with_a_word']} | {d['finals_per_min']:.1f} | "
+            f"{d['finals_with_a_word']} | {d.get('finals_never_shown', '?')} | {d['finals_per_min']:.1f} | "
             f"{share(d['lost'], d['words'])} | {share(d['restarted'], d['words'])} |"
         )
+    L += [
+        "",
+        "*Never shown* counts the worded finals none of whose words had held in a partial: every "
+        "word's `stable_ms` is zero, `[[rr:TD-11#Decision outcome]]`. A `?` is a row recorded "
+        "before finals carried the field. By the rule that closed them, the worded finals of the "
+        "first row: "
+        + ", ".join(f"{k} {v}" for k, v in sorted(rows[0][1].get("worded_finals_by_endpoint", {}).items()))
+        + ".",
+    ]
     stale = [name for name, d in r.get("A5_bound", {}).items() if not d["same_streams"]]
     if stale:
         L += ["", f"**{', '.join(stale)} ran over a different stream set; its row is not paired.**"]
@@ -2936,7 +2967,11 @@ def page(r, a, chosen):
         "",
         f"The recordings alone also produced {n['finals']} finals over {n['minutes']:.1f} minutes, "
         f"{n['finals_with_a_word']} of them carrying a word, which is the figure the benchmark's "
-        "noise pass reports; the rest are the 5 s silence rule closing a wordless stretch.",
+        "noise pass reports; the rest are the 5 s silence rule closing a wordless stretch. Of the "
+        f"worded ones {n.get('finals_never_shown', '?')} carried words no partial had shown, and by "
+        "the rule that closed them: "
+        + ", ".join(f"{k} {v}" for k, v in sorted(n.get("worded_finals_by_endpoint", {}).items()))
+        + ".",
         "",
         "### The end-of-speech confusion",
         "",
