@@ -1,11 +1,11 @@
 {
  "provenance": {
-  "date": "2026-09-13 04:19:38Z",
-  "utter_revision": "d47027b",
+  "date": "2026-09-13 09:07:29Z",
+  "utter_revision": "0362249",
   "source_dirty": false,
-  "docs_dirty": false,
+  "docs_dirty": true,
   "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
-  "wheel_revision": "d47027baeb022a173e093abe0e147c16f4f43cd9",
+  "wheel_revision": "036224951bac5ce49c585266b500c1894e187dc7",
   "wheel_matches_head": true,
   "engines": {
    "utterpy": "0.0.1",
@@ -34,7 +34,7 @@
   "wordless_gap_floors": "-70,-60,-40",
   "wordless_words": 600,
   "no_streams": false,
-  "bound_runs": "/home/jared/.cache/utter-bound-runs/b300.json,/home/jared/.cache/utter-bound-runs/b300-4.json,/home/jared/.cache/utter-bound-runs/b300-8.json"
+  "bound_runs": "/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b100.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300-4.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300-8.json"
  },
  "wheel": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
  "grammar_size": 92,
@@ -96,7 +96,7 @@
    "minutes": 78.57144583333334
   }
  },
- "decode_seconds": 207.14571123197675,
+ "decode_seconds": 186.94469584990293,
  "fit": {
   "bound_ms": 500,
   "sil_delta": -8.0,
@@ -9731,6 +9731,55 @@
   "restarted": 6
  },
  "A5_bound": {
+  "utterpy@100": {
+   "totals": {
+    "pause": 1458,
+    "finish": 750
+   },
+   "pauses_mistaken": 1330,
+   "finishes_called": 727,
+   "finish_ms_p50": 481.6875,
+   "finish_ms_p90": 623.625,
+   "by_pause": {
+    "100-200": {
+     "n": 205,
+     "mistaken": 153
+    },
+    "200-300": {
+     "n": 205,
+     "mistaken": 174
+    },
+    "300-400": {
+     "n": 202,
+     "mistaken": 183
+    },
+    "400-500": {
+     "n": 213,
+     "mistaken": 205
+    },
+    "500-600": {
+     "n": 215,
+     "mistaken": 210
+    },
+    "600-700": {
+     "n": 221,
+     "mistaken": 216
+    },
+    "700-800": {
+     "n": 197,
+     "mistaken": 189
+    }
+   },
+   "finals": 2232,
+   "finals_with_a_word": 2156,
+   "finals_per_min": 28.40726648628236,
+   "minutes": 78.57144583333334,
+   "words": 2208,
+   "lost": 47,
+   "restarted": 6,
+   "wheel_revision": "afcd9ee2311fcc24dc78555d28c0210f6014026a",
+   "same_streams": true
+  },
   "utterpy@300": {
    "totals": {
     "pause": 1458,
@@ -9777,7 +9826,7 @@
    "words": 2208,
    "lost": 49,
    "restarted": 6,
-   "wheel_revision": "d47027baeb022a173e093abe0e147c16f4f43cd9",
+   "wheel_revision": "afcd9ee2311fcc24dc78555d28c0210f6014026a",
    "same_streams": true
   },
   "utterpy@300/4": {
@@ -9826,7 +9875,7 @@
    "words": 2208,
    "lost": 49,
    "restarted": 6,
-   "wheel_revision": "d47027baeb022a173e093abe0e147c16f4f43cd9",
+   "wheel_revision": "afcd9ee2311fcc24dc78555d28c0210f6014026a",
    "same_streams": true
   },
   "utterpy@300/8": {
@@ -9875,7 +9924,7 @@
    "words": 2208,
    "lost": 48,
    "restarted": 6,
-   "wheel_revision": "d47027baeb022a173e093abe0e147c16f4f43cd9",
+   "wheel_revision": "afcd9ee2311fcc24dc78555d28c0210f6014026a",
    "same_streams": true
   }
  },
