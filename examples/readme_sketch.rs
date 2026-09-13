@@ -1,4 +1,4 @@
-//! The sketch in `[[rr:README.md#Interface]]`, compiled: CI builds every target, so the README cannot
+//! The sketch in `[[rr:README.md#Rust]]`, compiled: CI builds every target, so the README cannot
 //! drift from the interface.
 use std::path::Path;
 struct Capture;

@@ -1,316 +1,125 @@
 # utter
 
-Pure-Rust streaming speech decoder for Vosk (Kaldi nnet3) models, with
-zero dependencies. Feed 16 kHz audio and get the best-path partial after
-every block, the distinct hypotheses alive in the search beam, word
-times, runtime word-list grammars, and Kaldi endpointing. No C
-toolchain, no Docker, no cloud.
+[![CI](https://github.com/pyscape/utter/actions/workflows/ci.yml/badge.svg)](https://github.com/pyscape/utter/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## A faster end of speech, if you ask for it
+A pure-Rust streaming speech recognizer for [Vosk](https://alphacephei.com/vosk/)
+models, built for applications that act on partial results. Feed it
+16 kHz audio in small blocks and after every block it tells you the
+words it believes so far, the rival readings it is still weighing, how
+loud and how stable each word is, and when the speaker stopped.
 
-Kaldi's endpoint rules wait for the trailing silence after a word to
-reach their own bounds, half a second at the earliest and longer while
-the utterance is short, so a final lands a median 870 ms after the
-word's energy ends. utter keeps those rules for parity and adds one
-bound of the host's beside them, off by default: a final once the
-trailing silence reaches the milliseconds you name, and, if you give a
-margin, no final while a reading that extends the partial by a further
-word is within that many nats of the leader. The margin exists because
-the silence clock cannot see a word beginning: the next word's label is
-not on the best path while the pause before it still counts, but the
-beam already holds that word as a rival, and the veto reads it
-`[[rr:TD-8#A host may add one endpoint bound of its own, off by default]]`.
+Zero dependencies. No C toolchain, no Docker, no cloud. It loads a stock
+Vosk model directory as-is.
 
-```rust
-rec.set_endpoint_bound(300.0, 8.0);   // ms of trailing silence, veto margin in nats
+```python
+import json, utterpy
+
+model = utterpy.Model("vosk-model-small-en-us-0.15")
+rec = utterpy.KaldiRecognizer(model, 16000, json.dumps(["alpha", "bravo", "seven"]))
+rec.SetWords(True)
+rec.SetPartialWords(True)
+rec.SetPartialAlternatives(4)
+
+for block in microphone():                 # 40 ms of 16-bit mono PCM
+    if rec.AcceptWaveform(block):          # the speaker stopped
+        print(rec.Result())
+    else:
+        print(rec.PartialResult())         # best guess, rivals, word spans
 ```
 
-Python: `rec.SetEndpointBound(300, 8)`; C: `utter_recognizer_set_endpoint_bound`.
+## Contents
 
-Measured on the runtime's own finals with the bound at 300 ms: every
-finish arrives about 200 ms sooner, median 866 to 660 ms and p90 1001
-to 799 ms on the built streams and 870 to 660 ms on single-word clips;
-the same finishes are called, 732 of 750; no word is lost or split on
-800 single-word clips and three fewer are lost on the streams. The
-cost is pauses inside an utterance taken for its end. An ended pause
-does not drop a word: the recognizer emits a final for the words so
-far and the next word arrives in the next final, so "alpha seven"
-reaches the host as two finals instead of one, and the words no final
-covers stay at 2% with or without the bound. It does split phrases:
-64.6% of built pauses are ended under the stock rules, 82.9% under the
-bound, and the added share is largest, 23 to 28 points, on pauses
-shorter than the half second the model's own rule waits. The 8 nat
-veto gives back a few points of that for 20 ms of latency
-`[[rr:The same stretches, from the finals the runtime emitted]]`
-`[[rr:Endpoint latency]]`. A host that acts on single words pays
-nothing for this; a host that needs a whole phrase in one final either
-joins consecutive finals itself or leaves the bound unset, which is
-the default and is byte-identical to the stock rules. The pauses there are built uniform from
-100 to 800 ms, so the mistake rate is a property of that distribution;
-on real speech it depends on how your speakers pause, and a host whose
-utterances carry several words should read the states page's
-pause-length table before choosing a bound.
+- [Why utter](#why-utter)
+- [Status](#status)
+- [Quick start](#quick-start)
+- [What a partial tells you](#what-a-partial-tells-you)
+- [Reading a partial](#reading-a-partial)
+- [Ending speech sooner](#ending-speech-sooner)
+- [Features](#features)
+- [Models](#models)
+- [Benchmarks](#benchmarks)
+- [Building and testing](#building-and-testing)
+- [Repository layout](#repository-layout)
+- [Third-party code and license](#third-party-code-and-license)
+
+## Why utter
+
+Vosk is the best small offline recognizer for a closed vocabulary, and
+it is fast: under a grammar of a few dozen words, a spoken word appears
+in the partial result a median 40 ms after the word ends. Streaming
+ONNX models tried under the same grammar took about half a second.
+
+But Vosk is a C++ wrapper around Kaldi, and Kaldi does not build on
+Windows without a Docker cross-compile. Anyone who needs one more field
+out of the decoder than the stock wheel exposes ends up maintaining a
+fork they cannot easily ship.
+
+utter reimplements the part of that stack a partials-first application
+uses, in Rust, from the files a stock Vosk model directory already
+contains. It is not a port of libvosk and not a general Kaldi. It
+decodes, it tells you what it thinks so far and what else it is still
+considering, and it tells you when the speaker stopped. Its output is
+checked block-for-block against the stock Vosk wheel on the same audio.
 
 ## Status
 
-Pre-alpha, and not published anywhere yet. The streaming path is built
-and measured: front end, i-vector, chunked network, decoder, partials
-with alternatives and word times, endpointing, and the C ABI. It
-decodes the reference model against the stock wheel.
+**Pre-alpha.** Not yet published to crates.io or PyPI. The streaming
+path is complete and measured: front end, i-vector adaptation, chunked
+neural network, decoder, partials with alternatives and word times,
+endpointing, a C ABI and a Python binding.
 
-What the gates found is recorded in [`docs/gates/`](docs/gates/), one
-file per gate, and what a public dataset says is in
-[`docs/benchmarks/`](docs/benchmarks/). One thing is open:
-segment-for-segment agreement with libvosk sits below the mark the gate
-asks for, on near ties in the acoustics. The front end, i-vector
-included, matches the wheel's Kaldi within the gate, quiet speech
-included.
+On the public Speech Commands benchmark it matches the stock Vosk
+wheel: 91.8% against 91.5% accuracy on 11,005 clips, finals agreeing
+on 99.2% of them, the same 40 ms median first-appearance latency. See
+[Benchmarks](#benchmarks).
 
-Decisions live in [`docs/td/`](docs/td/): TD-1 describes the record
-system, TD-2 is the runtime specification. The first use case it is
-built for is in [`usecases/`](usecases/).
+One parity gap is open: segment-for-segment agreement with libvosk on
+the private test corpus sits just under the mark the gate asks for, on
+near ties in the acoustics. Every gate result is in
+[docs/gates/](docs/gates/).
 
-## Why
+Supported today: the English small model. Other small models share the
+layout and should work but have not been checked.
 
-Vosk is the best small offline recognizer for a closed vocabulary, and
-its partials are fast: under a grammar of a few dozen words a spoken word shows up in
-the partial a median 40 ms after it ends, against about half a second
-for every ONNX streaming model tried under the same grammar. But Vosk
-is a C++ wrapper around Kaldi, and Kaldi does not build on Windows
-without a Docker cross-compile, so anyone who needs one more field out
-of the decoder than the stock wheel exposes ends up maintaining a fork
-they cannot easily ship.
+## Quick start
 
-utter reimplements only the parts of that stack a partials-first
-application uses, in Rust, from the model files a stock Vosk model
-directory already contains. It is not a port of libvosk and it is not
-a general Kaldi. It decodes, it tells you what it thinks so far and
-what else it is still considering, and it tells you when the speaker
-stopped.
+### Python
 
-## What a partial carries
+The Python package is [utterpy](https://github.com/pyscape/utterpy),
+built with [maturin](https://www.maturin.rs/). Its API mirrors the
+`vosk` package so existing code keeps working:
 
-The stock wheel's partial is a line of text. A host that needs to know
-when a word is safe to act on, which rivals the decoder is still
-weighing, or whether a sound was speech at all runs its own detectors
-beside the decoder. utter puts that evidence in the partial. Fed the
-same audio at the same block, where the stock wheel returns
-
-```json
-{"partial": "alpha seven"}
+```bash
+git clone https://github.com/pyscape/utterpy && cd utterpy
+python -m venv .venv && .venv/bin/pip install maturin
+.venv/bin/maturin develop --release
 ```
-
-utter returns the same text and, beside it, the readings still alive in
-the beam, the span and loudness and hold of each word, and the room's
-own noise floor:
-
-```json
-{
-  "partial": "alpha seven",
-  "partial_alternatives": [
-    {"text": "alpha seven",  "confidence": 1.94,  "result": [ ... ],
-     "relation": "same",    "lead_delta": 0.41},
-    {"text": "alpha eleven", "confidence": -3.32, "result": [ ... ],
-     "relation": "differs", "lead_delta": -0.41}
-  ],
-  "partial_result": [
-    {"word": "alpha", "start_sample": 196800, "end_sample": 202080, "energy_dbfs": -23.2, "stable_ms": 960},
-    {"word": "seven", "start_sample": 202080, "end_sample": 207680, "energy_dbfs": -22.8, "stable_ms": 240},
-    {"word": "[sil]",  "start_sample": 207680, "end_sample": 208320, "energy_dbfs": -48.6, "stable_ms": 0}
-  ],
-  "floor_dbfs": -51.7
-}
-```
-
-The `start` and `end` seconds libvosk emits sit on each word too, left
-out here for room.
-
-| field | stock wheel | what a host does with it |
-|---|---|---|
-| `partial_alternatives` | absent | the distinct readings still alive, ranked; the gap from the first `confidence` to the second is the strongest single sign the word is about to be revised |
-| `confidence` | absent | orders the readings; a raw path cost, never a probability |
-| `relation` | absent | how the reading stands against the partial as a word sequence: `same`, `prefix`, `extends`, `differs`; which readings to look at for a competing phrase, a missing tail or a possible next word |
-| `lead_delta` | absent | how much the reading gained on the field since the previous decoding advance, in nats; null when it was absent then, so a null is a broken history and not a zero |
-| `stable_ms` | absent | how long the word has held its place, the hold to wait out before acting on it |
-| `energy_dbfs` | absent | the loudness under the word, for telling a spoken word from one read into a quiet room |
-| `floor_dbfs` | absent | the room's own noise floor, so a silence gate travels between microphones rather than being a fixed dBFS |
-| `start_sample`, `end_sample` | absent | the word's span in samples of the audio fed: one clock, no drift against a second detector |
-| `[sil]` | empty string | a best path carrying no word says so, instead of vanishing or being forced to the nearest word |
-
-Stock `partial_result`, where it is turned on, carries `word`, `start`,
-`end` and `conf` in seconds; utter's carries the sample span, the energy
-and the hold, and adds the ranked readings the stock partial never had.
-Turning stock partial words on also costs the stock partial its text on
-most blocks: libvosk builds that path from a lattice, which trails the
-audio, and over the first stream of
-`[[rr:Silence direction and word transitions on a built stream]]` its
-partial carried text on 24 blocks of 1374 with partial words on against
-510 without, where utter's carried text on 510 either way.
-
-Finals gain the same `energy_dbfs` on each word and `floor_dbfs` beside
-the text. What each field means exactly is `[[rr:TD-2#Interface]]`; how a
-host reads them for silence and for end of speech is
-`[[rr:TD-8#Decision outcome]]`. The trailing `[sil]` entry ends at the
-last frame decoded rather than at the last sample fed, so its span lags
-the audio by the chunk, a constant on the built stream; a host adding
-its own bound to that span is adding it to a clock that runs behind.
-
-**How much to trust a partial word.** A word in a partial may still be
-revised as more audio arrives; on the Speech Commands split the first
-word shown is later revised 12% of the time. What predicts it is not the
-word's own `confidence`, which is a raw path cost, but its lead over the
-next reading, and the API already returns that lead in
-`partial_alternatives`. The decoder's costs are log-likelihoods in nats,
-so the gap between the top two confidences is a two-way softmax, and its
-sigmoid is a usable probability that the leading word will hold:
 
 ```python
-import json, math
+import json, wave, utterpy
 
-def trust(partial_json):
-    """P that the top reading holds, from its lead over the next reading."""
-    alts = json.loads(partial_json).get("partial_alternatives") or []
-    if len(alts) < 2:
-        return 1.0                                    # nothing else is close
-    gap = alts[0]["confidence"] - alts[1]["confidence"]   # nats, >= 0
-    return 1.0 / (1.0 + math.exp(-gap))                   # sigmoid(gap)
+model = utterpy.Model("vosk-model-small-en-us-0.15")
+rec = utterpy.KaldiRecognizer(model, 16000, json.dumps(["alpha", "bravo", "seven"]))
+rec.SetWords(True)
+rec.SetPartialWords(True)
+rec.SetPartialAlternatives(4)
 
-# act on the leading word only once the reading is clear of its rival
-p = rec.PartialResult()
-if trust(p) >= 0.9:                                   # a lead of about 2.2 nats
-    act(json.loads(p)["partial"])
+with wave.open("alpha_seven.wav") as w:          # 16 kHz, 16-bit, mono
+    while block := w.readframes(640):            # 40 ms
+        if rec.AcceptWaveform(block):
+            print("final:", rec.Result())
+        else:
+            print("partial:", rec.PartialResult())
+print("final:", rec.FinalResult())
 ```
 
-That sigmoid is a Viterbi approximation over the two leading beam
-readings, not a lattice posterior, but it is well calibrated in practice:
-the derivation and a benchmark that holds the predicted survival against
-the measured survival over the testing split are in
-[`docs/benchmarks/partial-trust.md`](docs/benchmarks/partial-trust.md).
+### Rust
 
-The second read is the entropy of the readings' softmax, `-sum(p*log p)`
-over `softmax(confidences)`, and it costs nothing beyond the partial in
-hand: it ranks first sightings as well as the gap does and keeps ranking
-them inside every bucket of the gap, where the gap itself is held fixed,
-`[[rr:The same signals at equal gap]]`. It is always defined, where the
-motion below usually is not. The runtime does not report it, because it
-is a function of the confidences one partial already carries.
-
-The third read, the motion `lead_delta`, is not a trust read. Measured
-on the runtime's history over every surviving group, which carries a
-delta for the leading reading on nine sightings in ten, the motion does
-not improve on the gap at the first sighting or at the bar above, and
-within a bucket of the gap it barely ranks at all
-`[[rr:What the motion figures say]]`. What does buy a decision here is
-waiting: one advance costs 240 ms and by then the revision is usually
-already on the page `[[rr:Holding one advance]]`. Read the motion for
-the state reads below instead, and for the one trust-shaped case it does
-answer: a lead and its motion disagreeing in sign, a reading that leads
-but is losing, is the case to wait out `[[rr:Leading but losing]]`.
-
-## Five reads off one partial
-
-Each is a line, and the bar in it is the host's. The figures behind
-them are on the two benchmark pages, which is also where the reads that
-did not survive measurement are recorded.
-
-```python
-alts = json.loads(p)["partial_alternatives"]
-top  = alts[0]
-
-# 1. trust: will the leading word hold? (sigmoid(gap), above)
-trust = 1 / (1 + math.exp(-(top["confidence"] - alts[1]["confidence"])))
-
-# 2. a word is coming: a reading that extends the partial and is gaining
-coming = [a for a in alts if a["relation"] == "extends"
-          and (a["lead_delta"] or 0) > 0]
-# its extra word is the text past the partial's:
-next_word = coming[0]["text"][len(top["text"]):].split()[:1] if coming else []
-
-# 3. kept silence: the empty reading leads and its lead is not moving
-quiet = top["text"] == "[sil]" and abs(top["lead_delta"] or 0) < 0.5
-
-# 4. the last word may not be there: the best reading without it
-prefix = next((a for a in alts if a["relation"] == "prefix"), None)
-doubt  = prefix["confidence"] - top["confidence"] if prefix else None
-
-# 5. end of speech: the trailing [sil] entry's span, against your bound
-tail = json.loads(p)["partial_result"][-1]
-ended = tail["word"] == "[sil]" and \
-        (tail["end_sample"] - tail["start_sample"]) / 16000 > 0.5
+```toml
+[dependencies]
+utter = { git = "https://github.com/pyscape/utter" }
 ```
-
-Read 2 before a first word is every word-carrying reading, since they
-all extend the empty one; the empty reading's *own* velocity is not the
-read, because it costs two alarms a second in silence that is merely
-being kept, where the extending reading costs none
-`[[rr:The two crossings, as fitted signals]]`. Whether either foretells
-a word at all is exploratory and measured on spliced words, not on
-recorded speech `[[rr:Calling a word before it arrives: exploratory]]`;
-what *is* measured is the preview: the coming word's reading is often in
-the beam an advance before the partial grows, and its identity is right
-about one time in six `[[rr:Preview accuracy by the lead still to run]]`.
-
-Read 3 is silence held in the beam as a lead that hovers rather than
-grows `[[rr:What the readings do in silence that is being kept]]`.
-Read 4 is null evidence and nothing more: a `prefix` reading competes by
-omitting the partial's tail, it is not a posterior for a null at a word
-position, and a competitor that is absent from the list is unknown
-evidence rather than evidence of absence
-`[[rr:TD-9#Every reading names its relation to the partial]]`.
-Read 5 is TD-8's clock, and it stays the clock: the motion trades
-mistaken pauses against finishes missed rather than beating it
-`[[rr:The end-of-speech confusion]]`. A null `lead_delta` in any of
-these is a history the reading does not have; treat it as unknown, never
-as a zero.
-
-## What it does
-
-- Loads a stock Vosk model directory: the nnet3 chain acoustic model,
-  the i-vector extractor, and the `HCLr.fst` lookahead graph.
-- Takes a grammar at construction as a list of strings, builds the same
-  bigram libvosk builds, and composes it with the graph.
-- Runs Kaldi-exact MFCC, online CMVN, splice, LDA and the online
-  i-vector estimate, then the network in streaming chunks.
-- Decodes frame-synchronously with Kaldi's beam, max-active and
-  min-active semantics.
-- After every audio block returns the best path as the partial, with
-  each word's start and end in samples of the audio you fed.
-- Returns the distinct word sequences still alive in the beam, ranked
-  by cost, the empty sequence included when it is a contender. These
-  are current to the last decoded frame, not to a lattice that trails
-  the audio.
-- Applies Kaldi's endpoint rules and reports the end of speech as a
-  sample position.
-- Reports per-frame energy and the silence state of the best path from
-  the same loop that decodes, so a caller does not need a second voice
-  activity detector on a second clock.
-
-## What it does not do
-
-- Lattices, lattice determinization, minimum Bayes risk confidences, or
-  lattice n-best. Beam n-best replaces them.
-- Decoding against the model's full language model (`Gr.fst`). A
-  grammar is required.
-- RNNLM or ARPA rescoring, speaker vectors, batch or GPU decoding.
-
-## Dependencies
-
-None today, at runtime or for the build or for the tests: `cargo
-build` fetches nothing and CI fails if the lock file grows a second
-crate. The standard library is the foundation and `std::arch` supplies
-the SIMD paths. Every piece the decoder needs is small enough to own:
-the Kaldi binary readers, a real FFT, a blocked
-single-precision GEMM, Cholesky and conjugate
-gradient for the i-vector, an OpenFst `ConstFst` reader with the
-`olabel_lookahead` add-on, composition and trimming, and JSON. The
-policy and the two exceptions it reserves are `[[rr:TD-2#Dependency
-policy]]`; neither exception is built, so the crate stands at none of
-any kind.
-
-## Interface
-
-A Rust library, plus a `cdylib` with a C ABI that mirrors it so hosts
-without Rust get the same surface. Sketch:
 
 ```rust
 use std::path::Path;
@@ -337,69 +146,328 @@ while let Some(block) = capture.next_block() {  // 40 ms of mono PCM
 println!("{}", rec.final_result());
 ```
 
-That sketch is [`examples/readme_sketch.rs`](examples/readme_sketch.rs),
-built by CI, so it cannot drift from the interface.
+This is [examples/readme_sketch.rs](examples/readme_sketch.rs), which
+CI builds, so it cannot drift from the API.
 
-Results are JSON strings, the same from the library and the C ABI. They
-keep the key layout of libvosk's `PartialResult` and `Result`, so a host
-that already parses Vosk output keeps parsing, and add what a
-partials-first host asks for: `partial_alternatives` ranked by
-confidence, `start_sample` and `end_sample` beside Kaldi's seconds,
-`energy_dbfs` under each word of a partial and of a final, `stable_ms`
-for how long a partial word has held, `floor_dbfs` for the noise floor
-of the audio fed, and `[sil]` where the reading carries no word.
+### C
 
-What those added fields are and how a host reads them for trust, for
-silence and for end of speech is in "What a partial carries" above and
-in `[[rr:TD-8#Decision outcome]]`.
+`cargo build --release` also produces a `cdylib`. The header is
+[include/utter.h](include/utter.h):
 
-## Model compatibility
+```c
+UtterModel *model = utter_model_new("vosk-model-small-en-us-0.15");
+UtterRecognizer *rec = utter_recognizer_new_grm(model, 16000.0f, "[\"alpha\", \"bravo\", \"seven\"]");
+utter_recognizer_set_words(rec, 1);
+utter_recognizer_set_partial_words(rec, 1);
+utter_recognizer_set_alternatives(rec, 4);
+
+while (read_block(pcm, 640)) {
+    if (utter_recognizer_accept_waveform_s(rec, pcm, 640))
+        puts(utter_recognizer_result(rec));
+    else
+        puts(utter_recognizer_partial_result(rec));
+}
+puts(utter_recognizer_final_result(rec));
+```
+
+All three return the same JSON strings.
+
+## What a partial tells you
+
+The stock Vosk partial is a line of text:
+
+```json
+{"partial": "alpha seven"}
+```
+
+utter returns the same text, and beside it the evidence an application
+otherwise has to reconstruct with its own detectors:
+
+```json
+{
+  "partial": "alpha seven",
+  "partial_alternatives": [
+    {"text": "alpha seven",  "confidence": 1.94,  "result": [ ... ],
+     "relation": "same",    "lead_delta": 0.41},
+    {"text": "alpha eleven", "confidence": -3.32, "result": [ ... ],
+     "relation": "differs", "lead_delta": -0.41}
+  ],
+  "partial_result": [
+    {"word": "alpha", "start_sample": 196800, "end_sample": 202080, "energy_dbfs": -23.2, "stable_ms": 960},
+    {"word": "seven", "start_sample": 202080, "end_sample": 207680, "energy_dbfs": -22.8, "stable_ms": 240},
+    {"word": "[sil]",  "start_sample": 207680, "end_sample": 208320, "energy_dbfs": -48.6, "stable_ms": 0}
+  ],
+  "floor_dbfs": -51.7
+}
+```
+
+Each word also carries Vosk's `start` and `end` in seconds, left out
+here for room. The key layout matches libvosk's, so a parser written
+for Vosk keeps working; the new keys are added after the old ones.
+
+| Field | What it is | What to do with it |
+|---|---|---|
+| `partial_alternatives` | The distinct word sequences still alive in the search, best first. Current to the last decoded frame, not to a lattice that trails the audio. | The gap between the first two confidences is the best single predictor of whether the leading word will be revised. |
+| `confidence` | The reading's path score in nats. A raw cost, not a probability. | Compare readings to each other; never read it alone. |
+| `relation` | How the reading relates to the partial as a word sequence: `same`, `prefix` (it lacks the partial's tail), `extends` (it has one more word), `differs`. | Pick the readings that matter: a competing phrase, a missing last word, a possible next word. |
+| `lead_delta` | How much the reading's lead over the field changed since the last decoding advance, in nats. `null` when it has no history yet. | A reading that extends the partial and is gaining is the next word forming. Treat `null` as unknown, not zero. |
+| `stable_ms` | How long the word has held its place in the partial. | The hold to wait out before acting on the word. |
+| `energy_dbfs` | The loudness of the audio under the word. | Tell a spoken word from one the decoder read into a quiet room. |
+| `floor_dbfs` | The room's noise floor over the last ten seconds. | Set your silence threshold relative to this, so it travels between microphones. |
+| `start_sample`, `end_sample` | The word's span in samples of the audio you fed. | One clock shared with your own code; nothing to align. |
+| `[sil]` | The reading carries no word. | Instead of an empty string or a word forced onto silence, you see that the decoder heard nothing. |
+
+Finals carry the same `energy_dbfs` on every word, including the words
+of each alternative when you ask for more than one, and `floor_dbfs`
+beside the text.
+
+A note on the trailing `[sil]` entry: it ends at the last frame the
+decoder has processed, not at the last sample you fed, so it runs one
+chunk behind the audio. If you add your own threshold to that span,
+you are adding it to a clock that lags.
+
+Turning on partial words in stock Vosk switches it to a lattice-based
+partial that trails the audio; on a test stream its partial had text on
+24 blocks of 1374 with partial words on, against 510 without. utter's
+partial is the same either way.
+
+## Reading a partial
+
+Everything below is a line of Python on the partial you already have.
+The thresholds are yours; the benchmark pages give the figures behind
+each read and record the reads that did not survive measurement.
+
+**Will this word hold?** On the Speech Commands test split, the first
+word shown is later revised 12% of the time. The best predictor is the
+lead of the top reading over the second. The scores are log-likelihoods
+in nats, so the sigmoid of that gap is a usable probability that the
+word survives:
+
+```python
+import json, math
+
+def trust(partial_json):
+    alts = json.loads(partial_json).get("partial_alternatives") or []
+    if len(alts) < 2:
+        return 1.0                                        # nothing else is close
+    gap = alts[0]["confidence"] - alts[1]["confidence"]   # nats, >= 0
+    return 1.0 / (1.0 + math.exp(-gap))
+
+if trust(p) >= 0.9:                                       # a lead of about 2.2 nats
+    act(json.loads(p)["partial"])
+```
+
+This is well calibrated in practice; the derivation and the measured
+survival at each gap are in
+[docs/benchmarks/partial-trust.md](docs/benchmarks/partial-trust.md).
+Two cheaper ways to be surer: the entropy of `softmax(confidences)`
+over the readings, which keeps ranking words correctly even at a fixed
+gap; and simply waiting one more block, which costs 240 ms and by then
+most revisions have already happened.
+
+**Is a word coming?** A reading that `extends` the partial and is
+gaining lead is the next word forming in the beam. The coming word is
+often visible one advance before the partial grows, though its identity
+is right only about one time in six at that point.
+
+**Is the room quiet?** The `[sil]` reading leads and its `lead_delta`
+hovers near zero.
+
+**Might the last word not be there?** The best `prefix` reading's lead
+is the evidence against the tail. It is a competing sequence, not a
+per-word probability; a competitor absent from the list is unknown, not
+disproved.
+
+**Has the speaker finished?** The span of the trailing `[sil]` entry,
+against a threshold of your choosing. Or let the recognizer do it for
+you, below.
+
+```python
+alts = json.loads(p)["partial_alternatives"]
+top  = alts[0]
+
+coming = [a for a in alts if a["relation"] == "extends" and (a["lead_delta"] or 0) > 0]
+next_word = coming[0]["text"][len(top["text"]):].split()[:1] if coming else []
+
+quiet = top["text"] == "[sil]" and abs(top["lead_delta"] or 0) < 0.5
+
+prefix = next((a for a in alts if a["relation"] == "prefix"), None)
+doubt  = prefix["confidence"] - top["confidence"] if prefix else None
+
+tail  = json.loads(p)["partial_result"][-1]
+ended = tail["word"] == "[sil]" and (tail["end_sample"] - tail["start_sample"]) / 16000 > 0.5
+```
+
+What `lead_delta` does not do is improve the trust read: measured over
+every reading the decoder tracks, it adds nothing to the gap. Use it for
+the state reads above, not for trust. The figures are on the
+[partial-states](docs/benchmarks/partial-states.md) page.
+
+## Ending speech sooner
+
+Kaldi's endpoint rules wait for the silence after a word to reach their
+own bounds, half a second at the earliest, so a final lands a median
+870 ms after the word ends. utter keeps those rules and lets you add
+one bound of your own, off by default:
+
+```python
+rec.SetEndpointBound(300, 8)   # ms of trailing silence; veto margin in nats
+```
+
+```rust
+rec.set_endpoint_bound(300.0, 8.0);
+```
+
+The first number ends the segment once the trailing silence reaches
+that many milliseconds. The second is a veto: no final while a reading
+that extends the partial by another word is within that many nats of
+the leader. The veto exists because the silence clock cannot see a word
+beginning, the next word is not on the best path while the pause before
+it still counts, but the beam already holds it as a rival.
+
+What it buys and costs, measured on the recognizer's own finals with
+the bound at 300 ms:
+
+- Every finish arrives about 200 ms sooner: median 866 ms to 660 ms on
+  multi-word streams, 870 ms to 660 ms on single-word clips.
+- The same finishes are called, 732 of 750, and no word is lost or split
+  on 800 single-word clips.
+- The cost is pauses inside a phrase being taken for its end. This does
+  not drop words: the words so far arrive in one final and the next word
+  in the next, so "alpha seven" can reach you as two finals. On streams
+  built with pauses of 100 to 800 ms, the stock rules end 65% of pauses
+  and the bound ends 83%, the difference concentrated on pauses shorter
+  than the half second the stock rule waits.
+
+If your application acts on single words, the bound costs nothing. If
+it needs whole phrases, either join consecutive finals across a short
+gap or leave the bound unset, which is byte-identical to stock Vosk.
+On the first consumer's recordings, an 8 nat veto let bounds as low as
+10 ms run without losing commands, where the same bounds without the
+veto did; measure on your own audio before going below 300.
+
+## Features
+
+- Loads a stock Vosk model directory: the nnet3 chain acoustic model,
+  the i-vector extractor and the `HCLr.fst` lookahead graph.
+- Takes a grammar at construction as a list of words or phrases, builds
+  the same bigram libvosk builds, and composes it with the graph.
+- Kaldi-exact MFCC, online CMVN, splice, LDA and online i-vector
+  estimation, then the network in streaming chunks.
+- Frame-synchronous decoding with Kaldi's beam, max-active and
+  min-active semantics.
+- After every block: the best path as the partial, each word's span in
+  samples, its loudness and how long it has held.
+- The distinct word sequences still alive in the beam, ranked, with
+  each one's relation to the partial and the motion of its lead.
+- Kaldi's endpoint rules, plus an optional bound of your own.
+- The room's noise floor, so silence detection needs no second detector
+  on a second clock.
+- A C ABI and a Python binding with the `vosk` package's API.
+
+Not included, by design:
+
+- Lattices, lattice determinization, minimum Bayes risk confidences or
+  lattice n-best. Beam n-best takes their place.
+- Decoding against the model's full language model. A grammar is
+  required.
+- RNNLM or ARPA rescoring, speaker vectors, batch or GPU decoding.
+
+## Models
 
 Any Vosk small model with the standard layout: `am/final.mdl`,
 `graph/HCLr.fst`, `graph/words.txt`, `graph/disambig_tid.int`,
 `graph/phones/word_boundary.int`, `ivector/`, `conf/mfcc.conf`,
-`conf/model.conf`. The English small model is the reference; the
-German, French, Spanish and Russian small models are believed to share
-the layout and are unchecked until each is decoded against the wheel.
+`conf/model.conf`. The English small model
+`vosk-model-small-en-us-0.15` is the reference. The German, French,
+Spanish and Russian small models share the layout and are expected to
+work; they have not been checked against the wheel yet.
 
-A model whose network uses a component this runtime does not implement
-is refused when it is opened, naming the component, rather than
-decoding with that layer passed through. The larger English model,
-`vosk-model-en-us-0.22-lgraph`, is refused on that rule: it is a
-CNN-TDNN and the convolution is not implemented.
+A model that uses a network component this runtime does not implement
+is refused when opened, naming the component. The larger English model
+`vosk-model-en-us-0.22-lgraph` is refused for that reason: it is a
+CNN-TDNN and convolution is not implemented.
 
-## Verification
+## Benchmarks
 
-The stock `vosk` wheel is the oracle, fed the same blocks from the same
-audio. Each gate has a file under [`docs/gates/`](docs/gates/) recording
-what ran, against which oracle, and the figures. The gates, in order:
+Reproducible measurements on the public
+[Google Speech Commands v2](https://arxiv.org/abs/1804.03209) dataset,
+each paired against the stock Vosk wheel on identical audio, live in
+[docs/benchmarks/](docs/benchmarks/):
 
-1. Batch decode of a replay corpus through the vendored acoustic and
-   graph code, scored against libvosk's finals, with and without
-   i-vectors: the i-vector decision.
-2. Front-end parity: MFCC within 1e-3, i-vectors within 1e-2 relative.
-3. Decoder parity: partial text after each block equals libvosk's on at
-   least 95% of blocks; finals on at least 99% of segments; word times
-   within one output frame.
-4. Latency: the same median and 90th percentile first-appearance
-   figures as the stock wheel, within one block, on the same corpus.
-5. Alternatives: rank 0 always equals the partial; the empty reading is
-   offered as empty when it leads.
-6. Endpoints within one 0.2 s step of libvosk's on 95% of segments.
+| Page | What it measures |
+|---|---|
+| [speech-commands.md](docs/benchmarks/speech-commands.md) | Accuracy under a command grammar, agreement with Vosk, first-appearance and endpoint latency, block size, compute, noise, grammar size, and words appearing on audio where nothing was said |
+| [partial-trust.md](docs/benchmarks/partial-trust.md) | Whether a partial word will hold: the gap as a calibrated probability, against entropy, energy and the motion of each reading's lead, every rule fitted on the validation split and charged in milliseconds of delay |
+| [partial-states.md](docs/benchmarks/partial-states.md) | What the readings say about silence and the next word, on words spliced into streams: end of speech, the preview an extending reading gives, and what the endpoint bound does to real finals |
 
-The gate corpora are the first consumer's private recordings, so the
-files name them only by date. Anything reproducible by a reader is a
-benchmark instead, under [`docs/benchmarks/`](docs/benchmarks/), on a
-public dataset with a published licence.
+Headline figures from the Speech Commands page:
 
-## Third-party code
+| | Vosk 0.3.45 | utter |
+|---|---|---|
+| Accuracy, 11,005 clips, full grammar | 91.49% | 91.79% |
+| First word shown after the clip ends, median / p90 | 40 / 250 ms | 40 / 250 ms |
+| First word shown later revised | 12.3% | 12.4% |
+| Real-time factor, decode only | 0.018 | 0.016 |
 
-The Kaldi model reader, MFCC and nnet3 forward pass start from
+The private gates, run on the first consumer's recordings against the
+wheel, are recorded in [docs/gates/](docs/gates/): front-end parity,
+per-block partial agreement, word times, first-appearance latency,
+alternatives, and endpoints.
+
+## Building and testing
+
+Rust stable, pinned in `rust-toolchain.toml`.
+
+```bash
+cargo build --release          # library, cdylib, and the `stream` tool
+cargo test                     # unit tests and fixtures, no model needed
+UTTER_TEST_MODEL=path/to/vosk-model-small-en-us-0.15 cargo test   # plus decoding tests
+```
+
+There are no dependencies to fetch, at runtime, for the build or for
+the tests, and CI fails if the lock file ever grows one. The pieces the
+decoder needs are small enough to own: the Kaldi binary readers, an
+FFT, a blocked single-precision GEMM with AVX2 paths, Cholesky and
+conjugate gradient for the i-vector, an OpenFst `ConstFst` reader with
+lookahead composition, and JSON.
+
+`target/release/stream` decodes WAV files or a corpus directory and
+prints one JSON line per file with every partial and final; it is what
+the gates and benchmarks are built on. `stream --help` lists its
+options, including diagnostic traces of the decoder's readings.
+
+The benchmark scripts under `scripts/` need Python 3 with `numpy` and
+the `vosk` package for the oracle; each script's header says how to run
+it.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `src/` | The runtime. `recognizer.rs` is the streaming API and JSON, `decoder.rs` the search, `frontend.rs` and `ivector.rs` the features, `compose.rs` the grammar composition, `capi.rs` the C ABI. |
+| `src/bin/stream.rs` | The command-line decoder the gates and benchmarks use. |
+| `include/utter.h` | The C header. |
+| `examples/` | The Rust sketch from this README, built by CI. |
+| `tests/` | Integration tests; the decoding ones run when `UTTER_TEST_MODEL` is set. |
+| `scripts/` | Gate and benchmark scripts. |
+| `docs/benchmarks/` | Public benchmark pages, regenerated by the scripts. |
+| `docs/gates/` | Results of the parity gates on private audio. |
+| `docs/td/` | Technical decision records: why the runtime is built the way it is. TD-2 is the specification. |
+| `usecases/` | The application the runtime was built for. |
+| `third_party/` | Vendored code and its notices. |
+
+Design decisions are recorded before code lands, one file per decision
+in `docs/td/`. Comments and documents cite those records by anchor
+rather than restating them; `docs/td/README.md` explains the
+conventions if you want to contribute.
+
+## Third-party code and license
+
+The Kaldi model reader, MFCC and nnet3 forward pass started from
 [Vosk-Rust](https://github.com/Reza2kn/Vosk-Rust), Apache-2.0, vendored
 as source with its notices kept. Kaldi and OpenFst were read for the
 semantics this crate reproduces; no code from either is included.
 
-## License
-
-MIT. See [LICENSE](LICENSE). Vendored Apache-2.0 files keep their own
-headers.
+utter is MIT licensed. See [LICENSE](LICENSE). Vendored Apache-2.0
+files keep their own headers.

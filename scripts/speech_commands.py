@@ -1434,7 +1434,7 @@ def snr_pass(modules, model, clips, noise_paths, block_ms, grammar, lines, repor
         cells = " | ".join(f"{row[level]} ({pct(row[level], len(chosen)):.1f}%)" for level in levels)
         lines.append(f"| {name} | {cells} | {clean} ({pct(clean, len(chosen)):.1f}%) |")
     lines.append("")
-    # [[rr:Benchmarks]]
+    # [[rr:docs/benchmarks/README.md#Benchmarks]]
     paired = {}
     names = list(modules)
     if len(names) == 2:
@@ -2126,7 +2126,7 @@ def main():
     noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report, bound)
     if args.wordless_clips:
         wordless_pass(modules, args.model, clips, noise, args.block_ms, full_grammar, lines, report, args)
-    # [[rr:Benchmarks]]
+    # [[rr:docs/benchmarks/README.md#Benchmarks]]
     reading = Path(args.out + ".reading.md")
     if reading.exists():
         lines.append(reading.read_text().strip())
