@@ -16,12 +16,21 @@ jobs:
           - os: ubuntu-latest
             lib: target/release/libutter.so
             name: utter-linux-x86_64
+          - os: ubuntu-24.04-arm
+            lib: target/release/libutter.so
+            name: utter-linux-aarch64
           - os: windows-latest
             lib: target/release/utter.dll
             name: utter-windows-x86_64
+          - os: windows-11-arm
+            lib: target/release/utter.dll
+            name: utter-windows-arm64
           - os: macos-latest
             lib: target/release/libutter.dylib
             name: utter-macos-arm64
+          - os: macos-15-intel
+            lib: target/release/libutter.dylib
+            name: utter-macos-x86_64
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
@@ -31,11 +40,12 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           test "v$version" = "${GITHUB_REF_NAME}"
       - run: cargo test --release
-      - run: cargo build --release --lib
+      - run: cargo build --release --lib --bin stream
       - shell: bash
         run: |
           mkdir "${{ matrix.name }}"
           cp "${{ matrix.lib }}" include/utter.h LICENSE "${{ matrix.name }}/"
+          cp target/release/stream${{ runner.os == 'Windows' && '.exe' || '' }} "${{ matrix.name }}/"
           cp third_party/Vosk-Rust/LICENSE "${{ matrix.name }}/LICENSE-Apache-2.0"
           cp third_party/Vosk-Rust/NOTICE "${{ matrix.name }}/NOTICE"
           tar -czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
