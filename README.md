@@ -34,8 +34,7 @@ for block in microphone():                 # 40 ms of 16-bit mono PCM
 - [Status](#status)
 - [Quick start](#quick-start)
 - [What a partial tells you](#what-a-partial-tells-you)
-- [Reading a partial](#reading-a-partial)
-- [Ending speech sooner](#ending-speech-sooner)
+- [Where next](#where-next)
 - [Features](#features)
 - [Models](#models)
 - [Benchmarks](#benchmarks)
@@ -204,166 +203,27 @@ otherwise has to reconstruct with its own detectors:
 Each word also carries Vosk's `start` and `end` in seconds, left out
 here for room. The key layout matches libvosk's, so a parser written
 for Vosk keeps working; the new keys are added after the old ones.
+Every key, its type, when it is present and whether Vosk has it is in
+the [results reference](docs/reference/results.md).
 
-| Field | What it is | What to do with it |
-|---|---|---|
-| `partial_alternatives` | The distinct word sequences still alive in the search, best first. Current to the last decoded frame, not to a lattice that trails the audio. | The gap between the first two confidences is the best single predictor of whether the leading word will be revised. |
-| `confidence` | The reading's path score in nats. A raw cost, not a probability. | Compare readings to each other; never read it alone. |
-| `relation` | How the reading relates to the partial as a word sequence: `same`, `prefix` (it lacks the partial's tail), `extends` (it has one more word), `differs`. | Pick the readings that matter: a competing phrase, a missing last word, a possible next word. |
-| `lead_delta` | How much the reading's lead over the field changed since the last decoding advance, in nats. `null` when it has no history yet. | A reading that extends the partial and is gaining is the next word forming. Treat `null` as unknown, not zero. |
-| `stable_ms` | How long the word has held its place in the partial; on a final word, how long it had held when the final was cut. | The hold to wait out before acting on the word. A final word with a hold of zero was never shown in a partial. |
-| `energy_dbfs` | The loudness of the audio under the word. | Tell a spoken word from one the decoder read into a quiet room. |
-| `floor_dbfs` | The room's noise floor over the last ten seconds. | Set your silence threshold relative to this, so it travels between microphones. |
-| `start_sample`, `end_sample` | The word's span in samples of the audio you fed. | One clock shared with your own code; nothing to align. |
-| `[sil]` | The reading carries no word and sits on silence. | Instead of an empty string or a word forced onto silence, you see that the decoder heard nothing. |
-| `[speech]` | The reading carries no word, but the path has entered a word's phones that the grammar cannot yet tell apart. | A word is forming. On a noise floor the model hears as speech, this is what a quiet room reads; check `floor_dbfs` before calling it silence. |
-| `endpoint` | On a final: what closed the utterance. `rule1` to `rule5` are the model's rules, `rule5` the 20 s length cap; `bound` is your own endpoint bound; `flush` is `FinalResult`; `host` is `Result` with no rule fired. | Tell a final a silence rule closed from one the length cap forced. |
+In one line each: the gap between the first two confidences predicts
+whether the leading word will be revised; a reading that `extends` the
+partial and is gaining lead is the next word forming; `stable_ms` is
+the hold to wait out before acting on a word; `energy_dbfs` against
+`floor_dbfs` tells a spoken word from one read into a quiet room;
+`[sil]` and `[speech]` say whether the decoder heard nothing or a word
+it cannot yet name; and `endpoint` on a final says what closed it.
 
-Finals carry the same `energy_dbfs` and `stable_ms` on every word,
-including the words of each alternative when you ask for more than one,
-and `endpoint` and `floor_dbfs` beside the text.
+## Where next
 
-A note on the trailing `[sil]` entry: it ends at the last frame the
-decoder has processed, not at the last sample you fed, so it runs one
-chunk behind the audio. A `[speech]` entry after it is the decoder
-leaving silence for a word's first phone, where its own endpoint rules
-stop counting; the `[sil]` entry keeps its span and stops growing. On a
-quiet room that is the noise floor read as a word, and the `[speech]`
-entry's `energy_dbfs` against `floor_dbfs` is what tells you so. If you add your own threshold to that span,
-you are adding it to a clock that lags.
+| You are | Start with |
+|---|---|
+| Using the `vosk` package today | [Coming from Vosk](docs/reference/vosk.md): every method, where it stands, and what is added. |
+| A Rust engineer | `cargo doc --open`. The quick start is on the crate page and each method that returns JSON links to the results reference. |
+| Reading the JSON | [Results](docs/reference/results.md): every document the recognizer returns and every key in it. |
+| Building on the partials | [Reading a partial](docs/guide/reading-a-partial.md): the trust read as a calibrated probability, the next-word preview, silence and the doubtful last word, each a line of Python. Then [Ending speech sooner](docs/guide/ending-speech-sooner.md): the endpoint bound and its veto, with what they buy and cost. |
 
-Turning on partial words in stock Vosk switches it to a lattice-based
-partial that trails the audio; on a test stream its partial had text on
-24 blocks of 1374 with partial words on, against 510 without. utter's
-partial is the same either way.
-
-## Reading a partial
-
-Everything below is a line of Python on the partial you already have.
-The thresholds are yours; the benchmark pages give the figures behind
-each read and record the reads that did not survive measurement.
-
-**Will this word hold?** On the Speech Commands test split, the first
-word shown is later revised 12% of the time. The best predictor is the
-lead of the top reading over the second. The scores are log-likelihoods
-in nats, so the sigmoid of that gap is a usable probability that the
-word survives:
-
-```python
-import json, math
-
-def trust(partial_json):
-    alts = json.loads(partial_json).get("partial_alternatives") or []
-    if len(alts) < 2:
-        return 1.0                                        # nothing else is close
-    gap = alts[0]["confidence"] - alts[1]["confidence"]   # nats, >= 0
-    return 1.0 / (1.0 + math.exp(-gap))
-
-if trust(p) >= 0.9:                                       # a lead of about 2.2 nats
-    act(json.loads(p)["partial"])
-```
-
-This is well calibrated in practice; the derivation and the measured
-survival at each gap are in
-[docs/benchmarks/partial-trust.md](docs/benchmarks/partial-trust.md).
-Two cheaper ways to be surer: the entropy of `softmax(confidences)`
-over the readings, which keeps ranking words correctly even at a fixed
-gap; and simply waiting one more block, which costs 240 ms and by then
-most revisions have already happened.
-
-**Is a word coming?** A reading that `extends` the partial and is
-gaining lead is the next word forming in the beam. The coming word is
-often visible one advance before the partial grows, though its identity
-is right only about one time in six at that point.
-
-**Is the room quiet?** The `[sil]` reading leads and its `lead_delta`
-hovers near zero. A leading `[speech]` reading on a quiet room is the
-noise floor read as the start of a word; the floor, not the label,
-settles it.
-
-**Might the last word not be there?** The best `prefix` reading's lead
-is the evidence against the tail. It is a competing sequence, not a
-per-word probability; a competitor absent from the list is unknown, not
-disproved.
-
-**Has the speaker finished?** The span of the trailing `[sil]` entry,
-against a threshold of your choosing. Or let the recognizer do it for
-you, below.
-
-**Was this final's word ever said?** On a quiet room the model can read
-the noise floor as a word's first phone, and the 20 s length cap then
-closes the stretch with a grammar word spanning it, as stock Vosk does.
-That final says `rule5`, and its word carries a hold of zero because no
-partial showed it. The same hold rule you apply to partial words applies
-here.
-
-```python
-alts = json.loads(p)["partial_alternatives"]
-top  = alts[0]
-
-coming = [a for a in alts if a["relation"] == "extends" and (a["lead_delta"] or 0) > 0]
-next_word = coming[0]["text"][len(top["text"]):].split()[:1] if coming else []
-
-quiet = top["text"] == "[sil]" and abs(top["lead_delta"] or 0) < 0.5
-
-prefix = next((a for a in alts if a["relation"] == "prefix"), None)
-doubt  = prefix["confidence"] - top["confidence"] if prefix else None
-
-sils  = [e for e in json.loads(p)["partial_result"] if e["word"] == "[sil]"]
-tail  = sils[-1] if sils else None
-ended = tail is not None and (tail["end_sample"] - tail["start_sample"]) / 16000 > 0.5
-
-f = json.loads(final)
-said = f["endpoint"] != "rule5" or any(w["stable_ms"] > 0 for w in f["result"])
-```
-
-What `lead_delta` does not do is improve the trust read: measured over
-every reading the decoder tracks, it adds nothing to the gap. Use it for
-the state reads above, not for trust. The figures are on the
-[partial-states](docs/benchmarks/partial-states.md) page.
-
-## Ending speech sooner
-
-Kaldi's endpoint rules wait for the silence after a word to reach their
-own bounds, half a second at the earliest, so a final lands a median
-870 ms after the word ends. utter keeps those rules and lets you add
-one bound of your own, off by default:
-
-```python
-rec.SetEndpointBound(300, 8)   # ms of trailing silence; veto margin in nats
-```
-
-```rust
-rec.set_endpoint_bound(300.0, 8.0);
-```
-
-The first number ends the segment once the trailing silence reaches
-that many milliseconds. The second is a veto: no final while a reading
-that extends the partial by another word is within that many nats of
-the leader. The veto exists because the silence clock cannot see a word
-beginning, the next word is not on the best path while the pause before
-it still counts, but the beam already holds it as a rival.
-
-What it buys and costs, measured on the recognizer's own finals with
-the bound at 300 ms:
-
-- Every finish arrives about 200 ms sooner: median 866 ms to 660 ms on
-  multi-word streams, 870 ms to 660 ms on single-word clips.
-- The same finishes are called, 732 of 750, and no word is lost or split
-  on 800 single-word clips.
-- The cost is pauses inside a phrase being taken for its end. This does
-  not drop words: the words so far arrive in one final and the next word
-  in the next, so "alpha seven" can reach you as two finals. On streams
-  built with pauses of 100 to 800 ms, the stock rules end 65% of pauses
-  and the bound ends 83%, the difference concentrated on pauses shorter
-  than the half second the stock rule waits.
-
-If your application acts on single words, the bound costs nothing. If
-it needs whole phrases, either join consecutive finals across a short
-gap or leave the bound unset, which is byte-identical to stock Vosk.
-On the first consumer's recordings, an 8 nat veto let bounds as low as
-10 ms run without losing commands, where the same bounds without the
-veto did; measure on your own audio before going below 300.
+The [docs index](docs/README.md) lists every directory.
 
 ## Features
 
@@ -468,6 +328,7 @@ it.
 | `src/bin/stream.rs` | The command-line decoder the gates and benchmarks use. |
 | `include/utter.h` | The C header. |
 | `examples/` | The Rust sketch from this README, built by CI. |
+| `docs/` | Reference, guides, benchmarks, gates and decision records; [docs/README.md](docs/README.md) is the index. |
 | `tests/` | Integration tests; the decoding ones run when `UTTER_TEST_MODEL` is set. |
 | `scripts/` | Gate and benchmark scripts. |
 | `docs/benchmarks/` | Public benchmark pages, regenerated by the scripts. |

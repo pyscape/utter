@@ -83,7 +83,8 @@ impl Default for RecognizerOptions {
 }
 
 /// What closed an utterance: one of the model's numbered rules, the host's bound, the flush of
-/// `final_result`, or the host calling `result` with no rule fired.
+/// `final_result`, or the host calling `result` with no rule fired. [`label`](Self::label) is the
+/// final's `endpoint` value: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-endpoint-value>.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Endpoint {
     Rule(u8),
@@ -397,9 +398,12 @@ impl<'m> Recognizer<'m> {
     pub fn graph(&self) -> &VectorFst {
         &self.graph
     }
+    /// libvosk's `SetWords`: word entries on finals.
     pub fn set_words(&mut self, on: bool) {
         self.words = on;
     }
+    /// libvosk's `SetPartialWords`: word entries on partials and on each reading. The partial
+    /// stays the best path; it does not switch to a lattice as libvosk's does.
     pub fn set_partial_words(&mut self, on: bool) {
         self.partial_words = on;
     }
@@ -447,7 +451,8 @@ impl<'m> Recognizer<'m> {
         std::mem::take(&mut self.group_trace)
     }
 
-    /// Partial alternatives to report, 0 for none.
+    /// Readings to carry beside every partial, 0 for none. Not in libvosk.
+    /// Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#a-reading>.
     pub fn set_alternatives(&mut self, n: usize) {
         self.partial_alternatives = n;
     }
@@ -709,7 +714,9 @@ impl<'m> Recognizer<'m> {
         self.group_trace.push(out);
     }
 
-    /// Feed 16-bit mono PCM at the recognizer's rate.
+    /// libvosk's `AcceptWaveform`: feed 16-bit mono PCM at the recognizer's rate. Any block
+    /// size; the decoder advances in 200 ms chunks internally and the partial is current to the
+    /// last decoded frame.
     pub fn accept(&mut self, samples: &[i16]) -> Step {
         if !(self.state == State::Running || self.state == State::Initialized) {
             self.clean_up();
@@ -1111,7 +1118,10 @@ impl<'m> Recognizer<'m> {
         out
     }
 
-    /// libvosk's `PartialResult`, extended.
+    /// libvosk's `PartialResult`, extended: the best path's words, the readings still alive when
+    /// [`set_alternatives`](Self::set_alternatives) is on, word entries when
+    /// [`set_partial_words`](Self::set_partial_words) is on, and the noise floor.
+    /// Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-partial-result>.
     pub fn partial(&mut self) -> &str {
         let empty = |this: &mut Self| {
             let mut out = format!("{{\"partial\": \"{SIL}\"");
@@ -1249,7 +1259,7 @@ impl<'m> Recognizer<'m> {
     }
 
     /// libvosk's `Result`: the final of the utterance decoded so far; the next `accept`
-    /// starts a new utterance.
+    /// starts a new utterance. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-final-result>.
     pub fn result(&mut self) -> &str {
         if self.state != State::Running {
             self.last_result = "{\"text\": \"\"}".into();
@@ -1267,6 +1277,7 @@ impl<'m> Recognizer<'m> {
     }
 
     /// libvosk's `FinalResult`: flush the pipeline, decode what remains, and drop the stream.
+    /// Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-final-result>.
     pub fn final_result(&mut self) -> &str {
         if self.state != State::Running {
             self.last_result = "{\"text\": \"\"}".into();

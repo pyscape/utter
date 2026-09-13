@@ -11,9 +11,9 @@ use crate::kaldi_io::{err, find, KaldiReader};
 use std::io::Result;
 
 pub struct TransitionModel {
-    /// tid2pdf[transition_id] = pdf_id; index 0 unused.
+    /// tid2pdf\[transition_id\] = pdf_id; index 0 unused.
     pub tid2pdf: Vec<i32>,
-    /// tid2phone[transition_id] = phone; index 0 unused.
+    /// tid2phone\[transition_id\] = phone; index 0 unused.
     pub tid2phone: Vec<i32>,
     pub num_pdfs: usize,
     pub num_transition_states: usize,
