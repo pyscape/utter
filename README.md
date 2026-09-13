@@ -150,16 +150,17 @@ them inside every bucket of the gap, where the gap itself is held fixed,
 motion below usually is not. The runtime does not report it, because it
 is a function of the confidences one partial already carries.
 
-The third is the motion, `lead_delta`. At a first sighting the word's
-own reading is usually newborn and its motion null, so what is there to
-read is the displaced reading's fall; held out, the motion adds little
-to the gap and costs nothing, `[[rr:What the motion figures say]]`. Read
-it instead one advance later, on the hold: at that moment the leader's
-own `lead_delta` separates the words that survive from the ones about to
-be revised, and the same page charges the 240 ms that wait costs
-`[[rr:Holding one advance]]`. A lead and its motion disagreeing in sign,
-a reading that leads but is losing, is the case to wait out
-`[[rr:Leading but losing]]`.
+The third read, the motion `lead_delta`, is not a trust read. Measured
+on the runtime's history over every surviving group, which carries a
+delta for the leading reading on nine sightings in ten, the motion does
+not improve on the gap at the first sighting or at the bar above, and
+within a bucket of the gap it barely ranks at all
+`[[rr:What the motion figures say]]`. What does buy a decision here is
+waiting: one advance costs 240 ms and by then the revision is usually
+already on the page `[[rr:Holding one advance]]`. Read the motion for
+the state reads below instead, and for the one trust-shaped case it does
+answer: a lead and its motion disagreeing in sign, a reading that leads
+but is losing, is the case to wait out `[[rr:Leading but losing]]`.
 
 ## Five reads off one partial
 

@@ -211,8 +211,10 @@ operating point. Every rule is scored at the first sighting and again
 one advance later, and the page reports how often each figure is
 defined at each moment, on the runtime's all-group history as well as
 the harness's reported readings, since motion is often null and its
-availability is part of its worth. A motion figure earns its key only
-by separating survivors from revisions within a bucket of the gap. A
+availability is part of its worth. Whether a motion figure earns its key
+is decided on the two pages together: on this one by separating
+survivors from revisions within a bucket of the gap, and on the states
+page by the reads it supports there. A
 later change that lowers revisions caught at equal delay is a
 finding, so that waiting longer can never pass as better evidence. The runtime's fields are checked
 against a diagnostic trace that observes every group at an explicit
@@ -230,17 +232,34 @@ figure is kept in machine form beside the page.
   without alternatives, and holds with them once the two keys are
   removed. The grouping's cost is measured with alternatives on and
   off.
-- At a first sighting the leading reading is new on 59% of clips and
-  its own motion null; what the partial carries then is the displaced
-  reading's fall, defined on 38%. Fitted on the validation split and
-  scored on the testing split, the motion lifts the gap's rank-AUC by
-  0.0033 (interval 0.0015 to 0.0053), and by 0.0047 over the gap with
-  entropy beside it. At the README's bar the motion model decides 8,110 of 9,230
-  correctly: against the raw sigmoid (7,998) that is 112 more with
-  seven fewer revisions caught; against a gap recalibrated on
-  validation (8,083) it is 27 more with 13 more revisions caught. Most
-  of the gain is the recalibration; the motion's own share is small,
-  and real.
+- At a first sighting the leading reading is new on 59.3% of clips and
+  its own motion null among the readings reported; the runtime's history
+  over every surviving group carries a `lead_delta` for rank 0 on 91.4%
+  of sightings where the harness's top-n series has one on 40.7%, and
+  the displaced reading's fall is defined on 37.6%. On that all-group
+  history the motion does not improve trust. Fitted on the validation
+  split and scored on the testing split it moves the gap's rank-AUC by
+  -0.0008 (interval -0.0022 to +0.0006), the same against the gap
+  recalibrated, and within a bucket of the gap it ranks at 0.46 to 0.56.
+  At the README's bar it decides 8,040 of 9,230 correctly where the
+  recalibrated gap decides 8,083 and the README's own rule 7,998;
+  against the recalibration the exchange is 22 clips won to 65 lost,
+  exact McNemar 4.3e-06. The figures are
+  `[[rr:Six rules on the same clips, every one fitted off them]]` and
+  `[[rr:What the motion figures say]]`. What buys the trust is the
+  recalibration, which needs no field, and the readings' entropy, which
+  is a function of the confidences one partial already carries.
+- The earlier reading of this, a gain over the README's rule, was a
+  selection effect. The harness derived the motion from the readings it
+  was shown, so a delta existed only where rank 0 was already in the
+  reported list at the previous advance: the two fifths of sightings
+  where the contest was old enough to be visible, which are not the
+  sightings a host needs the field for. Read off the runtime's history,
+  the gain is gone.
+- `lead_delta` is kept on the states evidence and not the trust
+  evidence: the reads it supports are a word coming, silence being kept
+  and a lead that is being lost,
+  `[[rr:TD-9#Every reading names its relation to the partial]]`.
 - One advance later a revision has already shown on 97% of the clips
   that have an advance left; on one-second clips that advance is the
   last on 85% of them, so the split measures the wait for the final,
@@ -257,8 +276,9 @@ figure is kept in machine form beside the page.
   reversing by about 5. Only one reading in eighty lives three advances
   on a one-second clip, so the clip figures rest on few samples; the
   built stream gives the same band and shows momentum is not one
-  phenomenon: the empty reading's lead persists (0.45) while a rival's
-  reverts (`extends` -0.28, `differs` -0.20), which is what `relation`
+  phenomenon: the empty reading's lead persists (0.45) where an
+  extending reading's barely does (+0.09) and a differing one's reverts
+  (-0.23), which is what `relation`
   is for when reading `lead_delta`. A host wanting a longer window sums
   successive deltas of one reading across advances, reading each
   advance once and treating a null as a broken history, not a zero.
@@ -270,13 +290,13 @@ figure is kept in machine form beside the page.
   presence supplies it is not established. Spliced isolated words; to be
   measured on continuous recordings.
 - Whether motion foretells a word is unproven. On the built stream an
-  `extends` reading gaining called 71% of the words, but 58% of those
+  `extends` reading gaining called 83% of the words, but 58% of those
   calls came before any sample of the coming word's clip had been fed
   and carry no acoustic evidence of it, so the lead they are made by is
   a read on the silence and not a warning of the word. Against the
   cheaper reads at the same false alarm rate, with each call matched to
-  at most one word, the motion is the best of them (F1 0.60 against
-  0.49 for the same candidate merely existing, 0.51 for its lead, 0.50
+  at most one word, the motion is the best of them (F1 0.61 against
+  0.49 for the same candidate merely existing, 0.51 for its lead, 0.55
   for the trailing silence span and 0.54 for a clock the host keeps),
   and the figures move with the pause lengths the stream was built
   from. Exploratory, on spliced isolated words; the read is not
@@ -300,5 +320,8 @@ figure is kept in machine form beside the page.
   reading-loss counters the deferred lattice question is measured with.
 - `[[rr:trace_groups]]`, read by `stream --trace-groups`: the diagnostic
   trace the runtime's fields are checked against.
-- The harness's trace of the series: marker pending, awaiting the symbol
-  `scripts/partial_trust.py` settles on.
+- `[[rr:advance_states]]`, with
+  `[[rr:scripts/partial_trust.py#runtime_motion]]` and
+  `[[rr:scripts/partial_trust.py#check_motion]]`: the harness's trace of
+  the series, reading the runtime's two keys off the partial and
+  checking them against its own derivation where both are defined.
