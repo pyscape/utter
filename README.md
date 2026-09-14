@@ -201,6 +201,14 @@ carries a build provenance attestation:
 gh attestation verify utter-linux-x86_64.tar.gz -R pyscape/utter
 ```
 
+The release also attaches the attestation's Sigstore bundle,
+`utter-vX.Y.Z.sigstore.json`, which names every archive and verifies
+without reaching GitHub:
+
+```bash
+gh attestation verify utter-linux-x86_64.tar.gz --bundle utter-v0.0.3.sigstore.json --owner pyscape
+```
+
 ## What a partial tells you
 
 The stock Vosk partial is a line of text:
