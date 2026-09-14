@@ -277,6 +277,71 @@ fn the_floor_outlives_a_final_and_the_rebuild_after_it() {
     assert!((after - before).abs() < 1.0, "{before} then {after}");
 }
 
+/// Uniform noise at a level, from a fixed seed, as a quiet room's hiss.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+fn room(dbfs: f64, seconds: f64) -> Vec<i16> {
+    let peak = 32768.0 * 10f64.powf(dbfs / 20.0) * 3f64.sqrt();
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+    (0..(16000.0 * seconds) as usize)
+        .map(|_| {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let u = (x >> 33) as f64 / f64::from(1u32 << 31);
+            ((u * 2.0 - 1.0) * peak).round() as i16
+        })
+        .collect()
+}
+
+#[test]
+fn the_bound_with_a_floor_margin_closes_a_wordless_stretch_without_a_word() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let hiss = room(-50.0, 12.0);
+    // the wide grammar of the public pages: under a small one the hiss reads as a word instead
+    let mut wide = grammar();
+    wide.extend("abcdefghijklmnopqrstuvwxyz".chars().map(|c| c.to_string()));
+    wide.extend(
+        [
+            "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+            "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
+            "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+    let run = |margin: Option<f32>| {
+        let mut rec = Recognizer::new(&m, 16000.0, &wide).unwrap();
+        rec.set_words(true);
+        rec.set_endpoint_bound(Some(300.0), Some(8.0));
+        rec.set_endpoint_floor_margin(margin);
+        let (_, finals) = decode(&mut rec, &hiss);
+        let floor = finals
+            .iter()
+            .filter(|f| value_of_key(f, "\"endpoint\": ") == "\"floor\"")
+            .count();
+        let worded = finals
+            .iter()
+            .filter(|f| !matches!(text_of(f).as_str(), "" | "[sil]" | "[speech]"))
+            .count();
+        (finals, floor, worded)
+    };
+    let (finals, floor, worded) = run(Some(8.0));
+    assert!(floor > 0, "{finals:?}");
+    assert_eq!(worded, 0, "{finals:?}");
+    for f in &finals {
+        if value_of_key(f, "\"endpoint\": ") == "\"floor\"" {
+            assert!(f.contains("\"result\": []"), "{f}");
+        }
+    }
+    let (_, floor, _) = run(None);
+    assert_eq!(floor, 0);
+}
+
 #[test]
 fn grammar_bounds_and_unknown_option() {
     let Some(dir) = model_dir() else { return };

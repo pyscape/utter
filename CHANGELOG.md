@@ -4,10 +4,16 @@ Notable changes to the crate, newest first. The project follows semantic
 versioning; release dates are recorded by the git tags and the GitHub
 releases.
 
-## Unreleased
+## 0.0.3
 
 ### Added
 
+- A floor margin on the host's endpoint bound, `set_endpoint_floor_margin`,
+  `SetEndpointFloorMargin`, `utter_recognizer_set_endpoint_floor_margin`:
+  within it the bound reads a wordless `[speech]` path as trailing
+  silence, a rival word at the floor cannot veto, and the final is the
+  path as it stood with the new endpoint value `floor`. Off by default
+  and byte-identical when unset. TD-12.
 - `utter_version` and `utter_revision` in the C ABI: the crate version
   and the git commit the library was built from, so a host can record
   which runtime produced a result.

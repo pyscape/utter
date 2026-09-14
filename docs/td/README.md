@@ -52,3 +52,4 @@ reaches for the rejected option. Implemented by is optional, because
 | TD-9 | Each reading carries its relation to the partial and the motion of its lead |
 | TD-10 | A wordless reading says whether a word has begun |
 | TD-11 | A final says what closed it and how long its words held |
+| TD-12 | The host's bound reads a wordless path at the floor as silence |

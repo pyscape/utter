@@ -31,6 +31,10 @@ void utter_recognizer_set_partial_words(UtterRecognizer *rec, int on);
    it), unless extending_veto_nats is positive and a reading extending the partial by a further word
    is within that many nats of it. */
 void utter_recognizer_set_endpoint_bound(UtterRecognizer *rec, float trailing_ms, float extending_veto_nats);
+/* A margin in dB over the reported floor within which the bound reads a wordless path as silence
+   and a rival word at the floor cannot veto it; such a final names "floor" and carries no forced
+   word. 0 or less removes the margin. */
+void utter_recognizer_set_endpoint_floor_margin(UtterRecognizer *rec, float margin_db);
 void utter_recognizer_set_alternatives(UtterRecognizer *rec, int n);
 void utter_recognizer_set_max_alternatives(UtterRecognizer *rec, int n);
 

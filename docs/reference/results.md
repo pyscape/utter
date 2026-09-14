@@ -156,6 +156,7 @@ The `endpoint` key on a final names what closed it.
 | `rule1` to `rule4` | One of the model's silence rules from `conf/model.conf`: trailing silence of a length each rule sets, with a demand on the best path's cost that loosens as the silence grows. `rule1` fires on a long silence with no word yet. |
 | `rule5` | The model's length cap, 20 s of audio in the stock models. A word in a `rule5` final with `stable_ms` of zero was forced onto the stretch by the cap and never shown in a partial. |
 | `bound` | Your own bound from `SetEndpointBound`. |
+| `floor` | Your own bound, reached through the floor margin of `SetEndpointFloorMargin`: the path ended in silence or in a `[speech]` entry within the margin of the floor. The final is the path as it stood, so a wordless one has an empty `result` and the text `[sil]` or `[speech]`. |
 | `flush` | `FinalResult`: the stream was flushed. |
 | `host` | `Result` was called with no rule fired. |
 

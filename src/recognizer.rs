@@ -95,6 +95,10 @@ pub enum Endpoint {
     Rule(u8),
     /// The host's bound from [`set_endpoint_bound`](Recognizer::set_endpoint_bound) fired.
     Bound,
+    /// The host's bound fired on a wordless path at floor energy, with the margin of
+    /// [`set_endpoint_floor_margin`](Recognizer::set_endpoint_floor_margin); the final is the
+    /// path as it stood, with no word forced onto it.
+    Floor,
     /// `final_result` flushed the pipeline.
     Flush,
     /// The host called `result` with no rule fired.
@@ -102,11 +106,12 @@ pub enum Endpoint {
 }
 
 impl Endpoint {
-    /// The final's `endpoint` value: `rule1`..`rule5`, `bound`, `flush` or `host`.
+    /// The final's `endpoint` value: `rule1`..`rule5`, `bound`, `floor`, `flush` or `host`.
     pub fn label(self) -> String {
         match self {
             Endpoint::Rule(n) => format!("rule{n}"),
             Endpoint::Bound => "bound".into(),
+            Endpoint::Floor => "floor".into(),
             Endpoint::Flush => "flush".into(),
             Endpoint::Host => "host".into(),
         }
@@ -270,6 +275,7 @@ pub struct Recognizer<'m> {
     silence_weighting: SilenceWeighting,
     endpoint_rule: Option<crate::model::EndpointRule>,
     endpoint_veto_nats: Option<f32>,
+    endpoint_floor_margin_db: Option<f32>,
     /// The rule that fired on the last `accept`, with the frame count it fired at.
     last_endpoint: Option<(usize, Endpoint)>,
     frame_offset: usize,
@@ -383,6 +389,7 @@ impl<'m> Recognizer<'m> {
             silence_weighting: sw,
             endpoint_rule: options.endpoint_rule.clone(),
             endpoint_veto_nats: None,
+            endpoint_floor_margin_db: None,
             last_endpoint: None,
             model,
             graph,
@@ -450,6 +457,15 @@ impl<'m> Recognizer<'m> {
             min_utterance_length: 0.0,
         });
         self.endpoint_veto_nats = extending_veto_nats;
+    }
+    /// A margin in dB over the reported floor within which the bound reads a wordless path as
+    /// silence: a trailing `[speech]` entry whose energy is within it counts toward the bound's
+    /// trailing silence, and a reading extending the partial by a word whose energy is within it
+    /// does not veto. A final the bound reaches this way is the path as it stood, no word forced
+    /// onto it, and names `floor` as its endpoint. `None` removes the margin; the bound is then as
+    /// [`set_endpoint_bound`](Self::set_endpoint_bound) alone describes it. `[[rr:TD-12#Decision outcome]]`
+    pub fn set_endpoint_floor_margin(&mut self, db: Option<f32>) {
+        self.endpoint_floor_margin_db = db;
     }
 
     /// Off by default; it never touches a decision.
@@ -819,35 +835,86 @@ impl<'m> Recognizer<'m> {
         let utterance = n as f32 * shift;
         let relative = dec.final_relative_cost();
         let contains_nonsilence = utterance > trailing;
-        let fires = |r: &crate::model::EndpointRule| {
+        let fires = |r: &crate::model::EndpointRule, trailing: f32| {
             (contains_nonsilence || !r.must_contain_nonsilence)
                 && trailing >= r.min_trailing_silence
                 && relative <= r.max_relative_cost
                 && utterance >= r.min_utterance_length
         };
-        if let Some(i) = conf.rules.iter().position(fires) {
+        if let Some(i) = conf.rules.iter().position(|r| fires(r, trailing)) {
             return Some(Endpoint::Rule(
                 u8::try_from(i).expect("rule index fits a byte") + 1,
             ));
         }
-        if !self.endpoint_rule.as_ref().is_some_and(fires) {
+        let bound = self.endpoint_rule.as_ref()?;
+        // [[rr:TD-12#Decision outcome]]
+        let floor_margin = match (self.endpoint_floor_margin_db, self.floor.dbfs()) {
+            (Some(margin), Some(floor)) => Some((floor, f64::from(margin))),
+            _ => None,
+        };
+        let at_floor = |start_frame: usize, end_frame: usize| {
+            floor_margin.is_some_and(|(floor, margin)| {
+                self.energy_dbfs(self.sample_of(start_frame), self.sample_of(end_frame))
+                    .is_some_and(|e| e <= floor + margin)
+            })
+        };
+        let reason = if fires(bound, trailing) {
+            Endpoint::Bound
+        } else if floor_margin.is_some()
+            && path.is_some_and(|p| {
+                fires(
+                    bound,
+                    self.trailing_wordless_frames(p, n, at_floor) as f32 * shift,
+                )
+            })
+        {
+            Endpoint::Floor
+        } else {
             return None;
-        }
+        };
         let vetoed = match self.endpoint_veto_nats {
             None => false,
             Some(nats) => {
                 let alts = dec.alternatives(false, usize::MAX);
                 let Some(top) = alts.first() else {
-                    return Some(Endpoint::Bound);
+                    return Some(reason);
                 };
                 alts.iter().skip(1).any(|a| {
                     a.words.len() > top.words.len()
                         && a.words[..top.words.len()] == top.words[..]
                         && a.cost - top.cost <= nats
+                        && !self
+                            .align(a)
+                            .get(top.words.len())
+                            .is_some_and(|w| at_floor(w.start_frame, w.end_frame))
                 })
             }
         };
-        (!vetoed).then_some(Endpoint::Bound)
+        (!vetoed).then_some(reason)
+    }
+
+    /// Frames of the wordless span that closes a path: the `[sil]` entries and a `[speech]`
+    /// entry, contiguous back from the last decoded frame, the `[speech]` entry only where
+    /// `at_floor` says so of its span. Zero as soon as a word, a gap or a `[speech]` entry above
+    /// the floor is met.
+    fn trailing_wordless_frames(
+        &self,
+        path: &Path,
+        n: usize,
+        at_floor: impl Fn(usize, usize) -> bool,
+    ) -> usize {
+        let mut start = n;
+        for e in self.entries(path).iter().rev() {
+            if e.end_frame != start {
+                break;
+            }
+            match e.word {
+                EntryWord::Word(_) => break,
+                EntryWord::Speech if !at_floor(e.start_frame, e.end_frame) => break,
+                EntryWord::Speech | EntryWord::Silence => start = e.start_frame,
+            }
+        }
+        n - start
     }
 
     /// Milliseconds each entry of a path's word list has held its place in the partial, read off
@@ -1274,10 +1341,12 @@ impl<'m> Recognizer<'m> {
             return "{\"text\": \"\"}".into();
         }
         let now = self.samples_round_start + self.samples_processed;
+        // A floor final is the path as it stood; a completed path would force a word onto it.
+        let completed = reason != Endpoint::Floor;
         let mut out = String::from("{");
         if self.max_alternatives > 1 {
             out.push_str("\"alternatives\": [");
-            let alts = dec.alternatives(true, self.max_alternatives);
+            let alts = dec.alternatives(completed, self.max_alternatives);
             for (i, alt) in alts.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
@@ -1301,7 +1370,7 @@ impl<'m> Recognizer<'m> {
             out.push('}');
             return out;
         }
-        let path = dec.best_path(true).unwrap_or_default();
+        let path = dec.best_path(completed).unwrap_or_default();
         if self.words {
             out.push_str("\"result\": [");
             self.write_final_words(&mut out, &path, now);
