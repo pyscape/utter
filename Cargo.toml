@@ -1,6 +1,6 @@
 [package]
 name = "utter"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 license = "MIT AND Apache-2.0"
 description = "Pure-Rust streaming decoder for Vosk models: partials, alternatives, word intervals, endpointing"
