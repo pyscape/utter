@@ -50,6 +50,7 @@ recognizer is not shared between threads in either library.
 | `DecodedSample()` | `decoded_sample()`, also `Step.sample` | `utter_recognizer_decoded_sample` | The sample position, in audio fed since construction, of the last decoded frame's end. |
 | `KaldiRecognizer(..., unknown_cost=c)` | `RecognizerOptions::unknown_cost` | `utter_recognizer_new_grm_unk` | Add the model's `[unk]` symbol to the grammar at a cost, so out-of-grammar speech has somewhere to go. |
 | | `Recognizer::endpoint_reason()` | | Which rule would close the utterance now, the value the final's `endpoint` key will carry. |
+| `UTTER_REVISION` | `utter::REVISION`, `CARGO_PKG_VERSION` | `utter_version`, `utter_revision` | Which runtime is loaded: the crate version and the git commit it was built from, so a host can record which build produced a result. |
 
 Every added key in the results is listed on the
 [results](results.md) page with its origin column set to *added*.

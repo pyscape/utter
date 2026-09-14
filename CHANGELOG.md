@@ -6,6 +6,18 @@ releases.
 
 ## Unreleased
 
+### Added
+
+- `utter_version` and `utter_revision` in the C ABI: the crate version
+  and the git commit the library was built from, so a host can record
+  which runtime produced a result.
+
+### Fixed
+
+- `REVISION` reports the commit in a crate built from crates.io. The
+  build script reads the commit `cargo package` records when there is
+  no checkout to ask; 0.0.1 and 0.0.2 report "unknown" from the registry.
+
 ### Distribution
 
 - The release attaches the Sigstore bundle of its build-provenance

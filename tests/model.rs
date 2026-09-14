@@ -300,6 +300,23 @@ fn grammar_bounds_and_unknown_option() {
 }
 
 #[test]
+fn c_abi_names_the_runtime() {
+    use std::ffi::CStr;
+    use utter::capi::{utter_revision, utter_version};
+    let version = unsafe { CStr::from_ptr(utter_version()) }.to_str().unwrap();
+    assert_eq!(version, env!("CARGO_PKG_VERSION"));
+    let revision = unsafe { CStr::from_ptr(utter_revision()) }
+        .to_str()
+        .unwrap();
+    assert_eq!(revision, utter::REVISION);
+    let hex = revision.trim_end_matches("-dirty");
+    assert!(
+        revision == "unknown" || (hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit())),
+        "{revision}"
+    );
+}
+
+#[test]
 #[allow(clippy::cast_possible_truncation)]
 fn c_abi_round_trip() {
     let Some(dir) = model_dir() else { return };
