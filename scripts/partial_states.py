@@ -2815,6 +2815,9 @@ def _bound_word_cost(rows: Sequence[tuple[str, Json]]) -> str:
     drift from the table above it."""
     base = rows[0][1]
     lost = [d["lost"] for _, d in rows[1:]]
+    if not lost:
+        # a bound run on its own, before the page pairs it with the others
+        return ""
     twice = sorted({d["restarted"] for _, d in rows})
     span = f"{min(lost)}" if min(lost) == max(lost) else f"{min(lost)} to {max(lost)}"
     same = f"the same {twice[0]}" if len(twice) == 1 else f"{twice[0]} to {twice[-1]}"

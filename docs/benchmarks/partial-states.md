@@ -1,6 +1,6 @@
 # Silence direction and word transitions on a built stream
 
-Run 2026-09-13 22:18:30Z, utter f158147, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/python/utterpy/__init__.py` built from utter f15814796b546844b11a0480cc56a4dab9765df9, the checkout's HEAD.
+Run 2026-09-14 03:32:51Z, utter 4e5ade1, utterpy 0.0.1, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/tmp/claude-1000/-home-jared-Repos-utter/cd366a0c-1f10-42bf-9d90-02def22aec2d/scratchpad/site/utterpy/__init__.py` built from utter 4e5ade17025d38ce06cd892747c3a91109078c99, the checkout's HEAD.
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 40 ms blocks, 8 partial alternatives, partial words on, seed 20260912. Measured by `scripts/partial_states.py`.
 
@@ -182,26 +182,27 @@ The table above reads the trailing `[sil]` span a host would apply its own bound
 | utterpy@300 | 1208 / 1458 (82.9%) | 732 / 750 (97.6%) | 659.8 / 799.0 | 2200 | 2125 | ? | 28.0 | 49 / 2208 (2.2%) | 6 / 2208 (0.3%) |
 | utterpy@300/4 | 1207 / 1458 (82.8%) | 732 / 750 (97.6%) | 659.8 / 799.0 | 2192 | 2117 | ? | 27.9 | 49 / 2208 (2.2%) | 6 / 2208 (0.3%) |
 | utterpy@300/8 | 1159 / 1458 (79.5%) | 732 / 750 (97.6%) | 680.7 / 870.1 | 2139 | 2064 | ? | 27.2 | 48 / 2208 (2.2%) | 6 / 2208 (0.3%) |
+| utterpy@300/8/8 | 1159 / 1458 (79.5%) | 731 / 750 (97.5%) | 680.7 / 872.9 | 2321 | 2070 | 8 | 29.5 | 52 / 2208 (2.4%) | 6 / 2208 (0.3%) |
 
 *Never shown* counts the worded finals none of whose words had held in a partial: every word's `stable_ms` is zero, `[[rr:TD-11#Decision outcome]]`. A `?` is a row recorded before finals carried the field. By the rule that closed them, the worded finals of the first row: flush 1, rule2 1995.
 
 The first row is the model's own endpointing (`[[rr:TD-2#Inputs: configuration]]`), which on this stream ends most pauses already. A bound is a gain only where it calls the finishes sooner than that without ending more pauses and without costing words, and the last two columns are where a bound firing inside a word shows up: a word no final covers, or one that two of them each decode.
 
-Below 300 ms the price is not in the words. Against the 52 of 2208 the stock rules leave no final covering, the bounds leave 47 to 49, and the count two finals each decode is the same 6 at every row, the stock one included: what a bound shorter than 300 ms gives up is finishes called, not words.
+Below 300 ms the price is not in the words. Against the 52 of 2208 the stock rules leave no final covering, the bounds leave 47 to 52, and the count two finals each decode is the same 6 at every row, the stock one included: what a bound shorter than 300 ms gives up is finishes called, not words.
 
 A bound shorter than one decoding advance does not thereby fire at the first advance that sees silence. The rule is read once per advance, 240 ms at this block size, but the trailing silence it compares against is counted in the model's own subsampled frames of 30 ms (`[[rr:endpoint_detected]]`), and at the first advance holding any trailing silence that span already stands anywhere from 30 ms to a full advance: 100 ms fires at that advance on the stretches where it does and one advance later on the rest, so it neither coincides with every shorter bound nor with 300.
 
 By the length of the pause that was built, as the series table above gives it:
 
-| pause built (ms) | utterpy | utterpy@100 | utterpy@300 | utterpy@300/4 | utterpy@300/8 |
-|---|---|---|---|---|---|
-| 100-200 | 59 / 205 (28.8%) | 153 / 205 (74.6%) | 106 / 205 (51.7%) | 105 / 205 (51.2%) | 93 / 205 (45.4%) |
-| 200-300 | 78 / 205 (38.0%) | 174 / 205 (84.9%) | 136 / 205 (66.3%) | 136 / 205 (66.3%) | 127 / 205 (62.0%) |
-| 300-400 | 119 / 202 (58.9%) | 183 / 202 (90.6%) | 163 / 202 (80.7%) | 163 / 202 (80.7%) | 155 / 202 (76.7%) |
-| 400-500 | 134 / 213 (62.9%) | 205 / 213 (96.2%) | 192 / 213 (90.1%) | 192 / 213 (90.1%) | 181 / 213 (85.0%) |
-| 500-600 | 174 / 215 (80.9%) | 210 / 215 (97.7%) | 204 / 215 (94.9%) | 204 / 215 (94.9%) | 201 / 215 (93.5%) |
-| 600-700 | 200 / 221 (90.5%) | 216 / 221 (97.7%) | 218 / 221 (98.6%) | 218 / 221 (98.6%) | 214 / 221 (96.8%) |
-| 700-800 | 178 / 197 (90.4%) | 189 / 197 (95.9%) | 189 / 197 (95.9%) | 189 / 197 (95.9%) | 188 / 197 (95.4%) |
+| pause built (ms) | utterpy | utterpy@100 | utterpy@300 | utterpy@300/4 | utterpy@300/8 | utterpy@300/8/8 |
+|---|---|---|---|---|---|---|
+| 100-200 | 59 / 205 (28.8%) | 153 / 205 (74.6%) | 106 / 205 (51.7%) | 105 / 205 (51.2%) | 93 / 205 (45.4%) | 93 / 205 (45.4%) |
+| 200-300 | 78 / 205 (38.0%) | 174 / 205 (84.9%) | 136 / 205 (66.3%) | 136 / 205 (66.3%) | 127 / 205 (62.0%) | 126 / 205 (61.5%) |
+| 300-400 | 119 / 202 (58.9%) | 183 / 202 (90.6%) | 163 / 202 (80.7%) | 163 / 202 (80.7%) | 155 / 202 (76.7%) | 156 / 202 (77.2%) |
+| 400-500 | 134 / 213 (62.9%) | 205 / 213 (96.2%) | 192 / 213 (90.1%) | 192 / 213 (90.1%) | 181 / 213 (85.0%) | 185 / 213 (86.9%) |
+| 500-600 | 174 / 215 (80.9%) | 210 / 215 (97.7%) | 204 / 215 (94.9%) | 204 / 215 (94.9%) | 201 / 215 (93.5%) | 199 / 215 (92.6%) |
+| 600-700 | 200 / 221 (90.5%) | 216 / 221 (97.7%) | 218 / 221 (98.6%) | 218 / 221 (98.6%) | 214 / 221 (96.8%) | 213 / 221 (96.4%) |
+| 700-800 | 178 / 197 (90.4%) | 189 / 197 (95.9%) | 189 / 197 (95.9%) | 189 / 197 (95.9%) | 188 / 197 (95.4%) | 187 / 197 (94.9%) |
 
 ## B. Transitioning between words
 
