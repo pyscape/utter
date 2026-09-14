@@ -11,4 +11,10 @@ audio that makes it panic, read out of bounds or allocate without bound
 is a vulnerability here; a model it refuses to open, naming the part it
 does not implement, is not.
 
-The latest release on crates.io and PyPI is the one fixes go to.
+## How a report is handled
+
+A report is acknowledged within a few days. The maintainer confirms it,
+works a fix privately, and releases it on crates.io and PyPI; the latest
+release is the one fixes go to. The reporter is credited in the release
+and the advisory unless they ask to stay anonymous, and their details
+are kept private throughout.
