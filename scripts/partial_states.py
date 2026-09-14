@@ -147,9 +147,11 @@ def build_stream(
     gaps: GapSource,
     utterances: int,
     pause_ms: tuple[float, float] = PAUSE_MS,
+    word_gain: Callable[[bytes], bytes] | None = None,
 ) -> tuple[bytes, list[Json], list[Json]]:
     """One stream and its truth: the PCM, each word with its position and energy span, each gap
-    with its kind and length. The stream ends with a finish gap so the last word has one."""
+    with its kind and length. The stream ends with a finish gap so the last word has one.
+    `word_gain` rescales each clip before it is placed."""
     parts: list[bytes] = []
     words: list[Json] = []
     gap_rows: list[Json] = []
@@ -159,6 +161,8 @@ def build_stream(
         for k in range(n):
             label, path = clips.pop()
             pcm = sc.read_pcm(path)
+            if word_gain is not None:
+                pcm = word_gain(pcm)
             start = energy_start(pcm)
             end = sc.energy_end(pcm)
             n_samples = len(pcm) // 2
