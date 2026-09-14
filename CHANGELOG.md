@@ -4,6 +4,18 @@ Notable changes to the crate, newest first. The project follows semantic
 versioning; release dates are recorded by the git tags and the GitHub
 releases.
 
+## 0.0.4
+
+### Fixed
+
+- The floor margin on the bound reads no span shorter than the bound
+  itself. A quiet word's first frames after a pause sit near the floor
+  on any microphone, and 0.0.3 let them waive the veto and count as
+  silence, cutting a two-word command in two; on the first consumer's
+  recordings that lost 29 words for 39 gained across 13 of 33 takes.
+  A span at least the bound's length is seconds on a cold room and a
+  few frames at an onset. TD-12 amended.
+
 ## 0.0.3
 
 ### Added

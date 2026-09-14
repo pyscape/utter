@@ -461,7 +461,8 @@ impl<'m> Recognizer<'m> {
     /// A margin in dB over the reported floor within which the bound reads a wordless path as
     /// silence: a trailing `[speech]` entry whose energy is within it counts toward the bound's
     /// trailing silence, and a reading extending the partial by a word whose energy is within it
-    /// does not veto. A final the bound reaches this way is the path as it stood, no word forced
+    /// does not veto. Either span must be at least as long as the bound before its energy is
+    /// read, so a quiet onset still forming is not taken for hiss. A final the bound reaches this way is the path as it stood, no word forced
     /// onto it, and names `floor` as its endpoint. `None` removes the margin; the bound is then as
     /// [`set_endpoint_bound`](Self::set_endpoint_bound) alone describes it. `[[rr:TD-12#Decision outcome]]`
     pub fn set_endpoint_floor_margin(&mut self, db: Option<f32>) {
@@ -852,10 +853,14 @@ impl<'m> Recognizer<'m> {
             (Some(margin), Some(floor)) => Some((floor, f64::from(margin))),
             _ => None,
         };
+        // A span shorter than the bound is an onset still forming, whose energy says nothing
+        // yet; the margin judges no span shorter than the bound itself.
         let at_floor = |start_frame: usize, end_frame: usize| {
             floor_margin.is_some_and(|(floor, margin)| {
-                self.energy_dbfs(self.sample_of(start_frame), self.sample_of(end_frame))
-                    .is_some_and(|e| e <= floor + margin)
+                (end_frame - start_frame) as f32 * shift >= bound.min_trailing_silence
+                    && self
+                        .energy_dbfs(self.sample_of(start_frame), self.sample_of(end_frame))
+                        .is_some_and(|e| e <= floor + margin)
             })
         };
         let reason = if fires(bound, trailing) {
