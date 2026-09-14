@@ -66,6 +66,9 @@ With the margin set, a trailing `[speech]` entry whose energy is within
 it counts as trailing silence, a rival word within it cannot veto, and
 the final the bound reaches that way is the path as it stood: an empty
 word list, the text `[sil]` or `[speech]`, and the endpoint `floor`.
+Neither span is read until it is at least as long as the bound, so the
+first frames of a quiet word after a pause, which sit near the floor
+on any microphone, are not taken for hiss.
 On the public background recordings at a -50 dBFS floor that closes a
 wordless stretch at a median 0.72 s instead of 20, and the forced word
 is gone. The cost is a word spoken so quietly that its first phone sits

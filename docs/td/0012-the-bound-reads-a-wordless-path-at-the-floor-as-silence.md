@@ -61,6 +61,10 @@ A host may give the bound a floor margin in dB,
   read the path as before.
 - A reading that extends the partial by a word whose mean energy is
   within the margin of the floor does not veto the bound.
+- The margin judges no span shorter than the bound. A `[speech]` entry
+  or an extending word whose span is shorter than the bound's trailing
+  silence is an onset still forming, and its energy is not read: the
+  entry does not count as silence and the reading keeps its veto.
 - A final the bound reaches only through the margin is the best path
   as it stood, not the best completed path, so it carries the words the
   partial showed and no other; its text is `[sil]` or `[speech]` when
@@ -82,7 +86,16 @@ without it.
 - A quiet word whose first phone sits within the margin of the floor
   for the length of the bound is cut where the hiss is: the price of
   the margin, measured on the pages as words lost, and the host's to
-  set against the silence it buys.
+  set against the silence it buys. Without the length rule the price
+  was far higher than the pages showed: on the first consumer's
+  microphone, where onsets sit a few dB over the floor, the margin
+  waived the veto on the first frames of a word after a pause and cut
+  a two-word command in two on 13 of 33 takes, 29 words lost for 39
+  gained. The public words sit 15 dB and more over the room floor and
+  clear the margin within a frame, which is why the pages saw one clip
+  and four stream words. A span no shorter than the bound is seconds
+  long on a cold room and a few frames at an onset, and tells them
+  apart.
 - A floor-level word on the best path, as opposed to a floor-level
   `[speech]` entry, is not silence to the bound. It is the silence word
   of `[[rr:TD-8#Measurements count a word whose own span carries no speech]]`,
