@@ -57,4 +57,4 @@ the checkout: on main and level with origin, a clean tree, the version
 in Cargo.toml with its `docs/release-notes/vX.Y.Z.md` and CHANGELOG
 heading, no Unreleased section, no such tag yet. Without `--check` it
 signs and verifies the tag, pushes it, watches the release workflow,
-and confirms the six assets and the crate on crates.io.
+and confirms the seven assets and the crate on crates.io.

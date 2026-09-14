@@ -62,9 +62,10 @@ draft=$(gh release view "$tag" --json isDraft -q '.isDraft')
 assets=$(gh release view "$tag" --json assets -q '.assets[].name')
 n=$(printf '%s\n' "$assets" | grep -c .)
 printf '%s\n' "$assets" | sed 's/^/      /'
-[ "$n" -eq 6 ] || fail "expected 6 assets (five archives and the Sigstore bundle), found $n"
+[ "$n" -eq 7 ] || fail "expected 7 assets (five archives, the Sigstore bundle, the provenance envelope), found $n"
 printf '%s\n' "$assets" | grep -q "^utter-$tag.sigstore.json\$" || fail "the Sigstore bundle is not among the assets"
-ok "release has six assets and is published"
+printf '%s\n' "$assets" | grep -q "^utter-$tag.intoto.jsonl\$" || fail "the provenance envelope is not among the assets"
+ok "release has seven assets and is published"
 
 for _ in 1 2 3 4 5 6; do
     code=$(curl -s -o /dev/null -w '%{http_code}' -A "utter release script" "https://crates.io/api/v1/crates/utter/$version")
