@@ -181,16 +181,9 @@ fn num_of_key(json: &str, key: &str) -> f64 {
 
 #[allow(clippy::cast_precision_loss)]
 fn rms_dbfs(samples: &[i16]) -> f64 {
-    if samples.is_empty() {
-        return -999.0;
-    }
     let acc: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
     let rms = (acc / samples.len() as f64).sqrt();
-    if rms <= 0.0 {
-        -999.0
-    } else {
-        20.0 * (rms / 32768.0).log10()
-    }
+    20.0 * (rms / 32768.0).log10()
 }
 
 #[test]
