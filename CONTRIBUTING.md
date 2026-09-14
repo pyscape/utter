@@ -49,3 +49,12 @@ Signed-off-by: Your Name <you@example.com>
 
 The crate is MIT, with the vendored Vosk-Rust files kept under
 Apache-2.0. A contribution is offered under those same terms.
+
+## Releasing
+
+`scripts/release.sh --check` says whether a release can be cut from
+the checkout: on main and level with origin, a clean tree, the version
+in Cargo.toml with its `docs/release-notes/vX.Y.Z.md` and CHANGELOG
+heading, no Unreleased section, no such tag yet. Without `--check` it
+signs and verifies the tag, pushes it, watches the release workflow,
+and confirms the seven assets and the crate on crates.io.
