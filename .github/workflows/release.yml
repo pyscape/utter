@@ -148,9 +148,21 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Provenance for every archive, verifiable with `gh attestation verify`
+        id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: dist/*
+      # The attestation lives in the repository's attestation store, which is what `gh attestation
+      # verify` reads. Its Sigstore bundle also rides with the release so that a consumer without
+      # GitHub access can verify offline with --bundle, and so that tooling that only reads asset
+      # names (OpenSSF Scorecard's Signed-Releases) sees the release as signed. One attestation
+      # names every archive as a subject; the action would write one bundle per line if it made
+      # several, so the copy is guarded against that.
+      - name: The Sigstore bundle beside the archives
+        run: |
+          test "$(jq -c . "${{ steps.attest.outputs.bundle-path }}" | wc -l)" = 1
+          jq . "${{ steps.attest.outputs.bundle-path }}" > "dist/utter-${GITHUB_REF_NAME}.sigstore.json"
+          ls -l dist
       - name: GitHub release with the shared libraries and header attached
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:

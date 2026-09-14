@@ -4,6 +4,14 @@ Notable changes to the crate, newest first. The project follows semantic
 versioning; release dates are recorded by the git tags and the GitHub
 releases.
 
+## Unreleased
+
+### Distribution
+
+- The release attaches the Sigstore bundle of its build-provenance
+  attestation, `utter-vX.Y.Z.sigstore.json`, so an archive verifies
+  offline with `gh attestation verify --bundle`.
+
 ## 0.0.2
 
 ### Security

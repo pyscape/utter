@@ -4,6 +4,8 @@
   "config": {
     // benchmark pages carry generated rows wider than any wrap rule
     "MD013": false,
+    // the changelog repeats its section names under every release
+    "MD024": { "siblings_only": true },
     // the `<page>.reading.md` fragments are appended to a page and start at H2
     "MD041": false,
     "MD050": { "style": "asterisk" },
