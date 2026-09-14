@@ -31,15 +31,16 @@ jobs:
             lib: target/release/utter.dll
             name: utter-windows-arm64
           # The macOS entries run the tests on each architecture; the universal job below
-          # ships one library for both.
+          # ships one library for both. An unset flag compares equal to false in a workflow
+          # expression, so the entries that do ship carry no flag and the gate negates it.
           - os: macos-latest
             lib: target/release/libutter.dylib
             name: utter-macos-arm64
-            archive: false
+            test_only: true
           - os: macos-15-intel
             lib: target/release/libutter.dylib
             name: utter-macos-x86_64
-            archive: false
+            test_only: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install
@@ -49,7 +50,7 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           test "v$version" = "${GITHUB_REF_NAME}"
       - run: cargo test --release
-      - if: matrix.archive != false && !matrix.glibc_target
+      - if: "!matrix.test_only && !matrix.glibc_target"
         run: cargo build --release --lib --bin stream
       - if: matrix.glibc_target
         run: |
@@ -61,7 +62,7 @@ jobs:
             echo "$b needs $need"
             test "$need" = GLIBC_2.28
           done
-      - if: matrix.archive != false
+      - if: "!matrix.test_only"
         shell: bash
         env:
           BUILD_DIR: target/${{ matrix.glibc_target && format('{0}/', matrix.glibc_target) || '' }}release
@@ -76,7 +77,7 @@ jobs:
           else
             tar -czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
           fi
-      - if: matrix.archive != false
+      - if: "!matrix.test_only"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ${{ matrix.name }}
