@@ -2,7 +2,7 @@
 
 Grammar: the Speech Commands page's 92 entries. Both engines with `SetWords(True)`; each word of each final with its `start` and `end` in seconds. Times are paired on the clips where both finals carry the same word sequence; utterpy is measured against vosk.
 
-Run 2026-09-13 17:57:01Z, utter 608d4f7, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py` built from utter fafb7f5e4d6bab8dea51c2ad7dd578ebd14ffbd4, **not** the checkout as it stands (608d4f7).
+Run 2026-09-13 22:07:52Z, utter f158147, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/python/utterpy/__init__.py` built from utter f15814796b546844b11a0480cc56a4dab9765df9, the checkout's HEAD.
 
 ## Clips
 
