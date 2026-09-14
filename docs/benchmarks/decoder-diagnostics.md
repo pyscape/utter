@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 10 readings asked for on the partial and on the final.
 
-Run 2026-09-13 22:25:56Z, utter f158147, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/python/utterpy/__init__.py` built from utter f15814796b546844b11a0480cc56a4dab9765df9, the checkout's HEAD.
+Run 2026-09-14 01:02:20Z, utter 474a578, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/python/utterpy/__init__.py` built from utter 474a5783d84690eb66fd3c407dd6866d19efb170, the checkout's HEAD.
 
 ## Engines
 
@@ -10,8 +10,8 @@ Each engine opened the model and decoded a clip before the run began; a model an
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
-| vosk | 0.17 | 0.6 |
-| utterpy | 0.14 | 22.5 |
+| vosk | 0.18 | 0.4 |
+| utterpy | 0.13 | 22.0 |
 
 ## Oracle in the beam: was the word there at all
 
@@ -72,8 +72,8 @@ A changed final is the search reaching a different answer, not the search having
 
 | engine | RTF stock | RTF wide | per-block ms p50 stock / wide | p95 stock / wide |
 |---|---|---|---|---|
-| vosk | 0.0150 | 0.0186 | 0.052 / 0.058 | 3.53 / 4.52 |
-| utterpy | 0.0134 | 0.0145 | 0.045 / 0.046 | 3.08 / 3.36 |
+| vosk | 0.0125 | 0.0156 | 0.049 / 0.054 | 2.87 / 3.63 |
+| utterpy | 0.0106 | 0.0122 | 0.042 / 0.044 | 2.42 / 2.83 |
 
 One recognizer over 295 s of clips joined end to end at each setting, the same pass the Speech Commands page reports compute with.
 
