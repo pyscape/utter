@@ -54,7 +54,7 @@ frame, after every `AcceptWaveform` that did not end the utterance.
 | `partial` | string | always | Vosk | The words on the best path, space separated. Where Vosk gives an empty string, utter gives `[sil]` when the path sits on silence and `[speech]` when it has entered a word the grammar cannot yet name. |
 | `partial_alternatives` | array of [readings](#a-reading) | `SetPartialAlternatives(n)` with n above 0 | added | The distinct word sequences still alive in the search, best first, at most n of them. |
 | `partial_result` | array of [word entries](#a-word-entry) | `SetPartialWords(True)` | Vosk | The best path as word entries, including its `[sil]` and `[speech]` entries. Each entry carries the added evidence keys. |
-| `floor_dbfs` | number | once enough audio has been fed to measure it | added | The room's noise floor over the last ten seconds, in dBFS. |
+| `floor_dbfs` | number | once enough audio has been fed to measure it | added | The room's noise floor over the last ten seconds, in dBFS. Absent while the quietest windows of those seconds are digital silence, which has no level: a gate relative to the floor has nothing to compare against. |
 
 Turning on partial words in stock Vosk switches it to a lattice-based
 partial that trails the audio. utter's partial is the same either way.
@@ -86,7 +86,7 @@ final's `result`. Which keys an entry carries depends on where it sits.
 | `start`, `end` | number | always | Vosk | The word's span in seconds since the recognizer was built. |
 | `start_sample`, `end_sample` | integer | always | added | The same span in samples of the audio you fed, on the clock your own code keeps. |
 | `conf` | number | finals only | Vosk | Always `1.0`. Vosk computes this from a lattice; utter has no lattice, and keeps the key so parsers do not break. Use the alternatives' `confidence` instead. |
-| `energy_dbfs` | number | `partial_result` and finals | added | The loudness of the audio under the word, in dBFS. Tells a spoken word from one the decoder read into a quiet room. |
+| `energy_dbfs` | number or null | `partial_result` and finals | added | The loudness of the audio under the word, in dBFS. Tells a spoken word from one the decoder read into a quiet room. `null` when there is no signal under the word at all, digital silence or no samples: nothing was said there. |
 | `stable_ms` | integer | `partial_result` and finals | added | How long the word has held its place in the partial. On a final, how long it had held when the final was cut; zero means no partial ever showed it. |
 
 The trailing `[sil]` entry ends at the last frame the decoder has

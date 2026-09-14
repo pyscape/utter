@@ -181,14 +181,20 @@ impl FloorTracker {
         if self.hop_sum_sq.len() < 2 {
             return None;
         }
-        let mut windows: Vec<f64> = self
+        // A window of digital silence sorts below every level, so a floor it takes is none.
+        let mut windows: Vec<Option<f64>> = self
             .hop_sum_sq
             .iter()
             .zip(self.hop_sum_sq.iter().skip(1))
             .map(|(a, b)| dbfs_of_mean_square((a + b) / (2 * self.hop) as f64))
             .collect();
-        windows.sort_by(f64::total_cmp);
-        Some(windows[windows.len() * 5 / 100])
+        windows.sort_by(|a, b| match (a, b) {
+            (Some(a), Some(b)) => a.total_cmp(b),
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+        });
+        windows[windows.len() * 5 / 100]
     }
 }
 
@@ -320,20 +326,18 @@ fn escape_json_number(v: f64) -> String {
     }
 }
 
-fn number_or_null(v: Option<f32>) -> String {
+fn number_or_null(v: Option<f64>) -> String {
     match v {
-        Some(x) => escape_json_number(x as f64),
+        Some(x) => escape_json_number(x),
         None => "null".into(),
     }
 }
 
-fn dbfs_of_mean_square(mean_square: f64) -> f64 {
+/// Digital silence has no level in decibels, so it reads as no level rather than as a number
+/// every threshold sits above.
+fn dbfs_of_mean_square(mean_square: f64) -> Option<f64> {
     let rms = mean_square.sqrt();
-    if rms <= 0.0 {
-        -999.0
-    } else {
-        20.0 * (rms / 32768.0).log10()
-    }
+    (rms > 0.0).then(|| 20.0 * (rms / 32768.0).log10())
 }
 
 impl<'m> Recognizer<'m> {
@@ -736,8 +740,8 @@ impl<'m> Recognizer<'m> {
                 ", \"confidence\": {}, \"relation\": \"{}\", \"lead\": {}, \"lead_delta\": {}}}",
                 escape_json_number(-(*cost as f64)),
                 relation(words, best),
-                number_or_null(*lead),
-                number_or_null(deltas[i]),
+                number_or_null(lead.map(f64::from)),
+                number_or_null(deltas[i].map(f64::from)),
             ));
         }
         out.push_str("]}");
@@ -1001,11 +1005,11 @@ impl<'m> Recognizer<'m> {
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-    fn energy_dbfs(&self, start_sample: u64, end_sample: u64) -> f64 {
+    fn energy_dbfs(&self, start_sample: u64, end_sample: u64) -> Option<f64> {
         let lo = start_sample.saturating_sub(self.samples_round_start) as usize;
         let hi = (end_sample.saturating_sub(self.samples_round_start) as usize).min(self.pcm.len());
         if hi <= lo {
-            return -999.0;
+            return None;
         }
         let mut acc = 0.0f64;
         for &s in &self.pcm[lo..hi] {
@@ -1051,7 +1055,7 @@ impl<'m> Recognizer<'m> {
         if with_evidence {
             out.push_str(&format!(
                 ", \"energy_dbfs\": {}",
-                escape_json_number(self.energy_dbfs(ss, es))
+                number_or_null(self.energy_dbfs(ss, es))
             ));
             let _ = now;
         }
@@ -1228,7 +1232,12 @@ impl<'m> Recognizer<'m> {
                 out.push_str(&format!(
                     ", \"relation\": \"{}\", \"lead_delta\": {}",
                     relation(&alt.words, best),
-                    number_or_null(self.history.get(&alt.words).and_then(|h| h.delta())),
+                    number_or_null(
+                        self.history
+                            .get(&alt.words)
+                            .and_then(|h| h.delta())
+                            .map(f64::from)
+                    ),
                 ));
                 out.push('}');
             }
@@ -1431,6 +1440,16 @@ mod tests {
         f.feed(&constant(-30.0, 1.0));
         let want = 20.0 * (amplitude(-30.0) as f64 / 32768.0).log10();
         assert!((f.dbfs().unwrap() - want).abs() < 0.01, "{:?}", f.dbfs());
+    }
+
+    #[test]
+    fn a_floor_of_digital_silence_is_no_floor() {
+        let mut f = FloorTracker::new(RATE);
+        f.feed(&noise(180, 9.0));
+        f.feed(&constant(-999.0, 1.0));
+        assert_eq!(f.dbfs(), None);
+        f.feed(&noise(180, 10.0));
+        assert!((f.dbfs().unwrap() + 50.0).abs() < 1.0, "{:?}", f.dbfs());
     }
 
     #[test]

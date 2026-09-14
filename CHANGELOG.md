@@ -14,6 +14,11 @@ releases.
 
 ### Fixed
 
+- Digital silence no longer reads as -999 dBFS. A word entry's
+  `energy_dbfs` is `null` when there is no signal under the word, and
+  `floor_dbfs` is absent while the quietest windows of the last ten
+  seconds are digital silence, so a host gate relative to the floor is
+  not handed a number every word sits above.
 - `REVISION` reports the commit in a crate built from crates.io. The
   build script reads the commit `cargo package` records when there is
   no checkout to ask; 0.0.1 and 0.0.2 report "unknown" from the registry.
