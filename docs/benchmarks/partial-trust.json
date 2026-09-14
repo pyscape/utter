@@ -1,5 +1,5 @@
 {
-  "run": "2026-09-13 14:39:33Z",
+  "run": "2026-09-13 22:16:53Z",
   "split": "testing",
   "block_ms": 40,
   "alternatives": 5,
@@ -7,13 +7,13 @@
   "fit_on": "the validation split",
   "fit_clips": 8322,
   "provenance": {
-    "date": "2026-09-13 14:39:32Z",
-    "utter_revision": "d1c410c",
+    "date": "2026-09-13 22:16:52Z",
+    "utter_revision": "f158147",
     "source_dirty": false,
-    "docs_dirty": true,
-    "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
-    "wheel_revision": "d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty",
-    "wheel_matches_head": false,
+    "docs_dirty": false,
+    "wheel_path": "/home/jared/Repos/utterpy/python/utterpy/__init__.py",
+    "wheel_revision": "f15814796b546844b11a0480cc56a4dab9765df9",
+    "wheel_matches_head": true,
     "engines": {
       "utterpy": "0.0.1"
     },

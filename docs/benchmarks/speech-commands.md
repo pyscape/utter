@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-13 15:11:08Z, utter afbe98e, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py` built from utter d1c410cb95df3e3cb541230d1693aaba97ec6950-dirty, **not** the checkout as it stands (afbe98e).
+Run 2026-09-14 00:03:39Z, utter 38bfcb3, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/python/utterpy/__init__.py` built from utter 38bfcb34508b80fc65794c4d73c01eb3337da36a, the checkout's HEAD.
 
 ## Engines
 
@@ -10,8 +10,8 @@ Each engine opened the model and decoded a clip before the run began; a model an
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
-| vosk | 0.18 | 0.4 |
-| utterpy | 0.13 | 31.3 |
+| vosk | 0.19 | 0.4 |
+| utterpy | 0.14 | 23.4 |
 
 ## Full grammar: accuracy
 
@@ -31,8 +31,8 @@ Compute, one recognizer per clip:
 
 | engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |
 |---|---|---|---|---|---|
-| vosk | 0.32 | 0.291 | 0.291 | 0.0168 | 0.0171 |
-| utterpy | 2.33 | 0.027 | 0.027 | 0.0143 | 0.0144 |
+| vosk | 0.32 | 0.293 | 0.293 | 0.0170 | 0.0173 |
+| utterpy | 2.29 | 0.028 | 0.029 | 0.0137 | 0.0137 |
 
 | word | vosk | utterpy |
 |---|---|---|
@@ -164,15 +164,15 @@ Nothing here separates one bound from another or from the stock rules, the bound
 
 | block ms | engine | accuracy | first appearance p50 / p90 | same instant as the finest block | RTF, decode only |
 |---|---|---|---|---|---|
-| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0172 |
-| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0149 |
-| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0172 |
-| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0137 |
-| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0170 |
-| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0138 |
+| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0174 |
+| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0141 |
+| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0171 |
+| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0139 |
+| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0173 |
+| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0137 |
 | 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0171 |
-| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0139 |
-| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 316, up to 60 ms later | 0.0169 |
+| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0137 |
+| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 316, up to 60 ms later | 0.0170 |
 | 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0143 |
 
 The column that carries the result is the per-clip one, not the quantiles: two block sizes can produce the same p50 by luck, and only a clip-by-clip comparison against the finest block (10 ms) shows whether the word actually appeared at the same instant.
@@ -183,8 +183,8 @@ One recognizer over 295 s of the clips joined end to end.
 
 | engine | RTF | per-block compute ms p50 / p95 / p99 |
 |---|---|---|
-| vosk | 0.0124 | 0.049 / 2.85 / 3.35 |
-| utterpy | 0.0107 | 0.042 / 2.45 / 2.75 |
+| vosk | 0.0124 | 0.049 / 2.83 / 3.38 |
+| utterpy | 0.0113 | 0.042 / 2.59 / 2.84 |
 
 ## Accuracy against noise
 
@@ -211,12 +211,12 @@ Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNem
 
 | entries | vosk accuracy | vosk first ms | vosk later ms | vosk RTF | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF |
 |---|---|---|---|---|---|---|---|---|
-| 35 | 94.0% | 0.24 | 0.195 | 0.0154 | 94.5% | 0.90 | 0.016 | 0.0136 |
-| 60 | 92.5% | 0.32 | 0.230 | 0.0165 | 92.8% | 1.51 | 0.021 | 0.0144 |
-| 92 | 92.0% | 0.38 | 0.291 | 0.0170 | 92.2% | 2.38 | 0.028 | 0.0138 |
-| 150 | 91.0% | 0.51 | 0.393 | 0.0176 | 92.0% | 3.72 | 0.042 | 0.0139 |
-| 200 | 90.2% | 0.56 | 0.468 | 0.0181 | 91.5% | 5.07 | 0.048 | 0.0140 |
-| 246 | 89.0% | 0.64 | 0.533 | 0.0186 | 89.8% | 6.34 | 0.058 | 0.0140 |
+| 35 | 94.0% | 0.23 | 0.194 | 0.0154 | 94.5% | 0.96 | 0.016 | 0.0136 |
+| 60 | 92.5% | 0.30 | 0.232 | 0.0166 | 92.8% | 1.48 | 0.021 | 0.0140 |
+| 92 | 92.0% | 0.38 | 0.292 | 0.0170 | 92.2% | 2.51 | 0.028 | 0.0138 |
+| 150 | 91.0% | 0.46 | 0.393 | 0.0177 | 92.0% | 3.96 | 0.042 | 0.0138 |
+| 200 | 90.2% | 0.55 | 0.472 | 0.0182 | 91.5% | 5.11 | 0.049 | 0.0145 |
+| 246 | 89.0% | 0.63 | 0.534 | 0.0186 | 89.8% | 6.19 | 0.059 | 0.0145 |
 
 ## Twelve-class: ten commands plus the unknown-word symbol
 
