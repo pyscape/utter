@@ -1,11 +1,11 @@
 {
  "provenance": {
-  "date": "2026-09-13 22:18:30Z",
-  "utter_revision": "f158147",
+  "date": "2026-09-14 03:32:51Z",
+  "utter_revision": "4e5ade1",
   "source_dirty": false,
   "docs_dirty": false,
-  "wheel_path": "/home/jared/Repos/utterpy/python/utterpy/__init__.py",
-  "wheel_revision": "f15814796b546844b11a0480cc56a4dab9765df9",
+  "wheel_path": "/tmp/claude-1000/-home-jared-Repos-utter/cd366a0c-1f10-42bf-9d90-02def22aec2d/scratchpad/site/utterpy/__init__.py",
+  "wheel_revision": "4e5ade17025d38ce06cd892747c3a91109078c99",
   "wheel_matches_head": true,
   "engines": {
    "utterpy": "0.0.1",
@@ -34,9 +34,9 @@
   "wordless_gap_floors": "-70,-60,-40",
   "wordless_words": 600,
   "no_streams": false,
-  "bound_runs": "/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b100.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300-4.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300-8.json"
+  "bound_runs": "/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b100.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300-4.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300-8.json,/home/jared/Repos/utter-analysis/bound-sweep/boundruns/b300-8-8.json"
  },
- "wheel": "/home/jared/Repos/utterpy/python/utterpy/__init__.py",
+ "wheel": "/tmp/claude-1000/-home-jared-Repos-utter/cd366a0c-1f10-42bf-9d90-02def22aec2d/scratchpad/site/utterpy/__init__.py",
  "grammar_size": 92,
  "seed": 20260912,
  "alternatives": 8,
@@ -96,7 +96,7 @@
    "minutes": 78.57144583333334
   }
  },
- "decode_seconds": 191.07117383903824,
+ "decode_seconds": 188.08253188594244,
  "fit": {
   "bound_ms": 500,
   "sil_delta": -8.0,
@@ -9935,6 +9935,61 @@
    "lost": 48,
    "restarted": 6,
    "wheel_revision": "afcd9ee2311fcc24dc78555d28c0210f6014026a",
+   "same_streams": true
+  },
+  "utterpy@300/8/8": {
+   "totals": {
+    "pause": 1458,
+    "finish": 750
+   },
+   "pauses_mistaken": 1159,
+   "finishes_called": 731,
+   "finish_ms_p50": 680.6875,
+   "finish_ms_p90": 872.875,
+   "by_pause": {
+    "100-200": {
+     "n": 205,
+     "mistaken": 93
+    },
+    "200-300": {
+     "n": 205,
+     "mistaken": 126
+    },
+    "300-400": {
+     "n": 202,
+     "mistaken": 156
+    },
+    "400-500": {
+     "n": 213,
+     "mistaken": 185
+    },
+    "500-600": {
+     "n": 215,
+     "mistaken": 199
+    },
+    "600-700": {
+     "n": 221,
+     "mistaken": 213
+    },
+    "700-800": {
+     "n": 197,
+     "mistaken": 187
+    }
+   },
+   "finals": 2321,
+   "finals_with_a_word": 2070,
+   "finals_never_shown": 8,
+   "worded_finals_by_endpoint": {
+    "bound": 1490,
+    "rule2": 579,
+    "flush": 1
+   },
+   "finals_per_min": 29.539993510152936,
+   "minutes": 78.57144583333334,
+   "words": 2208,
+   "lost": 52,
+   "restarted": 6,
+   "wheel_revision": "4e5ade17025d38ce06cd892747c3a91109078c99",
    "same_streams": true
   }
  },
