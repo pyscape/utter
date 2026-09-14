@@ -9,108 +9,108 @@
     "vosk": {
      "correct": 376,
      "accuracy": 94.0,
-     "ctor_first_ms": 0.22661802358925343,
-     "ctor_rest_ms": 0.19374278661115726,
-     "decode_rtf": 0.015435819087623622
+     "ctor_first_ms": 0.21934392862021923,
+     "ctor_rest_ms": 0.19312780385458828,
+     "decode_rtf": 0.015397248265589329
     },
     "utterpy": {
      "correct": 378,
      "accuracy": 94.5,
-     "ctor_first_ms": 0.962772173807025,
-     "ctor_rest_ms": 0.015914091784366986,
-     "decode_rtf": 0.01357261766493473
+     "ctor_first_ms": 0.9756451472640038,
+     "ctor_rest_ms": 0.015327789795055127,
+     "decode_rtf": 0.01427932130966656
     }
    },
    "60": {
     "vosk": {
      "correct": 370,
      "accuracy": 92.5,
-     "ctor_first_ms": 0.29930309392511845,
-     "ctor_rest_ms": 0.2320695284492614,
-     "decode_rtf": 0.016588968461692576
+     "ctor_first_ms": 0.29380409978330135,
+     "ctor_rest_ms": 0.22419045485537453,
+     "decode_rtf": 0.016400690438806976
     },
     "utterpy": {
      "correct": 371,
      "accuracy": 92.75,
-     "ctor_first_ms": 1.4814799651503563,
-     "ctor_rest_ms": 0.021498692326975943,
-     "decode_rtf": 0.013954470618953413
+     "ctor_first_ms": 1.4883801341056824,
+     "ctor_rest_ms": 0.02113803532581431,
+     "decode_rtf": 0.014350508231991667
     }
    },
    "92": {
     "vosk": {
      "correct": 368,
      "accuracy": 92.0,
-     "ctor_first_ms": 0.3764168359339237,
-     "ctor_rest_ms": 0.29167039133141515,
-     "decode_rtf": 0.01704307230874304
+     "ctor_first_ms": 0.35081012174487114,
+     "ctor_rest_ms": 0.28407048342987556,
+     "decode_rtf": 0.01688663939818587
     },
     "utterpy": {
      "correct": 369,
      "accuracy": 92.25,
-     "ctor_first_ms": 2.5097241159528494,
-     "ctor_rest_ms": 0.028285070702919086,
-     "decode_rtf": 0.013776016780067778
+     "ctor_first_ms": 2.4291251320391893,
+     "ctor_rest_ms": 0.027036799099249647,
+     "decode_rtf": 0.014251080652779259
     }
    },
    "150": {
     "vosk": {
      "correct": 364,
      "accuracy": 91.0,
-     "ctor_first_ms": 0.458763912320137,
-     "ctor_rest_ms": 0.3930564478441214,
-     "decode_rtf": 0.017674936736652495
+     "ctor_first_ms": 0.523597002029419,
+     "ctor_rest_ms": 0.39115347339302525,
+     "decode_rtf": 0.017651396995360037
     },
     "utterpy": {
      "correct": 368,
      "accuracy": 92.0,
-     "ctor_first_ms": 3.958717919886112,
-     "ctor_rest_ms": 0.04173263459277332,
-     "decode_rtf": 0.013835475159676409
+     "ctor_first_ms": 3.675369080156088,
+     "ctor_rest_ms": 0.04114530674814431,
+     "decode_rtf": 0.013858262666580103
     }
    },
    "200": {
     "vosk": {
      "correct": 361,
      "accuracy": 90.25,
-     "ctor_first_ms": 0.5480761174112558,
-     "ctor_rest_ms": 0.4721908056338255,
-     "decode_rtf": 0.018177463272099213
+     "ctor_first_ms": 0.60852593742311,
+     "ctor_rest_ms": 0.46698902126747116,
+     "decode_rtf": 0.01810373050023626
     },
     "utterpy": {
      "correct": 366,
      "accuracy": 91.5,
-     "ctor_first_ms": 5.110263824462891,
-     "ctor_rest_ms": 0.04872914233284636,
-     "decode_rtf": 0.014461740448941426
+     "ctor_first_ms": 5.089498125016689,
+     "ctor_rest_ms": 0.04774647797539569,
+     "decode_rtf": 0.01386152158314725
     }
    },
    "246": {
     "vosk": {
      "correct": 356,
      "accuracy": 89.0,
-     "ctor_first_ms": 0.6263591349124908,
-     "ctor_rest_ms": 0.5338160562700123,
-     "decode_rtf": 0.018635002402966644
+     "ctor_first_ms": 0.6074768025428057,
+     "ctor_rest_ms": 0.5285225873976424,
+     "decode_rtf": 0.018623465168821605
     },
     "utterpy": {
      "correct": 359,
      "accuracy": 89.75,
-     "ctor_first_ms": 6.191048072651029,
-     "ctor_rest_ms": 0.0587537876542723,
-     "decode_rtf": 0.014462929662127663
+     "ctor_first_ms": 6.121681071817875,
+     "ctor_rest_ms": 0.05811654185330061,
+     "decode_rtf": 0.014001427358201748
     }
    }
   }
  },
  "out": "docs/benchmarks/speech-commands",
  "provenance": {
-  "date": "2026-09-14 00:03:39Z",
-  "utter_revision": "38bfcb3",
+  "date": "2026-09-14 02:46:49Z",
+  "utter_revision": "51b062d",
   "source_dirty": false,
   "docs_dirty": false,
-  "wheel_path": "/home/jared/Repos/utterpy/python/utterpy/__init__.py",
-  "wheel_revision": "38bfcb34508b80fc65794c4d73c01eb3337da36a",
+  "wheel_path": "/tmp/claude-1000/-home-jared-Repos-utter/cd366a0c-1f10-42bf-9d90-02def22aec2d/scratchpad/site/utterpy/__init__.py",
+  "wheel_revision": "51b062dc697bf2e913c67fcc2be2daaef8a94992",
   "wheel_matches_head": true,
   "engines": {
    "vosk": "0.3.45",
@@ -124,13 +124,13 @@
  "preflight": {
   "vosk": {
    "ok": true,
-   "model_load_s": 0.18849442107602954,
-   "first_ctor_ms": 0.38191000930964947
+   "model_load_s": 0.18431010702624917,
+   "first_ctor_ms": 0.3991739358752966
   },
   "utterpy": {
    "ok": true,
-   "model_load_s": 0.13809436606243253,
-   "first_ctor_ms": 23.411446949467063
+   "model_load_s": 0.1468847468495369,
+   "first_ctor_ms": 24.823285872116685
   }
  },
  "agreement": {
@@ -644,11 +644,11 @@
    "rev_lag_ms_p90": 240.0,
    "rev_lag_ms_min": 240.0,
    "rev_lag_ms_max": 480.0,
-   "rtf": 0.017257849242715822,
-   "decode_rtf": 0.016959243611261023,
-   "ctor_ms": 0.29349876629076105,
-   "ctor_first_ms": 0.316268065944314,
-   "ctor_rest_ms": 0.2934966971068594
+   "rtf": 0.01757607487084531,
+   "decode_rtf": 0.017266838821530097,
+   "ctor_ms": 0.30394737876999084,
+   "ctor_first_ms": 0.30625006183981895,
+   "ctor_rest_ms": 0.3039471695112604
   },
   "utterpy": {
    "correct": 10102,
@@ -914,11 +914,11 @@
    "rev_lag_ms_p90": 240.0,
    "rev_lag_ms_min": 240.0,
    "rev_lag_ms_max": 480.0,
-   "rtf": 0.013691247224618345,
-   "decode_rtf": 0.013662053379903144,
-   "ctor_ms": 0.02869456066669171,
-   "ctor_first_ms": 2.2929750848561525,
-   "ctor_rest_ms": 0.028488791807714114
+   "rtf": 0.014350581924714946,
+   "decode_rtf": 0.01432142639173269,
+   "ctor_ms": 0.028656904155330083,
+   "ctor_first_ms": 2.7164570055902004,
+   "ctor_rest_ms": 0.028412647512160792
   }
  },
  "determinism": {
@@ -988,6 +988,14 @@
     "ms_p90": 820.0000000000001,
     "ms_p99": 960.0000000000001,
     "n": 781
+   },
+   "utterpy@300/8/8": {
+    "endpointed": 781,
+    "never": 19,
+    "ms_p50": 670.0,
+    "ms_p90": 820.0000000000001,
+    "ms_p99": 960.0000000000001,
+    "n": 781
    }
   },
   "agreement": {
@@ -1038,6 +1046,17 @@
     "base_only": 0,
     "bound_only": 0,
     "p": 1.0
+   },
+   "utterpy@300/8/8": {
+    "right": 736,
+    "base_right": 736,
+    "differs": 1,
+    "said_nothing": 1,
+    "said_more": 0,
+    "said_another": 0,
+    "base_only": 0,
+    "bound_only": 0,
+    "p": 1.0
    }
   }
  },
@@ -1055,7 +1074,7 @@
      "same_as_finest": 317,
      "compared_to_finest": 317,
      "max_shift_ms": 0,
-     "decode_rtf": 0.0173750369864402
+     "decode_rtf": 0.017289309684920127
     },
     "utterpy": {
      "correct": 369,
@@ -1066,7 +1085,7 @@
      "same_as_finest": 319,
      "compared_to_finest": 319,
      "max_shift_ms": 0,
-     "decode_rtf": 0.01410454214755095
+     "decode_rtf": 0.014035226190850392
     }
    },
    "20": {
@@ -1079,7 +1098,7 @@
      "same_as_finest": 317,
      "compared_to_finest": 317,
      "max_shift_ms": 0,
-     "decode_rtf": 0.01714122196872459
+     "decode_rtf": 0.017221496990960584
     },
     "utterpy": {
      "correct": 369,
@@ -1090,7 +1109,7 @@
      "same_as_finest": 319,
      "compared_to_finest": 319,
      "max_shift_ms": 0,
-     "decode_rtf": 0.013904380266213472
+     "decode_rtf": 0.0139788387061282
     }
    },
    "40": {
@@ -1103,7 +1122,7 @@
      "same_as_finest": 317,
      "compared_to_finest": 317,
      "max_shift_ms": 0,
-     "decode_rtf": 0.017252117825032387
+     "decode_rtf": 0.01727952862584432
     },
     "utterpy": {
      "correct": 369,
@@ -1114,7 +1133,7 @@
      "same_as_finest": 319,
      "compared_to_finest": 319,
      "max_shift_ms": 0,
-     "decode_rtf": 0.01372301088288712
+     "decode_rtf": 0.013858800492974183
     }
    },
    "80": {
@@ -1127,7 +1146,7 @@
      "same_as_finest": 317,
      "compared_to_finest": 317,
      "max_shift_ms": 0,
-     "decode_rtf": 0.01707435845315147
+     "decode_rtf": 0.01730137587020713
     },
     "utterpy": {
      "correct": 369,
@@ -1138,7 +1157,7 @@
      "same_as_finest": 319,
      "compared_to_finest": 319,
      "max_shift_ms": 0,
-     "decode_rtf": 0.0137151906003276
+     "decode_rtf": 0.014023932444887767
     }
    },
    "100": {
@@ -1151,7 +1170,7 @@
      "same_as_finest": 26,
      "compared_to_finest": 316,
      "max_shift_ms": 60,
-     "decode_rtf": 0.017008558751794436
+     "decode_rtf": 0.017085003605031856
     },
     "utterpy": {
      "correct": 368,
@@ -1162,24 +1181,24 @@
      "same_as_finest": 26,
      "compared_to_finest": 319,
      "max_shift_ms": 60,
-     "decode_rtf": 0.014331609871625281
+     "decode_rtf": 0.013840188970448974
     }
    }
   }
  },
  "steady_state": {
   "vosk": {
-   "rtf": 0.012394991443705962,
-   "ms_p50": 0.048612942919135094,
-   "ms_p95": 2.8306960593909025,
-   "ms_p99": 3.3805191051214933,
+   "rtf": 0.012336126525484235,
+   "ms_p50": 0.049039022997021675,
+   "ms_p95": 2.838721964508295,
+   "ms_p99": 3.3060861751437187,
    "seconds": 295.3100625
   },
   "utterpy": {
-   "rtf": 0.011300298974182409,
-   "ms_p50": 0.0424189493060112,
-   "ms_p95": 2.594448160380125,
-   "ms_p99": 2.843456109985709,
+   "rtf": 0.010600044678983591,
+   "ms_p50": 0.042700907215476036,
+   "ms_p95": 2.423834055662155,
+   "ms_p99": 2.698421012610197,
    "seconds": 295.3100625
   }
  },
@@ -1339,6 +1358,20 @@
    "word_blocks": 0,
    "sil_rival": 0,
    "silence_finals": 6
+  },
+  "utterpy@300/8/8/full": {
+   "minutes": 6.656636458333334,
+   "blocks": 9773,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 1
+  },
+  "utterpy@300/8/8/full + [unk]": {
+   "minutes": 6.656636458333334,
+   "blocks": 9778,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 1
   }
  },
  "wordless": {
