@@ -11,6 +11,11 @@ audio that makes it panic, read out of bounds or allocate without bound
 is a vulnerability here; a model it refuses to open, naming the part it
 does not implement, is not.
 
+## Assurance case
+
+Why these requirements are met, with the threat model and trust
+boundaries, is set out in [docs/assurance-case.md](docs/assurance-case.md).
+
 ## How a report is handled
 
 A report is acknowledged within a few days. The maintainer confirms it,
