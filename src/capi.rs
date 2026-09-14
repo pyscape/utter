@@ -191,6 +191,20 @@ pub unsafe extern "C" fn utter_recognizer_set_endpoint_bound(
     }
 }
 
+/// A margin in dB over the reported floor within which the host bound reads a wordless path as
+/// silence and a rival word at the floor cannot veto it; 0 or less removes the margin.
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_endpoint_floor_margin(
+    rec: *mut UtterRecognizer,
+    margin_db: c_float,
+) {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner
+            .set_endpoint_floor_margin((margin_db > 0.0).then_some(margin_db));
+    }
+}
+
 /// Partial alternatives to report, 0 for none.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_set_alternatives(rec: *mut UtterRecognizer, n: c_int) {

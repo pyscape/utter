@@ -528,12 +528,15 @@ class Engine:
         unknown_cost: float | None = None,
     ) -> None:
         # `utterpy@300`: utterpy with a host endpoint bound at 300 ms of trailing silence;
-        # `utterpy@300/4`: the same, vetoed while a reading extending the partial is within 4 nats
+        # `utterpy@300/4`: the same, vetoed while a reading extending the partial is within 4 nats;
+        # `utterpy@300/4/8`: the same, reading a wordless path within 8 dB of the floor as silence
         self.name = name
         self.endpoint_bound: tuple[float, float | None] | None = None
+        self.floor_margin: float | None = None
         if "@" in name:
             parts = name.split("@", 1)[1].split("/")
-            self.endpoint_bound = (float(parts[0]), float(parts[1]) if len(parts) > 1 else None)
+            self.endpoint_bound = (float(parts[0]), float(parts[1]) if len(parts) > 1 and parts[1] else None)
+            self.floor_margin = float(parts[2]) if len(parts) > 2 else None
         self.mod = module
         self.model = module.Model(str(model_dir))
         self.grammar = json.dumps(grammar)
@@ -553,6 +556,8 @@ class Engine:
         rec.SetWords(True)
         if self.endpoint_bound is not None:
             rec.SetEndpointBound(*self.endpoint_bound)
+        if self.floor_margin is not None:
+            rec.SetEndpointFloorMargin(self.floor_margin)
         if alternatives and hasattr(rec, "SetPartialAlternatives"):
             rec.SetPartialAlternatives(alternatives)
         return rec

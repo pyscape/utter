@@ -47,3 +47,32 @@ veto did; measure on your own audio before going below 300.
 In C, `utter_recognizer_set_endpoint_bound(rec, 300.0f, 8.0f)`; a
 bound of zero or less removes it, and a veto of zero or less turns the
 veto off. In Rust, `None` for either argument does the same.
+
+## Closing a quiet room
+
+On a quiet room the model reads the hiss as a word's first phone within
+a few seconds. The partial then says `[speech]`, no silence rule sees
+trailing silence, and the bound's veto is held by grammar words a few
+nats behind, so nothing closes the stretch until the 20 s cap forces
+the cheapest word onto it, with `stable_ms` of zero. A margin over the
+floor lets the bound read that path for what it is:
+
+```python
+rec.SetEndpointBound(300, 8)
+rec.SetEndpointFloorMargin(8)   # dB over floor_dbfs
+```
+
+With the margin set, a trailing `[speech]` entry whose energy is within
+it counts as trailing silence, a rival word within it cannot veto, and
+the final the bound reaches that way is the path as it stood: an empty
+word list, the text `[sil]` or `[speech]`, and the endpoint `floor`.
+On the public background recordings at a -50 dBFS floor that closes a
+wordless stretch at a median 0.72 s instead of 20, and the forced word
+is gone. The cost is a word spoken so quietly that its first phone sits
+within the margin for the length of the bound, which is cut where the
+hiss is; the [states page](../benchmarks/partial-states.md) counts the
+words lost on its streams. The margin is yours, as the gate on a final
+word's energy is; 8 dB is the operating point the silence record,
+TD-8, measured for that gate. In C,
+`utter_recognizer_set_endpoint_floor_margin(rec, 8.0f)`, zero or less
+removes it; in Rust, `set_endpoint_floor_margin(Some(8.0))`.

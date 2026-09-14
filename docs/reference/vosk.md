@@ -47,6 +47,7 @@ recognizer is not shared between threads in either library.
 |---|---|---|---|
 | `SetPartialAlternatives(n)` | `set_alternatives(n)` | `utter_recognizer_set_alternatives` | Carry up to n [readings](results.md#a-reading) beside every partial. Off at 0. |
 | `SetEndpointBound(trailing_ms, extending_veto_nats=None)` | `set_endpoint_bound(Option<f32>, Option<f32>)` | `utter_recognizer_set_endpoint_bound` | One endpoint rule of your own beside the model's; see [Ending speech sooner](../guide/ending-speech-sooner.md). Off by default. |
+| `SetEndpointFloorMargin(db)` | `set_endpoint_floor_margin(Option<f32>)` | `utter_recognizer_set_endpoint_floor_margin` | A margin over the reported floor within which the bound reads a wordless path as silence; see [Ending speech sooner](../guide/ending-speech-sooner.md). Off by default. |
 | `DecodedSample()` | `decoded_sample()`, also `Step.sample` | `utter_recognizer_decoded_sample` | The sample position, in audio fed since construction, of the last decoded frame's end. |
 | `KaldiRecognizer(..., unknown_cost=c)` | `RecognizerOptions::unknown_cost` | `utter_recognizer_new_grm_unk` | Add the model's `[unk]` symbol to the grammar at a cost, so out-of-grammar speech has somewhere to go. |
 | | `Recognizer::endpoint_reason()` | | Which rule would close the utterance now, the value the final's `endpoint` key will carry. |
