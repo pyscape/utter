@@ -10,6 +10,12 @@ extern "C" {
 typedef struct UtterModel UtterModel;
 typedef struct UtterRecognizer UtterRecognizer;
 
+/* Which runtime the host loaded: the crate version and the git revision it was built from
+   (40 hex digits, "-dirty" appended for a build over uncommitted edits, "unknown" where no
+   checkout or package record was there to ask). Both static; never freed. */
+const char *utter_version(void);
+const char *utter_revision(void);
+
 UtterModel *utter_model_new(const char *path);
 void utter_model_free(UtterModel *model);
 int utter_model_find_word(const UtterModel *model, const char *word);

@@ -32,6 +32,18 @@ fn cstr<'a>(p: *const c_char) -> Option<&'a str> {
     unsafe { CStr::from_ptr(p) }.to_str().ok()
 }
 
+/// The crate version, a static NUL-terminated string.
+#[no_mangle]
+pub extern "C" fn utter_version() -> *const c_char {
+    concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
+}
+
+/// The git revision the library was built from, a static NUL-terminated string: `[[rr:REVISION]]`.
+#[no_mangle]
+pub extern "C" fn utter_revision() -> *const c_char {
+    concat!(env!("UTTER_REVISION"), "\0").as_ptr().cast()
+}
+
 /// Open a model directory; null on failure.
 #[no_mangle]
 pub unsafe extern "C" fn utter_model_new(path: *const c_char) -> *mut UtterModel {
