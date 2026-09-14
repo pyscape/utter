@@ -1,0 +1,200 @@
+{
+ "provenance": {
+  "date": "2026-09-14 04:37:59Z",
+  "utter_revision": "addb7a8",
+  "source_dirty": false,
+  "docs_dirty": false,
+  "wheel_path": "/tmp/claude-1000/-home-jared-Repos-utter/cd366a0c-1f10-42bf-9d90-02def22aec2d/scratchpad/site4/utterpy/__init__.py",
+  "wheel_revision": "addb7a839a9ebfcb5ef3409dd320065e9aec8e3c",
+  "wheel_matches_head": true,
+  "engines": {
+   "utterpy": "0.0.1"
+  },
+  "model": "vosk-model-small-en-us-0.15",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
+  "python": "3.14.4",
+  "block_ms": 40
+ },
+ "args": {
+  "data": "/home/jared/Repos/utter-bench-data/speech_commands_v0.02",
+  "model": "/home/jared/Repos/ChessAmis/assets/voice/models/vosk-model-small-en-us-0.15",
+  "out": "docs/benchmarks/quiet-onsets",
+  "engines": "utterpy,utterpy@300/8,utterpy@300/8/8",
+  "levels": "3,6,12",
+  "hold_ms": 200.0,
+  "ramp_ms": 200.0,
+  "pauses": "400-800",
+  "words": 600,
+  "utterances": 10,
+  "block_ms": 40,
+  "seed": 20260914
+ },
+ "grammar_size": 92,
+ "sweep": {
+  "3": {
+   "level": 3.0,
+   "streams": 20,
+   "minutes": 22.480415625,
+   "per_engine": {
+    "utterpy": {
+     "words": 606,
+     "lost": 71,
+     "restarted": 2,
+     "finals": 561,
+     "pauses": 406,
+     "pauses_ended": 283,
+     "finishes": 200,
+     "finishes_called": 181,
+     "floor_finals": 0,
+     "gained": 0,
+     "right": 487,
+     "misread": 48,
+     "late": 11,
+     "cut": 75
+    },
+    "utterpy@300/8": {
+     "words": 606,
+     "lost": 71,
+     "restarted": 2,
+     "finals": 562,
+     "pauses": 406,
+     "pauses_ended": 300,
+     "finishes": 200,
+     "finishes_called": 180,
+     "floor_finals": 0,
+     "gained": 0,
+     "right": 488,
+     "misread": 46,
+     "late": 12,
+     "cut": 60
+    },
+    "utterpy@300/8/8": {
+     "words": 606,
+     "lost": 71,
+     "restarted": 2,
+     "finals": 562,
+     "pauses": 406,
+     "pauses_ended": 300,
+     "finishes": 200,
+     "finishes_called": 180,
+     "floor_finals": 0,
+     "gained": 0,
+     "right": 488,
+     "misread": 46,
+     "late": 12,
+     "cut": 60
+    }
+   }
+  },
+  "6": {
+   "level": 6.0,
+   "streams": 20,
+   "minutes": 22.480415625,
+   "per_engine": {
+    "utterpy": {
+     "words": 606,
+     "lost": 53,
+     "restarted": 3,
+     "finals": 577,
+     "pauses": 406,
+     "pauses_ended": 287,
+     "finishes": 200,
+     "finishes_called": 185,
+     "floor_finals": 0,
+     "gained": 0,
+     "right": 509,
+     "misread": 43,
+     "late": 14,
+     "cut": 83
+    },
+    "utterpy@300/8": {
+     "words": 606,
+     "lost": 55,
+     "restarted": 3,
+     "finals": 576,
+     "pauses": 406,
+     "pauses_ended": 308,
+     "finishes": 200,
+     "finishes_called": 184,
+     "floor_finals": 0,
+     "gained": 0,
+     "right": 509,
+     "misread": 41,
+     "late": 14,
+     "cut": 62
+    },
+    "utterpy@300/8/8": {
+     "words": 606,
+     "lost": 55,
+     "restarted": 3,
+     "finals": 578,
+     "pauses": 406,
+     "pauses_ended": 308,
+     "finishes": 200,
+     "finishes_called": 184,
+     "floor_finals": 2,
+     "gained": 0,
+     "right": 510,
+     "misread": 40,
+     "late": 14,
+     "cut": 62
+    }
+   }
+  },
+  "12": {
+   "level": 12.0,
+   "streams": 20,
+   "minutes": 22.480415625,
+   "per_engine": {
+    "utterpy": {
+     "words": 606,
+     "lost": 27,
+     "restarted": 5,
+     "finals": 601,
+     "pauses": 406,
+     "pauses_ended": 302,
+     "finishes": 200,
+     "finishes_called": 191,
+     "floor_finals": 0,
+     "gained": 0,
+     "right": 543,
+     "misread": 34,
+     "late": 15,
+     "cut": 86
+    },
+    "utterpy@300/8": {
+     "words": 606,
+     "lost": 27,
+     "restarted": 4,
+     "finals": 600,
+     "pauses": 406,
+     "pauses_ended": 324,
+     "finishes": 200,
+     "finishes_called": 190,
+     "floor_finals": 0,
+     "gained": 0,
+     "right": 542,
+     "misread": 35,
+     "late": 14,
+     "cut": 64
+    },
+    "utterpy@300/8/8": {
+     "words": 606,
+     "lost": 26,
+     "restarted": 3,
+     "finals": 606,
+     "pauses": 406,
+     "pauses_ended": 325,
+     "finishes": 200,
+     "finishes_called": 190,
+     "floor_finals": 5,
+     "gained": 0,
+     "right": 544,
+     "misread": 35,
+     "late": 14,
+     "cut": 64
+    }
+   }
+  }
+ }
+}

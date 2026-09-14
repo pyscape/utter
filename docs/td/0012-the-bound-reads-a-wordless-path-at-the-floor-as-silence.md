@@ -86,16 +86,37 @@ without it.
 - A quiet word whose first phone sits within the margin of the floor
   for the length of the bound is cut where the hiss is: the price of
   the margin, measured on the pages as words lost, and the host's to
-  set against the silence it buys. Without the length rule the price
-  was far higher than the pages showed: on the first consumer's
-  microphone, where onsets sit a few dB over the floor, the margin
-  waived the veto on the first frames of a word after a pause and cut
-  a two-word command in two on 13 of 33 takes, 29 words lost for 39
-  gained. The public words sit 15 dB and more over the room floor and
-  clear the margin within a frame, which is why the pages saw one clip
-  and four stream words. A span no shorter than the bound is seconds
-  long on a cold room and a few frames at an onset, and tells them
-  apart.
+  set against the silence it buys. The length rule guards the onset:
+  a span no shorter than the bound is seconds long on a cold room and
+  a few frames at an onset, and only the former is read. The
+  [quiet onsets](../benchmarks/quiet-onsets.md) page holds every
+  word's onset near the floor for the public pages to see the case at
+  all; the small English model raises no rival the margin would waive
+  on that audio, and the margin row matches the vetoed bound's.
+- The first consumer's first measurement of the margin, 29 words lost
+  for 39 gained across 13 of 33 takes with a two-word command cut in
+  two, was not the margin reading an onset. Replayed here block for
+  block, the runtime reads the command the same with the margin on and
+  off. The two runs differ by one 40 ms block before the word, a bound
+  final the margin let close one block sooner; the host's own
+  onset-recovery rebuild then hands a fresh decoder a tail shifted by
+  that block, and a near tie between three words falls the other way.
+  The floor is absent through the gap in both runs, so the margin
+  cannot read it. That fragility is the host's rebuild lifecycle and
+  exists with the margin off; a wordless floor final is best no event
+  to such a host, no sentinel, no idle clock, no finalled flag. With
+  that rule on the host and the length rule in the runtime, the
+  consumer's end-to-end check passes with the margin on.
+- The measured price, on the first consumer's 33 takes at the finals
+  with one recognizer per take, margin off against 8 dB: forced and
+  floor-level phantoms 68 to 3, spoken words delivered 399 to 404, two
+  spoken words lost, nine recovered from the cap finals that had eaten
+  them, two near ties relabelled. The two lost are short words that
+  begin within 300 ms after a floor final closed real hiss: the front
+  end persists across an endpoint final and no audio is dropped, but a
+  150 ms word as the first thing in a fresh utterance loses to the
+  silence start where inside a long utterance it was found. That is
+  what a boundary in hiss costs, and the stock rules never place one.
 - A floor-level word on the best path, as opposed to a floor-level
   `[speech]` entry, is not silence to the bound. It is the silence word
   of `[[rr:TD-8#Measurements count a word whose own span carries no speech]]`,

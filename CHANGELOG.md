@@ -11,10 +11,18 @@ releases.
 - The floor margin on the bound reads no span shorter than the bound
   itself. A quiet word's first frames after a pause sit near the floor
   on any microphone, and 0.0.3 let them waive the veto and count as
-  silence, cutting a two-word command in two; on the first consumer's
-  recordings that lost 29 words for 39 gained across 13 of 33 takes.
-  A span at least the bound's length is seconds on a cold room and a
-  few frames at an onset. TD-12 amended.
+  silence. A span at least the bound's length is seconds on a cold
+  room and a few frames at an onset. On the public rooms the wordless
+  closes stay, at a median 1.2 s instead of 0.72; on the first
+  consumer's recordings, at the finals, 65 phantoms leave, 9 spoken
+  words come back and 2 short ones are lost to a boundary in hiss.
+  TD-12 amended with the rule and the price.
+
+### Added
+
+- A quiet-onsets benchmark page: the states page's pause streams with
+  every word's onset held a few dB over the gap floor, decoded by the
+  stock rules, the vetoed bound and the same bound with the margin.
 
 ## 0.0.3
 
