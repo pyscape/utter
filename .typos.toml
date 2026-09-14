@@ -2,6 +2,8 @@
 extend-exclude = ["target/", "third_party/", "models/", "tests/data/", ".ref-cache/"]
 
 [default.extend-words]
+# the in-toto attestation format, not a typo for "into"
+intoto = "intoto"
 # variable names in the benchmark scripts, and the hyphenated prefix in "mis-scored"
 strat = "strat"
 thr = "thr"
