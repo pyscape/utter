@@ -40,7 +40,7 @@ jobs:
         run: |
           gcc -x c -std=c99 -fsyntax-only -Wall -Wextra -Werror include/utter.h
           g++ -x c++ -std=c++11 -fsyntax-only -Wall -Wextra -Werror include/utter.h
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375  # v2.87.12
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab  # v2.87.13
         with:
           tool: cbindgen@0.29.4
       - name: The C header declares exactly the exported functions, with their signatures
@@ -144,7 +144,7 @@ jobs:
           curl -sfL -o models/model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
           unzip -q models/model.zip -d models
           rm models/model.zip
-      - uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375  # v2.87.12
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab  # v2.87.13
         with:
           tool: cargo-llvm-cov
       - name: Tests with coverage
