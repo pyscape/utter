@@ -54,7 +54,7 @@ jobs:
         run: cargo install --git https://github.com/pyscape/ripref --rev "$RR_REV" --locked
       - name: Every rr marker resolves to one anchor
         run: rr index && rr verify
-      - uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b  # v1.50.1
+      - uses: crate-ci/typos@512fc24f32f44ab01972217aaaf3dc86ec234d53  # v1.50.2
       - run: yamllint --strict .
       - run: npx --yes markdownlint-cli2@0.23.2
       - run: |
