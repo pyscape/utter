@@ -83,8 +83,8 @@ extended.
 
 Out: lattices, lattice determinization, minimum Bayes risk confidences
 and lattice n-best; decoding against the full language model
-`graph/Gr.fst`; RNNLM and constant-ARPA rescoring; speaker vectors;
-batch and GPU recognizers.
+`graph/Gr.fst`; RNNLM and constant-ARPA rescoring; batch and GPU
+recognizers. Speaker evidence is specified by `[[rr:TD-14]]`.
 
 ### Inputs: the model directory
 
@@ -567,8 +567,8 @@ built:
 - Line dictation, the one consumer mode that asks for ten alternatives
   on finals, receives beam n-best; its behaviour is measured before
   that mode leaves the stock wheel.
-- Speaker vectors stay on the stock wheel for the consumer's enrolment
-  path until the play path is done.
+- Speaker evidence, for enrolment and on the play path alike, is
+  `[[rr:TD-14]]`'s.
 - The other shipped languages are assumed to share the reference
   model's layout and are checked by loading each under G2 before the
   runtime is offered for them.
