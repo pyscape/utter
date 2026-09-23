@@ -16,6 +16,7 @@ Where to start depends on where you are coming from.
 | [benchmarks/](benchmarks/) | Public measurements on Speech Commands, each paired against the stock wheel. |
 | [gates/](gates/) | The private parity gates and their results. |
 | [td/](td/) | The technical decision records: why each part is built as it is. |
+| [design/](design/target-speaker-extraction.md) | Proposed companion systems: streaming target speaker extraction with utter as its downstream consumer. |
 
 The reference and guide pages describe behaviour. When they say why,
 they link to a decision record rather than repeating it.
