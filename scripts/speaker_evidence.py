@@ -67,6 +67,8 @@ TABLE_DRAWS = 20
 FALSE_ACCEPT = 0.01
 STREAMS_PER_SPEAKER = 3
 VOSK, KALDI, UTTER, TITANET, CAMPP = "vosk", "x-vector (Kaldi)", "utter", "TitaNet-small", "CAM++"
+UTTER_MARGIN, UTTER_COLD = "utter, 8 dB floor margin", "utter, new recognizer per word"
+MARGIN_DB = 8.0
 SHERPA_FILES = {TITANET: "nemo_en_titanet_small.onnx", CAMPP: "wespeaker_en_voxceleb_CAM++.onnx"}
 SPK_DIR = "vosk-model-spk-0.4"
 
@@ -253,6 +255,7 @@ class UtterLib:
             ("utter_recognizer_set_alternatives", None, [vp, ci]),
             ("utter_recognizer_set_max_alternatives", None, [vp, ci]),
             ("utter_recognizer_set_spk_model", ci, [vp, vp]),
+            ("utter_recognizer_set_endpoint_floor_margin", None, [vp, cf]),
             ("utter_recognizer_accept_waveform_s", ci, [vp, cp, ci]),
             ("utter_recognizer_partial_result", cp, [vp]),
             ("utter_recognizer_result", cp, [vp]),
@@ -278,12 +281,14 @@ class UtterLib:
 class UtterRec:
     """One stream through utter: word entries on, the speaker model set unless told not to."""
 
-    def __init__(self, u: UtterLib, grammar: Sequence[str], speaker: bool = True) -> None:
+    def __init__(self, u: UtterLib, grammar: Sequence[str], speaker: bool = True, margin: float | None = None) -> None:
         self.u = u
         lib = u.lib
         self.h = lib.utter_recognizer_new_grm(u.model, float(RATE), json.dumps(list(grammar)).encode())
         lib.utter_recognizer_set_words(self.h, 1)
         lib.utter_recognizer_set_partial_words(self.h, 1)
+        if margin is not None:
+            lib.utter_recognizer_set_endpoint_floor_margin(self.h, margin)
         if speaker and lib.utter_recognizer_set_spk_model(self.h, u.spk) != 0:
             raise SystemExit("utter refused the speaker model")
         self.fed = 0
@@ -328,9 +333,11 @@ def speakers_of(data: Path, min_clips: int) -> dict[str, list[str]]:
     return {s: sorted(c) for s, c in sorted(by.items()) if len(c) >= min_clips}
 
 
-def utter_enroll(u: UtterLib, grammar: Sequence[str], clips: Sequence[Clip], block_ms: int) -> list[Vec]:
+def utter_enroll(
+    u: UtterLib, grammar: Sequence[str], clips: Sequence[Clip], block_ms: int, margin: float | None = None
+) -> list[Vec]:
     """One stream of a speaker's enrollment clips: the vector of every final that has one."""
-    rec = UtterRec(u, grammar)
+    rec = UtterRec(u, grammar, margin=margin)
     finals: list[Json] = []
     for c in clips:
         for b in blocks(c.pcm, block_ms):
@@ -341,7 +348,12 @@ def utter_enroll(u: UtterLib, grammar: Sequence[str], clips: Sequence[Clip], blo
 
 
 def utter_game(
-    u: UtterLib, grammar: Sequence[str], order: Sequence[Clip], block_ms: int, speaker: bool = True
+    u: UtterLib,
+    grammar: Sequence[str],
+    order: Sequence[Clip],
+    block_ms: int,
+    speaker: bool = True,
+    margin: float | None = None,
 ) -> tuple[dict[str, Json], float]:
     """A game's stream, clips back to back. For each clip: the final word entry with evidence
     inside its range that pooled most frames, and the first partial entry with evidence inside
@@ -356,7 +368,7 @@ def utter_game(
         i = bisect.bisect_right(starts, mid) - 1
         return order[i].key if 0 <= i < len(order) else None
 
-    rec = UtterRec(u, grammar, speaker)
+    rec = UtterRec(u, grammar, speaker, margin)
     seen: dict[str, Json] = {}
     finals: list[Json] = []
     t = time.perf_counter()
@@ -390,12 +402,31 @@ def utter_game(
     return out, seconds
 
 
+def utter_cold(u: UtterLib, grammar: Sequence[str], clip: Clip, block_ms: int) -> Vec | None:
+    """A clip through a recognizer built for it alone, as a host that builds a new decoder at
+    every grammar change does: the word with evidence that pooled most frames."""
+    rec = UtterRec(u, grammar)
+    finals: list[Json] = []
+    for b in blocks(clip.pcm, block_ms):
+        if rec.accept(b):
+            finals.append(rec.closed())
+    finals.append(rec.final())
+    words = [e for f in finals for e in f.get("result", []) if e.get("spk")]
+    best = max(words, key=lambda e: int(e["spk_frames"]), default=None)
+    return evidence(best) if best else None
+
+
 def utter_accumulating(
-    u: UtterLib, grammar: Sequence[str], pcm: bytes, block_ms: int, lengths: Sequence[int]
+    u: UtterLib,
+    grammar: Sequence[str],
+    pcm: bytes,
+    block_ms: int,
+    lengths: Sequence[int],
+    margin: float | None = None,
 ) -> dict[int, Vec | None]:
     """A speaker's joined words through one stream: for each length, the partial's top-level
     evidence at the first partial that has pooled that much speech."""
-    rec = UtterRec(u, grammar)
+    rec = UtterRec(u, grammar, margin=margin)
     got: dict[int, Vec | None] = {n: None for n in lengths}
 
     def take(res: Mapping[str, Any]) -> None:
@@ -521,7 +552,7 @@ def run(a: argparse.Namespace) -> Json:
         probe_clips[s] = [Clip(k, s, sc.read_pcm(data / k)) for k in keys[a.enroll : a.enroll + a.probes]]
     sc.note(f"{len(names)} speakers, {a.enroll} enrollment and up to {a.probes} probe clips each")
 
-    engines = [VOSK, UTTER] + ([KALDI] if a.kaldi else []) + [TITANET, CAMPP]
+    engines = [VOSK, UTTER, UTTER_MARGIN, UTTER_COLD] + ([KALDI] if a.kaldi else []) + [TITANET, CAMPP]
     wheel = Wheel(a.model, spk_dir, grammar)
     sherpa = {e: Sherpa(models / f) for e, f in SHERPA_FILES.items()}
     kaldi = KaldiXvector(Path(a.kaldi), spk_dir) if a.kaldi else None
@@ -556,14 +587,18 @@ def run(a: argparse.Namespace) -> Json:
     profiles: dict[str, dict[str, Vec]] = {e: {} for e in engines}
     for s in names:
         for e in engines:
+            if e == UTTER_COLD:
+                continue
             vecs = (
-                utter_enroll(u, grammar, enroll[s], a.block_ms)
-                if e == UTTER
+                utter_enroll(u, grammar, enroll[s], a.block_ms, MARGIN_DB if e == UTTER_MARGIN else None)
+                if e in (UTTER, UTTER_MARGIN)
                 else [clip_vecs[e].get(c.key) for c in enroll[s] if c.span]
             )
             p = profile_of(vecs)
             if p is not None:
                 profiles[e][s] = p
+    # A host that builds a recognizer per grammar change still enrolls from whole recordings.
+    profiles[UTTER_COLD] = dict(profiles[UTTER])
     profile_counts = {e: len(profiles[e]) for e in engines}
     sc.note(f"profiles per engine: {profile_counts}")
     # The wheel's half-second floor leaves some speakers with no profile at all; they stay, as no
@@ -580,6 +615,7 @@ def run(a: argparse.Namespace) -> Json:
     if len(order) % 2 and games:
         games[-1].append(order[-1])
     utter_words: dict[str, Json] = {}
+    margin_words: dict[str, Json] = {}
     decode_s = {"with": 0.0, "without": 0.0}
     game_audio = 0.0
     for g in games:
@@ -587,7 +623,9 @@ def run(a: argparse.Namespace) -> Json:
         turns = [x[i] for i in range(max(len(x) for x in lists)) for x in lists if i < len(x)]
         got, secs = utter_game(u, grammar, turns, a.block_ms)
         _, bare = utter_game(u, grammar, turns, a.block_ms, speaker=False)
+        with_margin, _ = utter_game(u, grammar, turns, a.block_ms, margin=MARGIN_DB)
         utter_words.update(got)
+        margin_words.update(with_margin)
         decode_s["with"] += secs
         decode_s["without"] += bare
         game_audio += sum(len(c.pcm) for c in turns) / 2 / RATE
@@ -602,9 +640,11 @@ def run(a: argparse.Namespace) -> Json:
                 continue
             p = Probe(c.key, s, c.pcm, (c.span[1] - c.span[0]) * 1000.0 / RATE)
             for e in engines:
-                if e == UTTER:
-                    w = utter_words.get(c.key, {}).get("final")
+                if e in (UTTER, UTTER_MARGIN):
+                    w = (utter_words if e == UTTER else margin_words).get(c.key, {}).get("final")
                     p.vectors[e] = w["vector"] if w else None
+                elif e == UTTER_COLD:
+                    p.vectors[e] = utter_cold(u, grammar, c, a.block_ms)
                 else:
                     p.vectors[e] = clip_vecs[e].get(c.key)
             probes.append(p)
@@ -635,7 +675,8 @@ def run(a: argparse.Namespace) -> Json:
     )
 
     # Evidence as speech accumulates: each speaker's probe words joined, cut at each length.
-    curve: dict[str, dict[str, Json]] = {e: {} for e in engines}
+    curve_engines = [e for e in engines if e != UTTER_COLD]
+    curve: dict[str, dict[str, Json]] = {e: {} for e in curve_engines}
     joined: dict[int, list[Probe]] = {n: [] for n in LENGTHS_MS}
     for s in kept:
         pieces = [c.pcm[c.span[0] * 2 : c.span[1] * 2] for c in probe_clips[s] if c.span]
@@ -643,11 +684,13 @@ def run(a: argparse.Namespace) -> Json:
             rng.shuffle(pieces)
             stream = b"".join(pieces)
             ut = utter_accumulating(u, grammar, stream, a.block_ms, LENGTHS_MS)
+            um = utter_accumulating(u, grammar, stream, a.block_ms, LENGTHS_MS, MARGIN_DB)
             for n in LENGTHS_MS:
                 if len(stream) // 2 < n * RATE // 1000:
                     continue
                 p = Probe(f"{s}/{j}/{n}", s, stream[: n * RATE // 1000 * 2], float(n))
                 p.vectors[UTTER] = ut[n]
+                p.vectors[UTTER_MARGIN] = um[n]
                 joined[n].append(p)
     for n, items in joined.items():
         for p in items:
@@ -660,7 +703,7 @@ def run(a: argparse.Namespace) -> Json:
             for p in items:
                 p.vectors[KALDI] = cut[p.key]
         t = draw_tables(items, kept, (4,), rng)
-        for e in engines:
+        for e in curve_engines:
             curve[e][str(n)] = score(items, e, profiles[e], t)
     sc.note("accumulation curve scored")
 
@@ -745,6 +788,11 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         "its decode puts on speech phones, at least half a second |",
         f"| {UTTER} | utter's speaker evidence through its C ABI, continuous streams | 8 kHz | each "
         "word entry's own span, at least a quarter second |",
+        f"| {UTTER_MARGIN} | the same with a floor margin of {MARGIN_DB:g} dB set, enrollment included "
+        "| 8 kHz | the span's frames more than the margin over the floor |",
+        f"| {UTTER_COLD} | the same, each probe clip through a recognizer built for it, as a host "
+        "that builds one at every grammar change does; enrolled as the first utter row | 8 kHz | "
+        "the word's span, its normalisation seeing only the clip |",
     ]
     if KALDI in engines:
         L.append(
@@ -805,6 +853,8 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         "|---|" + "---|" * len(lengths),
     ]
     for e in engines:
+        if e not in r["curve"]:
+            continue
         cells = [f"{pct(r['curve'][e][n]['top1']['4'])}, {pct(r['curve'][e][n]['accepted'])}" for n in lengths]
         L.append(f"| {e} | " + " | ".join(cells) + " |")
     pa = r["partials"]
