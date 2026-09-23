@@ -588,6 +588,15 @@ impl<'m> Recognizer<'m> {
     pub fn graph(&self) -> &VectorFst {
         &self.graph
     }
+    /// The MFCC frames the current pipeline keeps and the frame the first of them is, for tests
+    /// that compare two ways of feeding it.
+    #[doc(hidden)]
+    pub fn features(&self) -> (&[Vec<f32>], usize) {
+        match self.pipeline.as_ref() {
+            Some(p) => p.mfcc.frames(),
+            None => (&[], 0),
+        }
+    }
     /// libvosk's `SetWords`: word entries on finals.
     pub fn set_words(&mut self, on: bool) {
         self.words = on;
