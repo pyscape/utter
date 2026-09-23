@@ -76,6 +76,20 @@ a pause or quiet room from a command without running a second detector.
 See the [result fields](docs/reference/results.md#the-partial-result) and
 [silence measurements](docs/benchmarks/speech-commands.md#the-floor-gate-a-host-applies).
 
+### Know who spoke each word
+
+With Vosk's speaker model set, every word of every partial and final
+carries a speaker vector over its own span, so a host can gate a
+command on who said it, word by word, before the utterance ends. The
+stock recognizer computes one vector per final over the whole
+utterance, and none under half a second of speech. In the [speaker
+benchmark](docs/benchmarks/speaker-evidence.md), one word names its
+speaker among two enrolled speakers 95.4% of the time with utter and
+48.4% with the stock wheel, and utter's evidence reaches a partial a
+median 40 ms after the word ends. One word is weak evidence for a
+strict gate; the page measures how much speech a gate needs. See the
+[speaker evidence fields](docs/reference/results.md#speaker-evidence).
+
 ### Build and ship on every platform
 
 But Vosk is a C++ wrapper around Kaldi, and Kaldi does not build on
@@ -244,6 +258,7 @@ each paired against the stock Vosk wheel on identical audio, live in
 | [partial-states.md](docs/benchmarks/partial-states.md) | What the readings say about silence and the next word, on words spliced into streams: end of speech, the preview an extending reading gives, and what the endpoint bound does to real finals |
 | [quiet-onsets.md](docs/benchmarks/quiet-onsets.md) | What an endpoint bound does to a word whose first frames sit near the floor, and what the floor margin costs there |
 | [word-times.md](docs/benchmarks/word-times.md) | Whether the word times on finals are the wheel's: every word paired across the engines, exact and within one 30 ms frame |
+| [speaker-evidence.md](docs/benchmarks/speaker-evidence.md) | Whether one spoken word names its speaker: utter's per-word evidence against the Vosk wheel's vector and two 16 kHz models, by word length, as speech accumulates, and how soon a partial carries it |
 
 Headline figures from the Speech Commands page:
 
