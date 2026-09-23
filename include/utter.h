@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 typedef struct UtterModel UtterModel;
+typedef struct UtterSpkModel UtterSpkModel;
 typedef struct UtterRecognizer UtterRecognizer;
 
 /* Which runtime the host loaded: the crate version and the git revision it was built from
@@ -19,6 +20,11 @@ const char *utter_revision(void);
 UtterModel *utter_model_new(const char *path);
 void utter_model_free(UtterModel *model);
 int utter_model_find_word(const UtterModel *model, const char *word);
+
+/* A speaker model directory as libvosk's vosk_spk_model_new reads it. A recognizer it is set on
+   keeps it alive until the recognizer is freed or the model is replaced. */
+UtterSpkModel *utter_spk_model_new(const char *path);
+void utter_spk_model_free(UtterSpkModel *model);
 
 /* grammar: a JSON array of strings, as libvosk takes it */
 UtterRecognizer *utter_recognizer_new_grm(const UtterModel *model, float sample_rate, const char *grammar);
@@ -35,6 +41,9 @@ void utter_recognizer_set_endpoint_bound(UtterRecognizer *rec, float trailing_ms
    and a rival word at the floor cannot veto it; such a final names "floor" and carries no forced
    word. 0 or less removes the margin. */
 void utter_recognizer_set_endpoint_floor_margin(UtterRecognizer *rec, float margin_db);
+/* Speaker evidence on every result and word entry; NULL removes it. 0 on success, -1 on a null
+   recognizer or a speaker model this audio cannot feed. */
+int utter_recognizer_set_spk_model(UtterRecognizer *rec, const UtterSpkModel *spk);
 void utter_recognizer_set_alternatives(UtterRecognizer *rec, int n);
 void utter_recognizer_set_max_alternatives(UtterRecognizer *rec, int n);
 

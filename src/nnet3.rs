@@ -83,6 +83,14 @@ pub enum Desc {
     ReplaceIndex(Box<Desc>),
 }
 
+/// Names from [`Nnet3::pooling_head`].
+pub(crate) struct PoolingHead<'a> {
+    pub embed: &'a str,
+    pub pooling: &'a str,
+    pub extraction: &'a str,
+    pub frames: &'a str,
+}
+
 enum Node {
     Input,
     DimRange { src: String, off: usize, dim: usize },
@@ -140,6 +148,60 @@ impl Nnet3 {
         };
         net.context = net.node_context("output");
         net
+    }
+
+    /// The chain a statistics-pooling embedding hangs from, read back from the output node:
+    /// the affine component the output takes, the pooling component that affine reads, the
+    /// extraction component the pooling reads, and the node whose frames the extraction takes.
+    /// `None` for a network whose output is not an affine over pooled statistics.
+    pub(crate) fn pooling_head(&self) -> Option<PoolingHead<'_>> {
+        let component = |node: &str| match self.nodes.get(node)? {
+            Node::Component {
+                comp,
+                desc: Desc::Ref(src),
+            } => Some((comp.as_str(), src.as_str())),
+            _ => None,
+        };
+        let Some(Node::Output {
+            desc: Desc::Ref(embed_node),
+        }) = self.nodes.get("output")
+        else {
+            return None;
+        };
+        let (embed, pooling_node) = component(embed_node)?;
+        let (pooling, extraction_node) = component(pooling_node)?;
+        let (extraction, frames) = component(extraction_node)?;
+        let unsupported =
+            |c: &str, t: &str| matches!(self.comps.get(c), Some(Comp::Unsupported(u)) if u == t);
+        (matches!(self.comps.get(embed), Some(Comp::Affine { .. }))
+            && unsupported(pooling, "<StatisticsPoolingComponent>")
+            && unsupported(extraction, "<StatisticsExtractionComponent>"))
+        .then_some(PoolingHead {
+            embed,
+            pooling,
+            extraction,
+            frames,
+        })
+    }
+
+    /// An affine component's weights, `[out, in]`, and its bias.
+    pub(crate) fn affine(&self, comp: &str) -> Option<(&Mat, &[f32])> {
+        match self.comps.get(comp)? {
+            Comp::Affine { w, b } => Some((w, b)),
+            _ => None,
+        }
+    }
+
+    /// Point the output node at `node`, so the network ends there.
+    pub(crate) fn retarget_output(&mut self, node: &str) {
+        self.nodes.insert(
+            "output".into(),
+            Node::Output {
+                desc: Desc::Ref(node.into()),
+            },
+        );
+        self.context = self.node_context("output");
+        self.output_dim = self.node_dim("output");
     }
 
     /// Component types the output depends on and this forward pass does not implement, in the
@@ -574,6 +636,8 @@ fn build_op(op: &str, mut args: Vec<Desc>) -> Desc {
         "Append" => Desc::Append(args),
         "ReplaceIndex" => Desc::ReplaceIndex(Box::new(args.remove(0))),
         "IfDefined" => args.remove(0),
+        // Rounding the time index down to a multiple of one leaves it where it is.
+        "Round" if leaf_int(&args[1]) == 1 => args.remove(0),
         _ => panic!("unhandled desc op {op}"),
     }
 }
@@ -1108,6 +1172,9 @@ impl Streamer<'_> {
         self.steps = steps;
         self.scratch = scratch;
         let cols = self.out_cols;
+        if out_rows == 0 {
+            return (out_first, &[], cols);
+        }
         let rows = self.stores[self.out].rows(out_first, out_first + out_rows as i64);
         (out_first, rows, cols)
     }

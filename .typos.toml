@@ -8,3 +8,5 @@ intoto = "intoto"
 strat = "strat"
 thr = "thr"
 mis = "mis"
+# Kaldi's token for the statistics extraction's variance flag, spelled as Kaldi writes it
+Varinance = "Varinance"

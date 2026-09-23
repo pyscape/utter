@@ -144,17 +144,30 @@ jobs:
           curl -sfL -o models/model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
           unzip -q models/model.zip -d models
           rm models/model.zip
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        id: spk-model
+        with:
+          path: models/vosk-model-spk-0.4
+          key: vosk-model-spk-0.4
+      - name: Download the stock speaker model
+        if: steps.spk-model.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          curl -sfL -o models/spk.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip
+          unzip -q models/spk.zip -d models
+          rm models/spk.zip
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab  # v2.87.13
         with:
           tool: cargo-llvm-cov
       - name: Tests with coverage
         env:
           UTTER_TEST_MODEL: ${{ github.workspace }}/models/vosk-model-small-en-us-0.15
+          UTTER_TEST_SPK_MODEL: ${{ github.workspace }}/models/vosk-model-spk-0.4
         run: |
-          # The four diagnostic tools need a corpus and a model directory each; stream, which
+          # The five diagnostic tools need a corpus and a model directory each; stream, which
           # the releases ship, is measured through its test.
           cargo llvm-cov --release --lcov --output-path lcov.info --fail-under-lines 90 \
-            --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump)\.rs'
+            --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump|spk_dump)\.rs'
           cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:

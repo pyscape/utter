@@ -6,7 +6,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::recognizer::RecognizerOptions;
-use crate::{Model, Recognizer};
+use crate::{Model, Recognizer, SpeakerModel};
 use std::ffi::{c_char, c_float, c_int, c_short, CStr, CString};
 use std::path::Path;
 use std::sync::Arc;
@@ -16,10 +16,17 @@ pub struct UtterModel {
     inner: Arc<Model>,
 }
 
-/// A recognizer handle. It keeps the model alive and owns the last result string it returned.
+/// A speaker model handle; one per directory opened, shared by the recognizers it is set on.
+pub struct UtterSpkModel {
+    inner: Arc<SpeakerModel>,
+}
+
+/// A recognizer handle. It keeps the model and any speaker model alive and owns the last result
+/// string it returned.
 pub struct UtterRecognizer {
-    // Declared first so it drops before the model handle it borrows from.
+    // Declared first so it drops before the model handles it borrows from.
     inner: Recognizer<'static>,
+    spk: Option<Arc<SpeakerModel>>,
     _model: Arc<Model>,
     last: CString,
 }
@@ -113,6 +120,7 @@ unsafe fn new_recognizer(
     match Recognizer::with_options(model_ref, sample_rate, &words, &opts) {
         Ok(inner) => Box::into_raw(Box::new(UtterRecognizer {
             inner,
+            spk: None,
             _model: arc,
             last: CString::default(),
         })),
@@ -144,6 +152,66 @@ pub unsafe extern "C" fn utter_recognizer_new_grm_unk(
 ) -> *mut UtterRecognizer {
     // SAFETY: the caller's guarantees on the handle and the string pass through unchanged.
     unsafe { new_recognizer(model, sample_rate, grammar, Some(unknown_cost)) }
+}
+
+/// Open a speaker model directory, vosk's `vosk_spk_model_new`; null on failure.
+#[no_mangle]
+pub unsafe extern "C" fn utter_spk_model_new(path: *const c_char) -> *mut UtterSpkModel {
+    let Some(path) = cstr(path) else {
+        return std::ptr::null_mut();
+    };
+    match SpeakerModel::open(Path::new(path)) {
+        Ok(m) => Box::into_raw(Box::new(UtterSpkModel { inner: Arc::new(m) })),
+        Err(e) => {
+            eprintln!("utter: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Free a speaker model; null is ignored. Recognizers it is set on keep it alive until they are
+/// freed or it is replaced.
+#[no_mangle]
+pub unsafe extern "C" fn utter_spk_model_free(model: *mut UtterSpkModel) {
+    if !model.is_null() {
+        // SAFETY: a non-null handle came from `utter_spk_model_new` and is freed once.
+        drop(unsafe { Box::from_raw(model) });
+    }
+}
+
+/// vosk's `vosk_recognizer_set_spk_model`: speaker evidence on every result and word entry.
+/// Null removes it. 0 on success, -1 on a null recognizer or a speaker model this audio cannot
+/// feed. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#speaker-evidence>.
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_spk_model(
+    rec: *mut UtterRecognizer,
+    spk: *const UtterSpkModel,
+) -> c_int {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    let Some(r) = (unsafe { rec.as_mut() }) else {
+        return -1;
+    };
+    // SAFETY: null or a live handle from `utter_spk_model_new`.
+    let Some(s) = (unsafe { spk.as_ref() }) else {
+        // Removed from the recognizer before its handle is dropped.
+        let _ = r.inner.set_spk_model(None);
+        r.spk = None;
+        return 0;
+    };
+    let arc = s.inner.clone();
+    // SAFETY: `arc` is stored beside the recognizer and, by field order, outlives it, so the
+    // speaker model the reference points into is alive for every use of the recognizer.
+    let spk_ref: &'static SpeakerModel = unsafe { &*Arc::as_ptr(&arc) };
+    match r.inner.set_spk_model(Some(spk_ref)) {
+        Ok(()) => {
+            r.spk = Some(arc);
+            0
+        }
+        Err(e) => {
+            eprintln!("utter: {e}");
+            -1
+        }
+    }
 }
 
 /// Free a recognizer and the last result string it returned; null is ignored.

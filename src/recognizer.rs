@@ -14,8 +14,9 @@ use crate::json::write_string;
 use crate::looped::LoopedNnet;
 use crate::model::{Model, WordBoundary};
 use crate::silence_weighting::SilenceWeighting;
+use crate::speaker::{Evidence, SpeakerModel, SpeakerStream};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
@@ -314,6 +315,11 @@ pub struct Recognizer<'m> {
     sw_traceback_frames: Option<usize>,
     stable_frames: Option<usize>,
     last_result: String,
+    spk: Option<&'m SpeakerModel>,
+    spk_stream: Option<SpeakerStream<'m>>,
+    /// Evidence already pooled, by the frames it could pool and the floor threshold that
+    /// chose them; cleared with each utterance.
+    spk_cache: Mutex<HashMap<Vec<u64>, Option<Evidence>>>,
 }
 
 fn escape_json_number(v: f64) -> String {
@@ -423,6 +429,9 @@ impl<'m> Recognizer<'m> {
             sw_traceback_frames: None,
             stable_frames: None,
             last_result: String::new(),
+            spk: None,
+            spk_stream: None,
+            spk_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -510,6 +519,33 @@ impl<'m> Recognizer<'m> {
         self.max_alternatives = n;
     }
 
+    /// libvosk's `SetSpkModel`: speaker evidence on every partial and final, and on every entry
+    /// of their word lists. Audio already fed since the stream began is included. Fails when the
+    /// audio's rate is below the speaker model's, or its frames are not the decoder's 10 ms.
+    /// `None` removes it. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#speaker-evidence>.
+    // [[rr:TD-14#Decision outcome]]
+    pub fn set_spk_model(&mut self, spk: Option<&'m SpeakerModel>) -> std::io::Result<()> {
+        self.spk_cache().clear();
+        let Some(model) = spk else {
+            self.spk = None;
+            self.spk_stream = None;
+            return Ok(());
+        };
+        if model.frame_shift_ms() != self.model.mfcc_opts.frame_shift_ms {
+            return Err(crate::kaldi_io::err(
+                "the speaker model's frames are not the decoder's",
+            ));
+        }
+        let mut stream = SpeakerStream::new(model, self.sample_rate)?;
+        if self.pipeline.is_some() {
+            stream.accept(&self.pcm);
+            stream.forget_before(self.frame_offset * self.model.conf.frame_subsampling_factor);
+        }
+        self.spk = Some(model);
+        self.spk_stream = self.pipeline.is_some().then_some(stream);
+        Ok(())
+    }
+
     fn decoder_config(&self) -> DecoderConfig {
         let c = &self.model.conf;
         DecoderConfig {
@@ -557,6 +593,10 @@ impl<'m> Recognizer<'m> {
         dec.census = self.census;
         self.decoder = Some(dec);
         self.stable.clear();
+        self.spk_stream = self
+            .spk
+            .and_then(|m| SpeakerStream::new(m, self.sample_rate).ok());
+        self.spk_cache().clear();
     }
 
     /// libvosk's `CleanUp`: a new utterance on the same pipeline, or a new pipeline after a
@@ -578,6 +618,11 @@ impl<'m> Recognizer<'m> {
                 nnet.set_frame_offset(self.frame_offset);
                 dec.init_decoding();
                 self.stable.clear();
+                let first = self.frame_offset * self.model.conf.frame_subsampling_factor;
+                if let Some(s) = self.spk_stream.as_mut() {
+                    s.forget_before(first);
+                }
+                self.spk_cache().clear();
             }
             _ => self.rebuild(),
         }
@@ -787,6 +832,9 @@ impl<'m> Recognizer<'m> {
             i = end;
         }
         self.pcm.extend_from_slice(samples);
+        if let Some(s) = self.spk_stream.as_mut() {
+            s.accept(samples);
+        }
         self.floor.feed(samples);
         self.samples_processed += samples.len() as u64;
         self.update_stable();
@@ -963,7 +1011,9 @@ impl<'m> Recognizer<'m> {
             // [[rr:TD-8#A final word carries its energy]]
             self.write_word(out, &span, true, true, now);
             out.pop();
-            out.push_str(&format!(", \"stable_ms\": {hold}}}"));
+            out.push_str(&format!(", \"stable_ms\": {hold}"));
+            self.push_spk(out, &[(span.start_frame, span.end_frame)]);
+            out.push('}');
         }
     }
 
@@ -1140,6 +1190,122 @@ impl<'m> Recognizer<'m> {
         }
     }
 
+    /// A Mutex, not a cell, so the recognizer stays `Sync` for hosts that share it.
+    fn spk_cache(&self) -> MutexGuard<'_, HashMap<Vec<u64>, Option<Evidence>>> {
+        self.spk_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Samples of the stream per speaker frame, and in one frame's window.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn spk_hop_and_window(&self) -> (usize, usize) {
+        let o = &self.model.mfcc_opts;
+        let at = |ms: f32| (f64::from(ms) * 0.001 * f64::from(self.sample_rate)).round() as usize;
+        (at(o.frame_shift_ms), at(o.frame_length_ms))
+    }
+
+    /// The speaker evidence over spans of decoder frames of the current utterance, ascending and
+    /// apart. With a floor margin set, a frame whose own energy is within it of the floor is
+    /// not pooled. `[[rr:TD-14#Evidence is pooled over a span]]`
+    fn spk_evidence(&self, spans: &[(usize, usize)]) -> Option<Evidence> {
+        let stream = self.spk_stream.as_ref()?;
+        let sf = self.model.conf.frame_subsampling_factor;
+        let threshold = match (self.endpoint_floor_margin_db, self.floor.dbfs()) {
+            (Some(margin), Some(floor)) => Some(floor + f64::from(margin)),
+            _ => None,
+        };
+        let frames: Vec<(usize, usize)> = spans
+            .iter()
+            .map(|&(a, b)| ((self.frame_offset + a) * sf, (self.frame_offset + b) * sf))
+            .collect();
+        let reach = frames
+            .iter()
+            .map(|f| f.1)
+            .max()
+            .unwrap_or(0)
+            .min(stream.rows_end());
+        let mut key = vec![threshold.map_or(u64::MAX, f64::to_bits), reach as u64];
+        key.extend(frames.iter().flat_map(|&(a, b)| [a as u64, b as u64]));
+        if let Some(hit) = self.spk_cache().get(&key) {
+            return hit.clone();
+        }
+        let (hop, window) = self.spk_hop_and_window();
+        let keep = |k: usize| {
+            threshold.is_none_or(|t| {
+                let lo = k * hop;
+                let hi = (lo + window).min(self.pcm.len());
+                hi > lo && {
+                    let acc: f64 = self.pcm[lo..hi]
+                        .iter()
+                        .map(|&s| f64::from(s) * f64::from(s))
+                        .sum();
+                    #[allow(clippy::cast_precision_loss)]
+                    let mean = acc / (hi - lo) as f64;
+                    dbfs_of_mean_square(mean).is_some_and(|e| e > t)
+                }
+            })
+        };
+        let ev = stream.pool(frames.iter().flat_map(|&(a, b)| a..b).filter(|&k| keep(k)));
+        let mut cache = self.spk_cache();
+        if cache.len() >= 1024 {
+            cache.clear();
+        }
+        cache.insert(key, ev.clone());
+        ev
+    }
+
+    fn write_spk_vector(out: &mut String, ev: &Evidence) {
+        out.push_str("\"spk\": [");
+        for (i, v) in ev.vector.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&escape_json_number(f64::from(*v)));
+        }
+        out.push_str(&format!("], \"spk_frames\": {}", ev.frames));
+    }
+
+    fn write_spk_span(&self, out: &mut String, ev: &Evidence) {
+        let hop = self.spk_hop_and_window().0 as u64;
+        out.push_str(&format!(
+            "\"spk_start\": {}, \"spk_end\": {}",
+            self.samples_round_start + ev.first as u64 * hop,
+            self.samples_round_start + ev.end as u64 * hop
+        ));
+    }
+
+    /// `, "spk": .., "spk_frames": .., "spk_start": .., "spk_end": ..` when the spans carry
+    /// evidence, nothing otherwise.
+    fn push_spk(&self, out: &mut String, spans: &[(usize, usize)]) {
+        if let Some(ev) = self.spk_evidence(spans) {
+            out.push_str(", ");
+            Self::write_spk_vector(out, &ev);
+            out.push_str(", ");
+            self.write_spk_span(out, &ev);
+        }
+    }
+
+    /// The spans of a path's entries that are speech, words and `[speech]` alike.
+    fn speech_spans(&self, path: &Path, words_only: bool) -> Vec<(usize, usize)> {
+        self.entries(path)
+            .iter()
+            .filter(|e| match e.word {
+                EntryWord::Word(_) => true,
+                EntryWord::Speech => !words_only,
+                EntryWord::Silence => false,
+            })
+            .map(|e| (e.start_frame, e.end_frame))
+            .collect()
+    }
+
+    /// `push_spk` for one entry of a word list; `[sil]` carries none.
+    fn push_entry_spk(&self, out: &mut String, e: &Entry) {
+        if self.spk.is_some() && e.word != EntryWord::Silence {
+            self.push_spk(out, &[(e.start_frame, e.end_frame)]);
+        }
+    }
+
     /// Whether a phone belongs to a word rather than to silence, by `word_boundary.int`.
     fn is_word_phone(&self, phone: i32) -> bool {
         !matches!(
@@ -1298,6 +1464,9 @@ impl<'m> Recognizer<'m> {
                             out.push_str(", ");
                         }
                         self.write_word(&mut out, span, false, false, now);
+                        out.pop();
+                        self.push_entry_spk(&mut out, span);
+                        out.push('}');
                     }
                     out.push(']');
                 }
@@ -1327,12 +1496,17 @@ impl<'m> Recognizer<'m> {
                 let since = self.stable.get(j).map(|s| s.1).unwrap_or(now);
                 let stable_ms =
                     ((now - since) as f64 / self.sample_rate as f64 * 1000.0).round() as u64;
-                w.push_str(&format!(", \"stable_ms\": {stable_ms}}}"));
+                w.push_str(&format!(", \"stable_ms\": {stable_ms}"));
+                self.push_entry_spk(&mut w, span);
+                w.push('}');
                 out.push_str(&w);
             }
             out.push(']');
         }
         self.push_floor(&mut out);
+        if self.spk.is_some() {
+            self.push_spk(&mut out, &self.speech_spans(path, false));
+        }
         out.push('}');
         self.last_result = out;
         &self.last_result
@@ -1372,6 +1546,9 @@ impl<'m> Recognizer<'m> {
             out.push(']');
             out.push_str(&format!(", \"endpoint\": \"{}\"", reason.label()));
             self.push_floor(&mut out);
+            if let (Some(top), true) = (alts.first(), self.spk.is_some()) {
+                self.push_spk(&mut out, &self.speech_spans(top, true));
+            }
             out.push('}');
             return out;
         }
@@ -1381,10 +1558,22 @@ impl<'m> Recognizer<'m> {
             self.write_final_words(&mut out, &path, now);
             out.push_str("], ");
         }
+        // libvosk's keys where libvosk puts them, before the text; the span after the others.
+        let ev = self
+            .spk
+            .and_then(|_| self.spk_evidence(&self.speech_spans(&path, true)));
+        if let Some(ev) = ev.as_ref() {
+            Self::write_spk_vector(&mut out, ev);
+            out.push_str(", ");
+        }
         out.push_str("\"text\": ");
         write_string(&mut out, &self.text_of_path(&path));
         out.push_str(&format!(", \"endpoint\": \"{}\"", reason.label()));
         self.push_floor(&mut out);
+        if let Some(ev) = ev.as_ref() {
+            out.push_str(", ");
+            self.write_spk_span(&mut out, ev);
+        }
         out.push('}');
         out
     }
@@ -1417,6 +1606,9 @@ impl<'m> Recognizer<'m> {
         if let Some(p) = self.pipeline.as_mut() {
             p.input_finished();
         }
+        if let Some(s) = self.spk_stream.as_mut() {
+            s.finish();
+        }
         self.update_silence_weights();
         self.advance_decoding();
         self.update_stable();
@@ -1431,6 +1623,7 @@ impl<'m> Recognizer<'m> {
         self.pipeline = None;
         self.nnet = None;
         self.decoder = None;
+        self.spk_stream = None;
         &self.last_result
     }
 
@@ -1476,6 +1669,13 @@ mod tests {
     use super::*;
 
     const RATE: f32 = 16000.0;
+
+    #[test]
+    fn a_recognizer_can_be_shared_across_threads() {
+        fn shared<T: Send + Sync>() {}
+        shared::<Recognizer<'static>>();
+        shared::<SpeakerModel>();
+    }
 
     fn amplitude(dbfs: f64) -> i16 {
         (32768.0 * 10f64.powf(dbfs / 20.0)).round() as i16
