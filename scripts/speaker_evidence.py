@@ -31,6 +31,8 @@ clips, one vector per clip (per final for utter), normalised and averaged into a
 The same figures by the word's length, then over each speaker's probe words joined into one
 stream and cut at a growing length of speech, which is how evidence accumulates as a command goes
 on; utter's figure there is its own partial's evidence at the moment it has pooled that much.
+Last, the game streams are decoded again by both engines with and without their speaker models,
+for per-block compute, result size, the host's parse, and whether the evidence moves any result.
 
 Writes `<out>.md` and `<out>.json`; what a run means goes in `<out>.reading.md`, which the page
 appends to itself, so the prose survives the next run.
@@ -124,6 +126,24 @@ class Wheel:
         rec.AcceptWaveform(pcm)
         out: Json = json.loads(rec.FinalResult())
         return out
+
+    def timed(self, pcm: bytes, block_ms: int, speaker: bool) -> "Timed":
+        """A stream through one recognizer, words on partials, each block timed as utter's is."""
+        rec = self.vosk.KaldiRecognizer(self.model, float(RATE), self.grammar)
+        rec.SetWords(True)
+        rec.SetPartialWords(True)
+        if speaker:
+            rec.SetSpkModel(self.spk)
+        out: list[tuple[float, bool, str]] = []
+        for b in blocks(pcm, block_ms):
+            t = time.perf_counter()
+            closed = bool(rec.AcceptWaveform(b))
+            text = rec.Result() if closed else rec.PartialResult()
+            out.append((time.perf_counter() - t, closed, text))
+        t = time.perf_counter()
+        text = rec.FinalResult()
+        out.append((time.perf_counter() - t, True, text))
+        return [(dt, closed, s.encode()) for dt, closed, s in out]
 
     @staticmethod
     def vector(res: Mapping[str, Any]) -> Vec | None:
@@ -354,10 +374,10 @@ def utter_game(
     block_ms: int,
     speaker: bool = True,
     margin: float | None = None,
-) -> tuple[dict[str, Json], float]:
+) -> dict[str, Json]:
     """A game's stream, clips back to back. For each clip: the final word entry with evidence
     inside its range that pooled most frames, and the first partial entry with evidence inside
-    it, with the samples fed when it appeared. Returns those and the decode seconds."""
+    it, with the samples fed when it appeared."""
     starts, at = [], 0
     for c in order:
         starts.append(at)
@@ -371,7 +391,6 @@ def utter_game(
     rec = UtterRec(u, grammar, speaker, margin)
     seen: dict[str, Json] = {}
     finals: list[Json] = []
-    t = time.perf_counter()
     for c in order:
         for b in blocks(c.pcm, block_ms):
             if rec.accept(b):
@@ -386,7 +405,6 @@ def utter_game(
                     if k is not None and v is not None and k not in seen:
                         seen[k] = dict(fed=rec.fed, vector=v, end_sample=int(e["end_sample"]))
     finals.append(rec.final())
-    seconds = time.perf_counter() - t
     best: dict[str, Json] = {}
     for f in finals:
         for e in f.get("result", []):
@@ -399,7 +417,7 @@ def utter_game(
     out = {k: dict(final=b, first=seen.get(k)) for k, b in best.items()}
     for k, s in seen.items():
         out.setdefault(k, dict(final=None, first=s))
-    return out, seconds
+    return out
 
 
 def utter_cold(u: UtterLib, grammar: Sequence[str], clip: Clip, block_ms: int) -> Vec | None:
@@ -445,6 +463,94 @@ def utter_accumulating(
             take(rec.partial())
     take(rec.final())
     return got
+
+
+SPK_KEYS = frozenset(("spk", "spk_frames", "spk_start", "spk_end"))
+type Timed = list[tuple[float, bool, bytes]]
+
+
+def utter_timed(u: UtterLib, grammar: Sequence[str], pcm: bytes, block_ms: int, speaker: bool) -> Timed:
+    """A stream through utter's C ABI, each block timed from the call that takes its audio to the
+    return of the result read after it."""
+    lib = u.lib
+    h = lib.utter_recognizer_new_grm(u.model, float(RATE), json.dumps(list(grammar)).encode())
+    lib.utter_recognizer_set_words(h, 1)
+    lib.utter_recognizer_set_partial_words(h, 1)
+    if speaker and lib.utter_recognizer_set_spk_model(h, u.spk) != 0:
+        raise SystemExit("utter refused the speaker model")
+    out: Timed = []
+    for b in blocks(pcm, block_ms):
+        t = time.perf_counter()
+        closed = lib.utter_recognizer_accept_waveform_s(h, b, len(b) // 2) == 1
+        text = lib.utter_recognizer_result(h) if closed else lib.utter_recognizer_partial_result(h)
+        out.append((time.perf_counter() - t, closed, bytes(text)))
+    t = time.perf_counter()
+    text = lib.utter_recognizer_final_result(h)
+    out.append((time.perf_counter() - t, True, bytes(text)))
+    lib.utter_recognizer_free(h)
+    return out
+
+
+def without_evidence(x: Any) -> Any:
+    if isinstance(x, dict):
+        return {k: without_evidence(v) for k, v in x.items() if k not in SPK_KEYS}
+    if isinstance(x, list):
+        return [without_evidence(v) for v in x]
+    return x
+
+
+def latency_pass(u: UtterLib, wheel: "Wheel", grammar: Sequence[str], streams: Sequence[bytes], block_ms: int) -> Json:
+    """The game streams again through both engines, each with and without its speaker model, the
+    four in alternating order from one stream to the next."""
+    variants = [(VOSK, False), (VOSK, True), (UTTER, False), (UTTER, True)]
+
+    def label(e: str, s: bool) -> str:
+        return f"{e}, speaker model set" if s else e
+
+    acc: dict[str, dict[str, list[float]]] = {
+        label(e, s): dict(t=[], closing=[], size=[], parse=[]) for e, s in variants
+    }
+    documents = differ = 0
+    for i, pcm in enumerate(streams):
+        runs: dict[tuple[str, bool], Timed] = {}
+        for e, s in variants if i % 2 == 0 else variants[::-1]:
+            runs[(e, s)] = utter_timed(u, grammar, pcm, block_ms, s) if e == UTTER else wheel.timed(pcm, block_ms, s)
+        for (e, s), run_ in runs.items():
+            a = acc[label(e, s)]
+            for dt, closed, text in run_:
+                a["t"].append(dt)
+                a["size"].append(len(text))
+                if closed:
+                    a["closing"].append(dt)
+                t = time.perf_counter()
+                json.loads(text)
+                a["parse"].append(time.perf_counter() - t)
+        bare = [json.loads(x[2]) for x in runs[(UTTER, False)]]
+        spk = [without_evidence(json.loads(x[2])) for x in runs[(UTTER, True)]]
+        documents += len(bare)
+        differ += sum(x != y for x, y in zip(bare, spk, strict=False)) + abs(len(bare) - len(spk))
+    audio = sum(len(p) for p in streams) / 2 / RATE
+
+    def ms(v: Sequence[float], q: float) -> float:
+        return float(np.percentile(v, q)) * 1000
+
+    rows = {
+        k: dict(
+            rtf=sum(a["t"]) / audio,
+            blocks=len(a["t"]),
+            p50=ms(a["t"], 50),
+            p95=ms(a["t"], 95),
+            p99=ms(a["t"], 99),
+            max=max(a["t"]) * 1000,
+            closing_p50=ms(a["closing"], 50),
+            closing_max=max(a["closing"]) * 1000,
+            kib_per_block=float(np.mean(a["size"])) / 1024,
+            parse_p50=ms(a["parse"], 50),
+            parse_p99=ms(a["parse"], 99),
+        )
+        for k, a in acc.items()
+    }
+    return dict(audio_seconds=audio, rows=rows, documents=documents, differ=differ)
 
 
 # --- scoring --------------------------------------------------------------------------------------
@@ -616,20 +722,16 @@ def run(a: argparse.Namespace) -> Json:
         games[-1].append(order[-1])
     utter_words: dict[str, Json] = {}
     margin_words: dict[str, Json] = {}
-    decode_s = {"with": 0.0, "without": 0.0}
-    game_audio = 0.0
+    streams: list[bytes] = []
     for g in games:
         lists = [probe_clips[s] for s in g]
         turns = [x[i] for i in range(max(len(x) for x in lists)) for x in lists if i < len(x)]
-        got, secs = utter_game(u, grammar, turns, a.block_ms)
-        _, bare = utter_game(u, grammar, turns, a.block_ms, speaker=False)
-        with_margin, _ = utter_game(u, grammar, turns, a.block_ms, margin=MARGIN_DB)
-        utter_words.update(got)
-        margin_words.update(with_margin)
-        decode_s["with"] += secs
-        decode_s["without"] += bare
-        game_audio += sum(len(c.pcm) for c in turns) / 2 / RATE
+        utter_words.update(utter_game(u, grammar, turns, a.block_ms))
+        margin_words.update(utter_game(u, grammar, turns, a.block_ms, margin=MARGIN_DB))
+        streams.append(b"".join(c.pcm for c in turns))
     sc.note(f"{len(games)} games through utter")
+    latency = latency_pass(u, wheel, grammar, streams, a.block_ms)
+    sc.note("latency pass decoded")
 
     probes: list[Probe] = []
     no_span = 0
@@ -740,9 +842,8 @@ def run(a: argparse.Namespace) -> Json:
         cost=dict(
             seconds_per_speech_second=cost,
             speech_seconds=speech_s,
-            utter_rtf_with=decode_s["with"] / game_audio if game_audio else float("nan"),
-            utter_rtf_without=decode_s["without"] / game_audio if game_audio else float("nan"),
         ),
+        latency=latency,
         utter=dict(version=u.version, revision=u.revision),
     )
 
@@ -871,7 +972,7 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         f"context and the block included. Top-1 of 2 on that first evidence: "
         f"{pct(pa['top1_2_first'])}; on the final's: {pct(pa['top1_2_final'])}.",
         "",
-        "## Agreement and cost",
+        "## Agreement",
         "",
         f"utter's word vector against the wheel's clip vector: median cosine "
         f"{ag['utter_vosk']['median']:.3f} over {ag['utter_vosk']['n']} probes both score. utter "
@@ -883,11 +984,34 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
             f"The Kaldi row against the wheel: median cosine {ag['kaldi_vosk']['median']:.3f} over "
             f"{ag['kaldi_vosk']['n']}."
         )
+    la = r["latency"]
     L += [
         "",
-        f"Decoding the game streams, utter runs at a real-time factor of {co['utter_rtf_with']:.4f} "
-        f"with the speaker model set and {co['utter_rtf_without']:.4f} without, results read after "
-        "every block. Compute per second of speech embedded: "
+        "## Latency and compute",
+        "",
+        f"The game streams again, {la['audio_seconds']:.0f} s of audio, through each engine with and "
+        f"without its speaker model, the four in alternating order, blocks of {a.block_ms} ms with "
+        "words on partials. A block's compute runs from the call that takes its audio to the return "
+        "of the partial or final read after it; a closing block is one that returned a final. "
+        "Parsing is the host's json.loads of that result in Python.",
+        "",
+        "| engine | real-time factor | per block, ms p50 / p95 / p99 / max | closing blocks, ms p50 / "
+        "max | result text per block | parsing, ms p50 / p99 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for k, x in la["rows"].items():
+        L.append(
+            f"| {k} | {x['rtf']:.4f} | {x['p50']:.3f} / {x['p95']:.2f} / {x['p99']:.2f} / {x['max']:.1f} "
+            f"| {x['closing_p50']:.2f} / {x['closing_max']:.1f} | {x['kib_per_block']:.2f} KiB "
+            f"| {x['parse_p50']:.3f} / {x['parse_p99']:.3f} |"
+        )
+    moved = ": the evidence moves no word, partial or final to a later block." if la["differ"] == 0 else "."
+    L += [
+        "",
+        f"With the speaker model set, {la['differ'] or 'none'} of utter's {la['documents']} results "
+        f"differ from its results without it once the four speaker keys are removed{moved}",
+        "",
+        "Compute per second of speech embedded by the offline engines: "
         + ", ".join(f"{e} {v * 1000:.1f} ms" for e, v in co["seconds_per_speech_second"].items())
         + " (the Kaldi figure is a batch through three processes).",
         "",
