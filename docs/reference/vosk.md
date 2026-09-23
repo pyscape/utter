@@ -28,7 +28,8 @@ with the `vosk_` prefix replaced by `utter_`.
 | `FinalResult()` | `FinalResult()` | `final_result()` | `utter_recognizer_final_result` | Same keys, extended. |
 | `Reset()` | `Reset()` | `reset()` | `utter_recognizer_reset` | Same. |
 | `SetGrammar(grammar)` | | | | Not included. Build a new recognizer; the model caches the grammars it has compiled, so the second recognizer on the same grammar is cheap. |
-| `SetSpkModel`, `SpkModel` | | | | Not included. No speaker vectors. |
+| `SpkModel(path)` | `SpkModel(path)` | `SpeakerModel::open(&Path)` | `utter_spk_model_new` | Same layout, `vosk-model-spk-0.4` the reference. A network that is not an affine over mean and standard-deviation pooling is refused when opened. |
+| `SetSpkModel(spk)`, `KaldiRecognizer(model, rate, spk)` | `SetSpkModel(spk)`, `KaldiRecognizer(model, rate, grammar, spk_model=spk)` | `set_spk_model(Some(&spk))` | `utter_recognizer_set_spk_model` | Same keys on finals, [extended](results.md#speaker-evidence) to partials and to every word, and computed differently: the values do not match Vosk's. A grammar is still required. |
 | `SetNLSML(on)` | | | | Not included. |
 | `SrtResult(stream)` | | | | Not included. |
 | `SetLogLevel(level)` | `SetLogLevel(level)`, does nothing | | | Not included. Nothing is logged; the Python function is kept so scripts run unchanged. |
