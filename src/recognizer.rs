@@ -436,11 +436,65 @@ fn number_or_null(v: Option<f64>) -> String {
     }
 }
 
+/// Full scale in the front end's units, one 16-bit PCM count to the unit: a normalized sample
+/// of 1.0, and 0 dBFS.
+const FULL_SCALE: f32 = 32768.0;
+
 /// Digital silence has no level in decibels, so it reads as no level rather than as a number
 /// every threshold sits above.
 fn dbfs_of_mean_square(mean_square: f64) -> Option<f64> {
     let rms = mean_square.sqrt();
-    (rms > 0.0).then(|| 20.0 * (rms / 32768.0).log10())
+    (rms > 0.0).then(|| 20.0 * (rms / f64::from(FULL_SCALE)).log10())
+}
+
+/// Why [`Recognizer::accept_f32`] refused a block. Nothing of the block was accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AudioInputError {
+    /// Index within the block of the first sample refused.
+    pub index: usize,
+    /// What is wrong with it.
+    pub kind: AudioInputErrorKind,
+}
+
+/// What is wrong with a sample [`Recognizer::accept_f32`] refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AudioInputErrorKind {
+    /// NaN.
+    NotANumber,
+    /// Positive or negative infinity.
+    Infinite,
+    /// Finite and outside full scale, `[-1.0, 1.0]`.
+    OutOfRange,
+}
+
+impl std::fmt::Display for AudioInputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let what = match self.kind {
+            AudioInputErrorKind::NotANumber => "is not a number",
+            AudioInputErrorKind::Infinite => "is infinite",
+            AudioInputErrorKind::OutOfRange => "is outside [-1.0, 1.0]",
+        };
+        write!(f, "sample {} of the block {what}", self.index)
+    }
+}
+
+impl std::error::Error for AudioInputError {}
+
+fn check_normalized(samples: &[f32]) -> Result<(), AudioInputError> {
+    let Some(index) = samples.iter().position(|x| !(-1.0..=1.0).contains(x)) else {
+        return Ok(());
+    };
+    let x = samples[index];
+    let kind = if x.is_nan() {
+        AudioInputErrorKind::NotANumber
+    } else if x.is_infinite() {
+        AudioInputErrorKind::Infinite
+    } else {
+        AudioInputErrorKind::OutOfRange
+    };
+    Err(AudioInputError { index, kind })
 }
 
 impl<'m> Recognizer<'m> {
@@ -954,6 +1008,17 @@ impl<'m> Recognizer<'m> {
     /// last decoded frame.
     pub fn accept(&mut self, samples: &[i16]) -> Step {
         self.accept_raw(samples, f32::from)
+    }
+
+    /// [`accept`](Self::accept) for normalized samples: mono PCM at the recognizer's rate, full
+    /// scale at -1.0 and 1.0, and every sample finite and within it. A block holding any other
+    /// value is refused whole and leaves the recognizer as it was. The block is read during the
+    /// call and not kept. A 16-bit sample `s` is `s as f32 / 32768.0` exactly, and gives what
+    /// [`accept`](Self::accept) gives for `s`; the two may be interleaved on one recognizer.
+    // [[rr:TD-13#The connection carries normalized waveform samples]]
+    pub fn accept_f32(&mut self, samples: &[f32]) -> Result<Step, AudioInputError> {
+        check_normalized(samples)?;
+        Ok(self.accept_raw(samples, |x| x * FULL_SCALE))
     }
 
     // [[rr:TD-13#A shared waveform path preserves scale and precision]]
@@ -2068,6 +2133,46 @@ mod tests {
         f.feed(&vec![0.25; (RATE * 0.1) as usize]);
         let want = 20.0 * (0.25f64 / 32768.0).log10();
         assert!((f.dbfs().unwrap() - want).abs() < 1e-9, "{:?}", f.dbfs());
+    }
+
+    #[test]
+    fn full_scale_and_everything_within_it_is_accepted() {
+        let least = f32::from_bits(1);
+        assert_eq!(check_normalized(&[]), Ok(()));
+        assert_eq!(
+            check_normalized(&[-1.0, -0.0, 0.0, least, -least, 0.5, 1.0]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_first_sample_refused_is_named_with_what_is_wrong_with_it() {
+        let above = f32::from_bits(1.0f32.to_bits() + 1);
+        for (bad, kind) in [
+            (f32::NAN, AudioInputErrorKind::NotANumber),
+            (f32::INFINITY, AudioInputErrorKind::Infinite),
+            (f32::NEG_INFINITY, AudioInputErrorKind::Infinite),
+            (above, AudioInputErrorKind::OutOfRange),
+            (-above, AudioInputErrorKind::OutOfRange),
+            (f32::MAX, AudioInputErrorKind::OutOfRange),
+        ] {
+            let mut block = vec![0.25f32; 16000];
+            block[15999] = bad;
+            assert_eq!(
+                check_normalized(&block),
+                Err(AudioInputError { index: 15999, kind })
+            );
+            block[3] = 2.0;
+            assert_eq!(check_normalized(&block).unwrap_err().index, 3);
+        }
+        let e = AudioInputError {
+            index: 7,
+            kind: AudioInputErrorKind::OutOfRange,
+        };
+        assert_eq!(
+            e.to_string(),
+            "sample 7 of the block is outside [-1.0, 1.0]"
+        );
     }
 
     fn group(words: &[Label], cost: f32, lead: Option<f32>) -> (Vec<Label>, f32, Option<f32>, i32) {
