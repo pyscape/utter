@@ -93,6 +93,8 @@ pub mod model;
 pub mod nnet3;
 pub mod recognizer;
 #[doc(hidden)]
+pub mod resample;
+#[doc(hidden)]
 pub mod silence_weighting;
 #[doc(hidden)]
 pub mod transition_model;

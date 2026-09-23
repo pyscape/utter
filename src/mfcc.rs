@@ -1,6 +1,7 @@
 // Vendored from Vosk-Rust (Apache-2.0), see third_party/Vosk-Rust/NOTICE.
 //! Kaldi MFCC front end: 25 ms Povey window every 10 ms, DC removal, pre-emphasis 0.97, FFT
-//! rounded to a power of two, mel filter bank, log, DCT, cepstral lifter, no energy, snip edges.
+//! rounded to a power of two, mel filter bank, log, DCT, cepstral lifter, snip edges, and with
+//! `use_energy` the frame's log energy in place of the first coefficient.
 //! Input samples are in Kaldi's int16 range. Dither is applied when `dither` is non-zero, with
 //! Kaldi's `RandGauss` replaced by a plain Box-Muller on a fixed-seed generator.
 // [[rr:TD-2#Front end: MFCC]]
@@ -28,6 +29,11 @@ pub struct MfccOptions {
     pub dither: f32,
     pub frame_length_ms: f32,
     pub frame_shift_ms: f32,
+    pub use_energy: bool,
+    /// The energy is the frame's before pre-emphasis and windowing, as Kaldi's default has it,
+    /// rather than after.
+    pub raw_energy: bool,
+    pub energy_floor: f32,
 }
 
 impl Default for MfccOptions {
@@ -43,6 +49,9 @@ impl Default for MfccOptions {
             dither: 1.0,
             frame_length_ms: 25.0,
             frame_shift_ms: 10.0,
+            use_energy: true,
+            raw_energy: true,
+            energy_floor: 0.0,
         }
     }
 }
@@ -63,6 +72,11 @@ impl MfccOptions {
                 continue;
             };
             let f = |d: f32| v.trim().parse::<f32>().unwrap_or(d);
+            let b = |d: bool| match v.trim() {
+                "true" => true,
+                "false" => false,
+                _ => d,
+            };
             match k.trim() {
                 "sample-frequency" => o.sample_rate = f(o.sample_rate),
                 "num-mel-bins" => o.num_mel_bins = f(o.num_mel_bins as f32) as usize,
@@ -74,6 +88,9 @@ impl MfccOptions {
                 "dither" => o.dither = f(o.dither),
                 "frame-length" => o.frame_length_ms = f(o.frame_length_ms),
                 "frame-shift" => o.frame_shift_ms = f(o.frame_shift_ms),
+                "use-energy" => o.use_energy = b(o.use_energy),
+                "raw-energy" => o.raw_energy = b(o.raw_energy),
+                "energy-floor" => o.energy_floor = f(o.energy_floor),
                 _ => {}
             }
         }
@@ -96,6 +113,9 @@ pub struct Mfcc {
     lift: Vec<f32>,
     preemph: f32,
     dither: f32,
+    /// `Some(raw)` when the first coefficient is the log energy, `raw` saying where it is read.
+    energy: Option<bool>,
+    log_energy_floor: Option<f32>,
     fft: RealFft,
     rng: u64,
     /// Reused between frames.
@@ -189,6 +209,8 @@ impl Mfcc {
             lift,
             preemph: o.preemph,
             dither: o.dither,
+            energy: o.use_energy.then_some(o.raw_energy),
+            log_energy_floor: (o.energy_floor > 0.0).then(|| o.energy_floor.ln()),
             fft: RealFft::new(fft_size),
             rng: 0x9E3779B97F4A7C15,
             scratch: (Vec::new(), Vec::new(), Vec::new()),
@@ -237,12 +259,20 @@ impl Mfcc {
         for x in w.iter_mut() {
             *x -= mean;
         }
+        let log_energy = |w: &[f32]| w.iter().map(|x| x * x).sum::<f32>().max(f32::EPSILON).ln();
+        let mut energy = match self.energy {
+            Some(true) => Some(log_energy(&w)),
+            _ => None,
+        };
         for i in (1..self.frame_len).rev() {
             w[i] -= self.preemph * w[i - 1];
         }
         w[0] -= self.preemph * w[0];
         for (x, &h) in w.iter_mut().zip(&self.win) {
             *x *= h;
+        }
+        if self.energy == Some(false) {
+            energy = Some(log_energy(&w));
         }
         let nbins = self.fft.size() / 2 + 1;
         power.clear();
@@ -263,6 +293,12 @@ impl Mfcc {
         }
         for (o, &l) in out.iter_mut().zip(&self.lift) {
             *o *= l;
+        }
+        if let Some(e) = energy {
+            out[0] = match self.log_energy_floor {
+                Some(floor) if e < floor => floor,
+                _ => e,
+            };
         }
         self.scratch = (w, power, logmel);
     }
