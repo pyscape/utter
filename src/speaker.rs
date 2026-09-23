@@ -11,6 +11,7 @@ use crate::resample::LinearResample;
 use std::collections::VecDeque;
 use std::io::Result;
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 
 /// Pooled frames below which a span carries no evidence.
 /// `[[rr:TD-14#A span needs a quarter second]]`
@@ -231,6 +232,48 @@ pub struct Evidence {
     pub end: usize,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Streams made on this thread compute every row as soon as the input allows.
+    pub(crate) static EAGER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A gap in the frames asked for wider than this starts the network afresh past it. Starting
+/// afresh recomputes the lower layers' left context, about one frame's worth for this network.
+const RESTART_GAP: usize = 8;
+
+/// The network's rows over one stream, computed as spans ask for them.
+struct Net<'m> {
+    streamer: Streamer<'m>,
+    /// The input frame the streamer's timeline starts at, and the frame it produces next;
+    /// `None` before it first runs.
+    origin: i64,
+    next: Option<usize>,
+    /// A frame's row, or `None` where no span has asked for it.
+    rows: VecDeque<Option<Vec<f32>>>,
+    /// Stream frame of `rows[0]`.
+    rows_first: usize,
+}
+
+impl Net<'_> {
+    fn has(&self, k: usize) -> bool {
+        k >= self.rows_first
+            && self
+                .rows
+                .get(k - self.rows_first)
+                .is_some_and(Option::is_some)
+    }
+
+    /// Drop the rows before `frame`.
+    fn forget_before(&mut self, frame: usize) {
+        while self.rows_first < frame && !self.rows.is_empty() {
+            self.rows.pop_front();
+            self.rows_first += 1;
+        }
+        self.rows_first = self.rows_first.max(frame);
+    }
+}
+
 /// The network over one stream of audio: the model's features at its own rate, normalised by a
 /// mean that looks back only, and the frame-level rows the pooling reads.
 #[doc(hidden)]
@@ -240,11 +283,13 @@ pub struct SpeakerStream<'m> {
     mfcc: OnlineMfcc,
     cmn_sum: Vec<f64>,
     normalized: Vec<Vec<f32>>,
-    streamer: Streamer<'m>,
     finished: bool,
-    rows: VecDeque<Vec<f32>>,
-    /// Stream frame of `rows[0]`.
-    rows_first: usize,
+    /// Behind a lock so a result, which only reads the recognizer, can compute the rows it pools.
+    net: Mutex<Net<'m>>,
+    /// Every row as soon as the input allows, as the network ran before rows were computed on
+    /// demand: the reference the tests hold the on-demand rows to.
+    #[cfg(test)]
+    eager: bool,
 }
 
 impl<'m> SpeakerStream<'m> {
@@ -269,11 +314,23 @@ impl<'m> SpeakerStream<'m> {
             mfcc: OnlineMfcc::new(&model.mfcc),
             cmn_sum: vec![0.0; model.mfcc.num_ceps],
             normalized: Vec::new(),
-            streamer: model.net.streamer(),
             finished: false,
-            rows: VecDeque::new(),
-            rows_first: 0,
+            net: Mutex::new(Net {
+                streamer: model.net.streamer(),
+                origin: 0,
+                next: None,
+                rows: VecDeque::new(),
+                rows_first: 0,
+            }),
+            #[cfg(test)]
+            eager: EAGER.with(std::cell::Cell::get),
         })
+    }
+
+    fn net(&self) -> MutexGuard<'_, Net<'m>> {
+        self.net
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Feed 16-bit samples at the stream's rate.
@@ -289,11 +346,11 @@ impl<'m> SpeakerStream<'m> {
             }
             None => self.mfcc.accept(&x),
         }
-        self.advance();
+        self.normalize();
     }
 
-    /// The input has ended: the resampler flushes, the last frame is repeated for the right
-    /// context, and every frame's row is computed.
+    /// The input has ended: the resampler flushes, and the last frame is repeated for the right
+    /// context of the rows computed from here on.
     pub fn finish(&mut self) {
         if self.finished {
             return;
@@ -304,15 +361,11 @@ impl<'m> SpeakerStream<'m> {
         }
         self.finished = true;
         self.mfcc.input_finished();
-        self.advance();
+        self.normalize();
     }
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
-        clippy::cast_sign_loss
-    )]
-    fn advance(&mut self) {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    fn normalize(&mut self) {
         while self.normalized.len() < self.mfcc.frames.len() {
             let t = self.normalized.len();
             for (s, v) in self.cmn_sum.iter_mut().zip(&self.mfcc.frames[t]) {
@@ -335,33 +388,9 @@ impl<'m> SpeakerStream<'m> {
                 .collect();
             self.normalized.push(row);
         }
-        let ready = self.normalized.len();
-        let (left, right) = self.model.net.context;
-        let limit = if self.finished { ready + right } else { ready };
-        if ready == 0 || limit.saturating_sub(right) <= self.rows_end() {
-            return;
-        }
-        let view = InputView {
-            frames: &self.normalized,
-            ready,
-            finished: self.finished,
-            limit: limit as i64,
-            first: -(left as i64),
-        };
-        let mut next = self.rows_first + self.rows.len();
-        let (first, rows, cols) = self.streamer.advance(&view, &[]);
-        for (i, row) in rows.chunks_exact(cols).enumerate() {
-            let t = first + i as i64;
-            if t < 0 || t as usize >= ready {
-                continue;
-            }
-            assert_eq!(t as usize, next, "speaker rows out of order");
-            self.rows.push_back(row.to_vec());
-            next += 1;
-        }
-        while self.rows.len() > MAX_ROWS {
-            self.rows.pop_front();
-            self.rows_first += 1;
+        #[cfg(test)]
+        if self.eager {
+            self.compute(&[(0, usize::MAX)]);
         }
     }
 
@@ -370,47 +399,224 @@ impl<'m> SpeakerStream<'m> {
         (&self.mfcc.frames, &self.normalized)
     }
 
-    /// One past the last frame with a row.
+    /// One past the last frame whose row the input allows: the network's right context behind
+    /// the input, or the input's end once it has finished.
     pub fn rows_end(&self) -> usize {
-        self.rows_first + self.rows.len()
+        let ready = self.normalized.len();
+        if self.finished || ready == 0 {
+            ready
+        } else {
+            ready.saturating_sub(self.model.net.context.1)
+        }
+    }
+
+    /// The first frame a span can pool: the last [`MAX_ROWS`] are kept.
+    fn rows_start(&self) -> usize {
+        self.rows_end().saturating_sub(MAX_ROWS)
     }
 
     /// Rows before `frame` will not be pooled again.
     pub fn forget_before(&mut self, frame: usize) {
-        while self.rows_first < frame && !self.rows.is_empty() {
-            self.rows.pop_front();
-            self.rows_first += 1;
+        self.net().forget_before(frame);
+    }
+
+    /// Compute the rows of `spans`, stream frames ascending, as far as the input allows.
+    pub fn compute(&self, spans: &[(usize, usize)]) {
+        let mut net = self.net();
+        self.compute_into(&mut net, spans);
+    }
+
+    fn compute_into(&self, net: &mut Net<'m>, spans: &[(usize, usize)]) {
+        let (lo, hi) = (self.rows_start(), self.rows_end());
+        net.forget_before(lo);
+        for &(a, b) in spans {
+            let (a, b) = (a.max(net.rows_first), b.min(hi));
+            if a < b {
+                self.fill(net, a, b);
+            }
         }
     }
 
-    /// The vector over `frames`, stream frames in ascending order; those without a row are
-    /// skipped. `None` below [`MIN_FRAMES`].
-    pub fn pool(&self, frames: impl Iterator<Item = usize>) -> Option<Evidence> {
+    /// Every row in `[a, b)`, where `b` is at most [`rows_end`](Self::rows_end).
+    #[allow(clippy::cast_possible_wrap)]
+    fn fill(&self, net: &mut Net<'m>, a: usize, b: usize) {
+        let left = self.model.net.context.0 as i64;
+        let next = net.next.unwrap_or(0);
+        // Holes behind the streamer, left where it started afresh past a gap.
+        let mut k = a;
+        while k < b.min(next) {
+            if net.has(k) {
+                k += 1;
+                continue;
+            }
+            let mut e = k + 1;
+            while e < b.min(next) && !net.has(e) {
+                e += 1;
+            }
+            let rows_first = net.rows_first;
+            let mut streamer = self.model.net.streamer();
+            self.run(&mut streamer, k as i64 - left, e, &mut net.rows, rows_first);
+            k = e;
+        }
+        if b <= next && net.next.is_some() {
+            return;
+        }
+        let start = match net.next {
+            Some(n) if a <= n + RESTART_GAP => n,
+            _ if a <= RESTART_GAP => 0,
+            _ => a,
+        };
+        if net.next != Some(start) {
+            net.streamer = self.model.net.streamer();
+            net.origin = start as i64 - left;
+        }
+        let Net {
+            streamer,
+            origin,
+            rows,
+            rows_first,
+            ..
+        } = net;
+        self.run(streamer, *origin, b, rows, *rows_first);
+        net.next = Some(b);
+    }
+
+    /// Run `streamer`, whose timeline starts at input frame `origin`, until its rows reach `to`,
+    /// and keep in `rows`, from stream frame `rows_first`, those not kept already.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn run(
+        &self,
+        streamer: &mut Streamer<'m>,
+        origin: i64,
+        to: usize,
+        rows: &mut VecDeque<Option<Vec<f32>>>,
+        rows_first: usize,
+    ) {
+        let ready = self.normalized.len();
+        let view = InputView {
+            frames: &self.normalized,
+            ready,
+            finished: self.finished,
+            limit: (to + self.model.net.context.1) as i64,
+            first: origin,
+        };
+        let (first, out, cols) = streamer.advance(&view, &[]);
+        for (i, row) in out.chunks_exact(cols).enumerate() {
+            let t = first + i as i64;
+            if t < rows_first as i64 || t as usize >= ready {
+                continue;
+            }
+            let at = t as usize - rows_first;
+            if rows.len() <= at {
+                rows.resize(at + 1, None);
+            }
+            if rows[at].is_none() {
+                rows[at] = Some(row.to_vec());
+            }
+        }
+    }
+
+    /// The vector over the frames of `spans`, stream frames ascending and apart, that `keep`
+    /// admits; frames beyond the kept rows are skipped. `None` below [`MIN_FRAMES`].
+    pub fn pool(&self, spans: &[(usize, usize)], keep: impl Fn(usize) -> bool) -> Option<Evidence> {
+        let mut net = self.net();
+        self.compute_into(&mut net, spans);
+        let hi = self.rows_end();
         let d = self.model.frame_dim;
         let (mut sum, mut sum_sq) = (vec![0.0f64; d], vec![0.0f64; d]);
         let (mut count, mut first, mut end) = (0usize, usize::MAX, 0usize);
-        for k in frames {
-            if k < self.rows_first || k >= self.rows_end() {
-                continue;
+        for &(a, b) in spans {
+            for k in a.max(net.rows_first)..b.min(hi) {
+                if !keep(k) {
+                    continue;
+                }
+                let row = net.rows[k - net.rows_first]
+                    .as_deref()
+                    .expect("a span's rows are computed before it pools");
+                for ((s, q), v) in sum.iter_mut().zip(sum_sq.iter_mut()).zip(row) {
+                    let v = f64::from(*v);
+                    *s += v;
+                    *q += v * v;
+                }
+                count += 1;
+                first = first.min(k);
+                end = k + 1;
             }
-            for ((s, q), v) in sum
-                .iter_mut()
-                .zip(sum_sq.iter_mut())
-                .zip(&self.rows[k - self.rows_first])
-            {
-                let v = f64::from(*v);
-                *s += v;
-                *q += v * v;
-            }
-            count += 1;
-            first = first.min(k);
-            end = k + 1;
         }
+        drop(net);
         (count >= MIN_FRAMES).then(|| Evidence {
             vector: self.model.embed(count, &sum, &sum_sq),
             frames: count,
             first,
             end,
         })
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// The stock speaker model, `vosk-model-spk-0.4`, named by `UTTER_TEST_SPK_MODEL`.
+    pub(crate) fn spk_model() -> Option<SpeakerModel> {
+        let dir = PathBuf::from(std::env::var_os("UTTER_TEST_SPK_MODEL")?);
+        SpeakerModel::open(&dir).ok()
+    }
+
+    pub(crate) fn clip(name: &str) -> Vec<i16> {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data");
+        crate::wav::read_wav(&dir.join(format!("{name}.wav")))
+            .unwrap()
+            .samples
+    }
+
+    fn stream<'m>(model: &'m SpeakerModel, audio: &[i16], eager: bool) -> SpeakerStream<'m> {
+        EAGER.with(|e| e.set(eager));
+        let mut s = SpeakerStream::new(model, 16000.0).unwrap();
+        EAGER.with(|e| e.set(false));
+        for b in audio.chunks(640) {
+            s.accept(b);
+        }
+        s
+    }
+
+    type Pooled = Option<(Vec<u32>, usize, usize, usize)>;
+
+    fn pooled(s: &SpeakerStream, spans: &[(usize, usize)]) -> Pooled {
+        s.pool(spans, |k| k % 5 != 0).map(|e| {
+            (
+                e.vector.iter().map(|v| v.to_bits()).collect(),
+                e.frames,
+                e.first,
+                e.end,
+            )
+        })
+    }
+
+    #[test]
+    fn rows_asked_for_in_any_order_pool_as_every_row_does() {
+        let Some(m) = spk_model() else { return };
+        let audio = [clip("yes"), clip("seven"), clip("no")].concat();
+        let (mut eager, mut asked) = (stream(&m, &audio, true), stream(&m, &audio, false));
+        let n = asked.rows_end();
+        // A late span first, so the network starts past a gap; then spans reaching back into
+        // the gap, across it, and to the end.
+        for spans in [
+            vec![(200, 260)],
+            vec![(20, 300)],
+            vec![(3, 40), (100, 150)],
+            vec![(0, n)],
+        ] {
+            assert_eq!(pooled(&eager, &spans), pooled(&asked, &spans), "{spans:?}");
+        }
+        eager.finish();
+        asked.finish();
+        let n = asked.rows_end();
+        assert_eq!(
+            pooled(&eager, &[(n - 40, n)]),
+            pooled(&asked, &[(n - 40, n)])
+        );
+        assert!(pooled(&asked, &[(n - 40, n)]).is_some());
     }
 }

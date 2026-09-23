@@ -48,7 +48,7 @@ fn main() {
     };
     println!(
         "{{\"num_frames\": {n}, \"unpadded\": {}, \"all\": {}}}",
-        json(stream.pool(7..n.saturating_sub(7))),
-        json(stream.pool(0..n))
+        json(stream.pool(&[(7, n.saturating_sub(7))], |_| true)),
+        json(stream.pool(&[(0, n)], |_| true))
     );
 }
