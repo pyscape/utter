@@ -117,21 +117,38 @@ A frame's row exists once the network's right context has arrived,
 seven frames later, so a span's last 70 ms join its evidence on a later
 partial; `final_result` flushes the stream and pools every frame.
 
-A row is computed only when a span needs it. Each time the decoder
-advances, the rows of its best path's words and `[speech]` are
-computed, and the network starts afresh past a gap of more than eight
-frames; a reading, an alternative or a final that pools a frame not
-yet computed computes it then. Silence no span covers never runs the
-network. A row does not depend on which frames are computed with it,
-so every result is byte for byte the one computing every frame as it
-arrives gives,
-`[[rr:rows_on_demand_give_every_result_as_rows_computed_eagerly]]`.
+A row is computed when a span needs it, or in the block before the
+decoder next advances when a span is likely to. That block is found by
+taking the next block to be the size of this one, and there the rows
+the advance is likely to pool are computed: every frame it will decode
+while the best path ends in speech, and otherwise the frames more than
+20 dB over the floor, or over -40 dBFS before there is a floor, with
+16 frames either side. When the decoder advances, the rows of its best
+path's words and `[speech]` not yet computed are computed once those
+spans could pool 25 frames; a reading, an alternative or a final that
+pools a frame not yet computed computes it then, and the network starts
+afresh past a gap of more than eight frames. Silence the look-ahead
+does not take for speech and no span covers never runs the network.
+The model's features are computed only when rows or a result need
+them, over the audio since they last were. A row does not depend on
+which frames are computed with it or when, so every result is byte for
+byte the one computing every frame as it arrives gives,
+`[[rr:rows_on_demand_give_every_result_as_rows_computed_eagerly]]`,
+`[[rr:rows_ahead_of_the_chunk_give_every_result_as_rows_computed_eagerly]]`.
+
 Over 400 Speech Commands test clips in streams of ten with half-second
-gaps, results read after every 40 ms block, the network ran on 37% of
-the frames, and the fastest of five runs per block put the real-time
-factor with the speaker model set at 0.0143 against 0.0193 when every
-frame ran. The speaker page's latency pass, `[[rr:latency_pass]]`,
-measures the cost on its game streams.
+gaps, results read after every 40 ms block, the fastest of five runs
+per block put the real-time factor with the speaker model set at
+0.0145, the 99th percentile block at 2.88 ms and the median at
+0.054 ms, against 0.0182, 3.17 and 0.292 when every frame ran as audio
+arrived, and 0.0103, 2.50 and 0.051 without the speaker model. Rows
+computed only when needed put the 99th percentile at 4.19 ms, the
+network running on the decoder's own block; 16 frames either side took
+it to 2.88 ms where 5 took it to 3.24 and 10 to 2.96, at the same
+real-time factor. 20 dB and -40 dBFS were chosen among 3 to 25 dB and
+-40 to -30 dBFS in single runs, where the 99th percentile moved less
+than it does between runs. The speaker page's latency pass,
+`[[rr:latency_pass]]`, measures the cost on its game streams.
 
 ### A span needs a quarter second
 
