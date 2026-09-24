@@ -502,7 +502,7 @@ def without_evidence(x: Any) -> Any:
 def latency_pass(u: UtterLib, wheel: "Wheel", grammar: Sequence[str], streams: Sequence[bytes], block_ms: int) -> Json:
     """The game streams again through both engines, each with and without its speaker model, the
     four in alternating order from one stream to the next."""
-    variants = [(VOSK, False), (VOSK, True), (UTTER, False), (UTTER, True)]
+    variants = [(UTTER, False), (UTTER, True), (VOSK, False), (VOSK, True)]
 
     def label(e: str, s: bool) -> str:
         return f"{e}, speaker model set" if s else e
@@ -658,7 +658,7 @@ def run(a: argparse.Namespace) -> Json:
         probe_clips[s] = [Clip(k, s, sc.read_pcm(data / k)) for k in keys[a.enroll : a.enroll + a.probes]]
     sc.note(f"{len(names)} speakers, {a.enroll} enrollment and up to {a.probes} probe clips each")
 
-    engines = [VOSK, UTTER, UTTER_MARGIN, UTTER_COLD] + ([KALDI] if a.kaldi else []) + [TITANET, CAMPP]
+    engines = [UTTER, UTTER_MARGIN, UTTER_COLD, VOSK] + ([KALDI] if a.kaldi else []) + [TITANET, CAMPP]
     wheel = Wheel(a.model, spk_dir, grammar)
     sherpa = {e: Sherpa(models / f) for e, f in SHERPA_FILES.items()}
     kaldi = KaldiXvector(Path(a.kaldi), spk_dir) if a.kaldi else None
@@ -885,8 +885,6 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         "",
         "| engine | what runs | audio | speech it is given |",
         "|---|---|---|---|",
-        f"| {VOSK} | the vosk wheel with {SPK_DIR} set, one clip per recognizer | 8 kHz | the frames "
-        "its decode puts on speech phones, at least half a second |",
         f"| {UTTER} | utter's speaker evidence through its C ABI, continuous streams | 8 kHz | each "
         "word entry's own span, at least a quarter second |",
         f"| {UTTER_MARGIN} | the same with a floor margin of {MARGIN_DB:g} dB set, enrollment included "
@@ -894,6 +892,8 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         f"| {UTTER_COLD} | the same, each probe clip through a recognizer built for it, as a host "
         "that builds one at every grammar change does; enrolled as the first utter row | 8 kHz | "
         "the word's span, its normalisation seeing only the clip |",
+        f"| {VOSK} | the vosk wheel with {SPK_DIR} set, one clip per recognizer | 8 kHz | the frames "
+        "its decode puts on speech phones, at least half a second |",
     ]
     if KALDI in engines:
         L.append(

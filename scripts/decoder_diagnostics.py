@@ -645,7 +645,7 @@ def main() -> None:
     ap.add_argument("--split", default="testing", choices=["testing", "validation"])
     ap.add_argument("--limit", type=int, default=0, help="clips per word, 0 for all")
     ap.add_argument("--block-ms", type=int, default=40)
-    ap.add_argument("--engines", default="vosk,utterpy")
+    ap.add_argument("--engines", default="utterpy,vosk")
     ap.add_argument(
         "--alternatives",
         type=int,

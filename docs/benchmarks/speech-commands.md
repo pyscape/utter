@@ -6,7 +6,7 @@ Run 2026-09-24 06:37:57Z, utter 765482d, vosk 0.3.45, utterpy 0.0.5, model vosk-
 
 ## Engines
 
-Each engine opened the model and decoded a clip before the run began; a model an engine cannot decode stops the run here rather than part-way through a pass.
+Each engine opened the model and decoded a clip before the run began; a model an engine cannot decode stops the run here rather than part-way through a pass. The first recognizer is timed right after each engine's model loads, in the order listed and in one process, and an engine opened after another pays about 20 ms more on it, in either order: the column is a check that the engine runs, not what a recognizer costs to build, which the Speech Commands page's compute section times over every clip.
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
