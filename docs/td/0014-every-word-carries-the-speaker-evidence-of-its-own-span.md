@@ -117,37 +117,57 @@ A frame's row exists once the network's right context has arrived,
 seven frames later, so a span's last 70 ms join its evidence on a later
 partial; `final_result` flushes the stream and pools every frame.
 
-A row is computed when a span needs it, or in the block before the
-decoder next advances when a span is likely to. That block is found by
-taking the next block to be the size of this one, and there the rows
-the advance is likely to pool are computed: every frame it will decode
-while the best path ends in speech, and otherwise the frames more than
-20 dB over the floor, or over -40 dBFS before there is a floor, with
-16 frames either side. When the decoder advances, the rows of its best
-path's words and `[speech]` not yet computed are computed once those
-spans could pool 25 frames; a reading, an alternative or a final that
-pools a frame not yet computed computes it then, and the network starts
-afresh past a gap of more than eight frames. Silence the look-ahead
-does not take for speech and no span covers never runs the network.
-The model's features are computed only when rows or a result need
-them, over the audio since they last were. A row does not depend on
-which frames are computed with it or when, so every result is byte for
-byte the one computing every frame as it arrives gives,
+A row is computed when a span needs it, or earlier when a span is
+likely to. In the block before the decoder next advances, found by
+taking the next block to be the size of this one, the rows the advance
+is likely to pool are computed: while the best path or a reading ends
+in speech, every frame from where that speech began to the last the
+advance will decode, and otherwise the frames more than 20 dB over the
+floor, or over -40 dBFS before there is a floor, with 16 frames either
+side. The readings are the host's; when it asks for none, the
+look-ahead reads up to three of its own, those within 10 of the best's
+cost. Between advances, while the best path ends in speech, its rows
+are computed once 20 of them can be. When the decoder advances, the
+rows of its best path's words and `[speech]` not yet computed are
+computed once those spans could pool 25 frames; a reading, an
+alternative or a final that pools a frame not yet computed computes it
+then, and the network starts afresh past a gap of more than eight
+frames. Silence the look-ahead does not take for speech and no span
+covers never runs the network. The model's features are computed only
+when rows or a result need them, over the audio since they last were.
+A row does not depend on which frames are computed with it or when, so
+every result is byte for byte the one computing every frame as it
+arrives gives,
 `[[rr:rows_on_demand_give_every_result_as_rows_computed_eagerly]]`,
 `[[rr:rows_ahead_of_the_chunk_give_every_result_as_rows_computed_eagerly]]`.
 
 Over 400 Speech Commands test clips in streams of ten with half-second
 gaps, results read after every 40 ms block, the fastest of five runs
-per block put the real-time factor with the speaker model set at
-0.0145, the 99th percentile block at 2.88 ms and the median at
-0.054 ms, against 0.0182, 3.17 and 0.292 when every frame ran as audio
-arrived, and 0.0103, 2.50 and 0.051 without the speaker model. Rows
-computed only when needed put the 99th percentile at 4.19 ms, the
+per block put the 99th percentile block at 2.97, 3.03 and 3.05 ms with
+the speaker model set, for no readings, three readings, and three
+readings with ten final alternatives; the real-time factor at 0.0175,
+0.0176 and 0.0176; the median at 0.057, 0.060 and 0.060 ms. When every
+frame ran as audio arrived these were 3.29, 3.42 and 3.46 ms, 0.0190,
+0.0197 and 0.0199, and 0.308, 0.345 and 0.346 ms; without the speaker
+model 2.66, 2.63 and 2.64 ms, 0.0108 and 0.0109, and 0.052 to 0.055
+ms. The slowest block, a final that flushes the stream, ran from
+0.5 ms under to 0.2 ms over its time when every frame ran, across runs.
+Rows computed only when needed put the 99th percentile at 4.19 ms, the
 network running on the decoder's own block; 16 frames either side took
 it to 2.88 ms where 5 took it to 3.24 and 10 to 2.96, at the same
 real-time factor. 20 dB and -40 dBFS were chosen among 3 to 25 dB and
 -40 to -30 dBFS in single runs, where the 99th percentile moved less
-than it does between runs. The speaker page's latency pass,
+than it does between runs. With readings asked for, following the best
+path alone left the words readings put on quiet audio to the advance's
+block, 23 rows on its 99th percentile blocks, which stood at 4.23 ms
+with three readings; following the readings brought it to 3.03, and
+with the keeping up below the real-time factor rose by 0.0020. Without
+readings asked for, the look-ahead's own within 10 of the best's cost
+brought the slowest block other than a final from 6.1 to 4.4 ms, for
+0.0015; within 5 left it at 6.1. Keeping up with the best path's
+speech in batches of 20 took the slowest final from 6.24 to 5.27 ms;
+batches of 12 took it to 5.50 for 0.002 ms more median, and of 8 put
+the median at 0.24 ms. The speaker page's latency pass,
 `[[rr:latency_pass]]`, measures the cost on its game streams.
 
 ### A span needs a quarter second
