@@ -1805,7 +1805,11 @@ def preflight(
     lines.append("")
     lines.append(
         "Each engine opened the model and decoded a clip before the run began; a model an engine "
-        "cannot decode stops the run here rather than part-way through a pass."
+        "cannot decode stops the run here rather than part-way through a pass. The first recognizer "
+        "is timed right after each engine's model loads, in the order listed and in one process, and "
+        "an engine opened after another pays about 20 ms more on it, in either order: the column is "
+        "a check that the engine runs, not what a recognizer costs to build, which the Speech "
+        "Commands page's compute section times over every clip."
     )
     lines.append("")
     lines.append("| engine | model load, s | first recognizer, ms |")
@@ -2220,7 +2224,7 @@ def main() -> None:
     ap.add_argument("--split", default="testing", choices=["testing", "validation"])
     ap.add_argument("--limit", type=int, default=0, help="clips per word, 0 for all")
     ap.add_argument("--block-ms", type=int, default=40)
-    ap.add_argument("--engines", default="vosk,utterpy")
+    ap.add_argument("--engines", default="utterpy,vosk")
     ap.add_argument("--steady-state-clips", type=int, default=300, help="clips joined for the compute pass")
     ap.add_argument("--snr-db", default="20,10,5,0", help="signal-to-noise ratios to mix, empty to skip")
     ap.add_argument("--snr-clips", type=int, default=800, help="clips per noise level")

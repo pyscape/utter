@@ -93,7 +93,10 @@ pub mod model;
 pub mod nnet3;
 pub mod recognizer;
 #[doc(hidden)]
+pub mod resample;
+#[doc(hidden)]
 pub mod silence_weighting;
+pub mod speaker;
 #[doc(hidden)]
 pub mod transition_model;
 #[doc(hidden)]
@@ -106,3 +109,4 @@ pub const REVISION: &str = env!("UTTER_REVISION");
 
 pub use model::Model;
 pub use recognizer::{Endpoint, Recognizer, RecognizerOptions, Step};
+pub use speaker::SpeakerModel;

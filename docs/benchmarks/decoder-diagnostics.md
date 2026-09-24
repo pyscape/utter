@@ -2,16 +2,16 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 10 readings asked for on the partial and on the final.
 
-Run 2026-09-14 01:02:20Z, utter 474a578, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utterpy/python/utterpy/__init__.py` built from utter 474a5783d84690eb66fd3c407dd6866d19efb170, the checkout's HEAD.
+Run 2026-09-24 07:22:16Z, utter 765482d, vosk 0.3.45, utterpy 0.0.5, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utter-bench-data/site-765482d/utterpy/__init__.py` built from utter 765482d7b70a6d3f5c4071e56e280b7d5df7b598, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
 
 ## Engines
 
-Each engine opened the model and decoded a clip before the run began; a model an engine cannot decode stops the run here rather than part-way through a pass.
+Each engine opened the model and decoded a clip before the run began; a model an engine cannot decode stops the run here rather than part-way through a pass. The first recognizer is timed right after each engine's model loads, in the order listed and in one process, and an engine opened after another pays about 20 ms more on it, in either order: the column is a check that the engine runs, not what a recognizer costs to build, which the Speech Commands page's compute section times over every clip.
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
-| vosk | 0.18 | 0.4 |
-| utterpy | 0.13 | 22.0 |
+| vosk | 0.17 | 0.4 |
+| utterpy | 0.14 | 21.3 |
 
 ## Oracle in the beam: was the word there at all
 
@@ -72,8 +72,8 @@ A changed final is the search reaching a different answer, not the search having
 
 | engine | RTF stock | RTF wide | per-block ms p50 stock / wide | p95 stock / wide |
 |---|---|---|---|---|
-| vosk | 0.0125 | 0.0156 | 0.049 / 0.054 | 2.87 / 3.63 |
-| utterpy | 0.0106 | 0.0122 | 0.042 / 0.044 | 2.42 / 2.83 |
+| vosk | 0.0122 | 0.0152 | 0.048 / 0.053 | 2.81 / 3.57 |
+| utterpy | 0.0103 | 0.0118 | 0.042 / 0.043 | 2.35 / 2.73 |
 
 One recognizer over 295 s of clips joined end to end at each setting, the same pass the Speech Commands page reports compute with.
 

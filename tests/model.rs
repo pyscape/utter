@@ -3,12 +3,20 @@
 
 use std::path::PathBuf;
 use utter::wav::read_wav;
-use utter::{Model, Recognizer};
+use utter::{Model, Recognizer, SpeakerModel};
 
 fn model_dir() -> Option<PathBuf> {
     std::env::var_os("UTTER_TEST_MODEL")
         .map(PathBuf::from)
         .filter(|p| p.join("am/final.mdl").exists())
+}
+
+/// The stock speaker model, `vosk-model-spk-0.4`: the speaker tests are skipped unless
+/// `UTTER_TEST_SPK_MODEL` names its directory as well.
+fn spk_dir() -> Option<PathBuf> {
+    std::env::var_os("UTTER_TEST_SPK_MODEL")
+        .map(PathBuf::from)
+        .filter(|p| p.join("final.ext.raw").exists())
 }
 
 fn grammar() -> Vec<String> {
@@ -888,4 +896,149 @@ fn batch_decoder_reads_the_clip() {
     };
     let (ids, _) = narrow.decode(&graph, &model.tm.tid2pdf, &loglikes);
     assert!(ids.len() <= 1);
+}
+
+fn speaker_run(
+    model: &Model,
+    spk: &SpeakerModel,
+    samples: &[i16],
+    block: usize,
+    set_at: usize,
+) -> (Vec<String>, Vec<String>) {
+    let mut rec = Recognizer::new(model, 16000.0, &grammar()).unwrap();
+    rec.set_words(true);
+    rec.set_partial_words(true);
+    rec.set_alternatives(3);
+    let (mut partials, mut finals) = (Vec::new(), Vec::new());
+    for (i, b) in samples.chunks(block).enumerate() {
+        if i * block >= set_at {
+            // Set again on every block past the point: the audio already fed is replayed once,
+            // and setting the same model again starts over from the same audio.
+            rec.set_spk_model(Some(spk)).unwrap();
+        }
+        if rec.accept(b).endpoint {
+            finals.push(rec.result().to_string());
+        } else {
+            partials.push(rec.partial().to_string());
+        }
+    }
+    finals.push(rec.final_result().to_string());
+    (partials, finals)
+}
+
+#[test]
+fn speaker_evidence_rides_every_word_list_whatever_the_blocks() {
+    let (Some(dir), Some(sdir)) = (model_dir(), spk_dir()) else {
+        return;
+    };
+    let m = Model::open(&dir).unwrap();
+    let s = SpeakerModel::open(&sdir).unwrap();
+    assert_eq!(s.dim(), 128);
+    let audio: Vec<i16> = [clip("yes"), clip("seven"), clip("no")].concat();
+    let (partials, finals) = speaker_run(&m, &s, &audio, 640, 0);
+    let (_, fine) = speaker_run(&m, &s, &audio, 160, 0);
+    let (_, late) = speaker_run(&m, &s, &audio, 640, 8000);
+    let strip = |v: &[String]| v.iter().map(|f| without_floor(f)).collect::<Vec<_>>();
+    assert_eq!(strip(&finals), strip(&fine));
+    assert_eq!(strip(&finals), strip(&late));
+    let fin = finals
+        .iter()
+        .find(|f| f.contains("\"word\": \"seven\""))
+        .unwrap();
+    // libvosk's keys before the text, the span after the others; every word carries its own.
+    let spk_at = fin.find("\"spk\": [").unwrap();
+    assert!(spk_at < fin.find("\"text\"").unwrap(), "{fin}");
+    assert!(fin.rfind("\"spk_start\"").unwrap() > fin.find("\"endpoint\"").unwrap());
+    let words = fin.matches("\"word\": ").count();
+    assert_eq!(fin.matches("\"spk_frames\": ").count(), words + 1, "{fin}");
+    let dims = fin[spk_at..]
+        .split(']')
+        .next()
+        .unwrap()
+        .matches(',')
+        .count()
+        + 1;
+    assert_eq!(dims, 128);
+    assert!(partials
+        .iter()
+        .any(|p| p.contains("\"partial_alternatives\"")
+            && p.split("\"partial_result\"")
+                .next()
+                .unwrap()
+                .contains("\"spk\": [")));
+    // A `[sil]` entry is not speech and carries none.
+    let entries = partials
+        .iter()
+        .filter_map(|p| p.split_once("\"partial_result\": [").map(|(_, r)| r))
+        .flat_map(|r| r.split_once("}]").map_or(r, |(list, _)| list).split("}, {"));
+    assert!(!entries
+        .filter(|e| e.contains("\"word\": \"[sil]\""))
+        .any(|e| e.contains("\"spk")));
+}
+
+#[test]
+fn speaker_evidence_needs_the_models_rate_and_goes_when_removed() {
+    let (Some(dir), Some(sdir)) = (model_dir(), spk_dir()) else {
+        return;
+    };
+    let m = Model::open(&dir).unwrap();
+    let s = SpeakerModel::open(&sdir).unwrap();
+    let mut slow = Recognizer::new(&m, 4000.0, &grammar()).unwrap();
+    assert!(slow.set_spk_model(Some(&s)).is_err());
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    rec.set_words(true);
+    rec.set_spk_model(Some(&s)).unwrap();
+    rec.set_spk_model(None).unwrap();
+    for b in clip("seven").chunks(640) {
+        rec.accept(b);
+    }
+    assert!(!rec.final_result().contains("spk"));
+    assert!(SpeakerModel::open(&dir).is_err());
+    assert!(SpeakerModel::open(std::path::Path::new("/nonexistent/spk")).is_err());
+}
+
+#[test]
+#[allow(clippy::cast_possible_truncation)]
+fn c_abi_speaker_round_trip() {
+    let (Some(dir), Some(sdir)) = (model_dir(), spk_dir()) else {
+        return;
+    };
+    use std::ffi::{CStr, CString};
+    use utter::capi::*;
+    let path = CString::new(dir.to_str().unwrap()).unwrap();
+    let spath = CString::new(sdir.to_str().unwrap()).unwrap();
+    let grammar = CString::new("[\"yes\", \"no\", \"seven\"]").unwrap();
+    unsafe {
+        let model = utter_model_new(path.as_ptr());
+        let spk = utter_spk_model_new(spath.as_ptr());
+        assert!(!spk.is_null());
+        let rec = utter_recognizer_new_grm(model, 16000.0, grammar.as_ptr());
+        utter_recognizer_set_words(rec, 1);
+        assert_eq!(utter_recognizer_set_spk_model(rec, spk), 0);
+        // The recognizer keeps the speaker model alive past its handle.
+        utter_spk_model_free(spk);
+        for block in clip("seven").chunks(640) {
+            utter_recognizer_accept_waveform_s(rec, block.as_ptr(), block.len() as i32);
+        }
+        let fin = CStr::from_ptr(utter_recognizer_final_result(rec))
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(fin.contains("\"spk_frames\""), "{fin}");
+        assert_eq!(utter_recognizer_set_spk_model(rec, std::ptr::null()), 0);
+        utter_recognizer_free(rec);
+        let slow = utter_recognizer_new_grm(model, 4000.0, grammar.as_ptr());
+        let spk = utter_spk_model_new(spath.as_ptr());
+        assert_eq!(utter_recognizer_set_spk_model(slow, spk), -1);
+        assert_eq!(
+            utter_recognizer_set_spk_model(std::ptr::null_mut(), spk),
+            -1
+        );
+        utter_recognizer_free(slow);
+        utter_spk_model_free(spk);
+        utter_spk_model_free(std::ptr::null_mut());
+        assert!(utter_spk_model_new(path.as_ptr()).is_null());
+        assert!(utter_spk_model_new(std::ptr::null()).is_null());
+        utter_model_free(model);
+    }
 }

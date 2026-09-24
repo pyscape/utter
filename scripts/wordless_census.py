@@ -427,7 +427,7 @@ def main() -> None:
     ap.add_argument("--grammar", required=True, help="JSON array of strings")
     ap.add_argument("--out", required=True, help="page written here; .json beside it")
     ap.add_argument("--corpus-label", required=True, help="the date label the gates already use")
-    ap.add_argument("--engines", default="vosk,utterpy")
+    ap.add_argument("--engines", default="utterpy,vosk")
     ap.add_argument("--block-ms", type=int, default=40)
     ap.add_argument("--margin", type=float, default=8.0, help="dB above the floor that is still silence")
     ap.add_argument("--alternatives", type=int, default=4)

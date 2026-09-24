@@ -1,14 +1,14 @@
 {
  "provenance": {
-  "date": "2026-09-14 04:37:59Z",
-  "utter_revision": "addb7a8",
+  "date": "2026-09-24 07:14:33Z",
+  "utter_revision": "765482d",
   "source_dirty": false,
-  "docs_dirty": false,
-  "wheel_path": "/tmp/claude-1000/-home-jared-Repos-utter/cd366a0c-1f10-42bf-9d90-02def22aec2d/scratchpad/site4/utterpy/__init__.py",
-  "wheel_revision": "addb7a839a9ebfcb5ef3409dd320065e9aec8e3c",
+  "docs_dirty": true,
+  "wheel_path": "/home/jared/Repos/utter-bench-data/site-765482d/utterpy/__init__.py",
+  "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
   "wheel_matches_head": true,
   "engines": {
-   "utterpy": "0.0.1"
+   "utterpy": "0.0.5"
   },
   "model": "vosk-model-small-en-us-0.15",
   "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",

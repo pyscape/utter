@@ -64,9 +64,10 @@ Call sequence, per session:
    model path, so an offline tool can replay the WAV through the same
    recognizer and reproduce the session.
 8. Five languages ship, each a stock small model with the same layout.
-9. The same library's speaker model is used to extract speaker
-   embeddings for enrolment and speaker gating. That use is separate
-   from decoding and is not part of this use case.
+9. The same library's speaker model extracts speaker embeddings for
+   enrolment and speaker gating, from a second recognizer per clip whose
+   final carries the vector. Gating decides per word, so that evidence
+   is wanted from the decoding loop itself: need 9 below.
 
 ## 3. What the fork added, and why every piece is critical
 
@@ -221,10 +222,23 @@ Per 40 ms block, after `accept`:
 8. **The stock output shapes** where they exist, so the recording and
    replay tools keep parsing: the partial's key layout, the word
    objects, and the alternatives array, extended rather than replaced.
+9. **Speaker evidence per word and per utterance**: every word of the
+   partial, of each reading, and of each final alternative carries a
+   speaker vector over its own span, and every partial and final carries
+   one over the utterance so far, each with its span in samples on the
+   words' clock and absent when the span holds too little speech. The
+   application scores them against its own profiles and decides, word
+   by word, failing closed when evidence is absent; a word whose vector
+   disagrees with its utterance's is the sign of a second speaker.
+   Enrolment reads one vector per final. The profile, the offline lab
+   and the gate pool the same frames under the same block size and
+   floor margin. The computation never delays the partial it rides on,
+   and replays exactly.
 
-Explicitly not needed: the final result. The application will not read
-one. If the library offers a final for other consumers it must not be
-the only place word times or the end of speech are reported.
+The final result is read for two things only: enrolment, one speaker
+vector per final, and a word the chooser takes from a final
+alternative. Word times and the end of speech must not be reported only
+on a final.
 
 ## 6. Measurements the application already has
 

@@ -14,8 +14,9 @@ use crate::json::write_string;
 use crate::looped::LoopedNnet;
 use crate::model::{Model, WordBoundary};
 use crate::silence_weighting::SilenceWeighting;
+use crate::speaker::{Evidence, SpeakerModel, SpeakerStream};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
@@ -314,7 +315,36 @@ pub struct Recognizer<'m> {
     sw_traceback_frames: Option<usize>,
     stable_frames: Option<usize>,
     last_result: String,
+    spk: Option<&'m SpeakerModel>,
+    spk_stream: Option<SpeakerStream<'m>>,
+    /// Evidence already pooled, by the frames it could pool and the floor threshold that
+    /// chose them; cleared with each utterance.
+    spk_cache: Mutex<HashMap<Vec<u64>, Option<Arc<Pooled>>>>,
+    /// The stream frame the speech the best path is in at the frontier began at, if it is.
+    spk_best_speech: Option<usize>,
 }
+
+/// Evidence as pooled once, written as JSON once for every result that carries it.
+struct Pooled {
+    vector_json: String,
+    span_json: String,
+}
+
+// The look-ahead's settings, and what they cost and save:
+// [[rr:TD-14#Mean normalisation looks back only]]
+/// A frame this far over the floor is likely speech, so the look-ahead computes its row.
+const LOOK_AHEAD_OVER_FLOOR_DB: f64 = 20.0;
+/// The look-ahead's level before a floor exists.
+const LOOK_AHEAD_DBFS: f64 = -40.0;
+/// Frames either side of a likely-speech frame the look-ahead also computes, since a word's
+/// span starts and ends in quieter frames than its loudest.
+const LOOK_AHEAD_PAD: usize = 16;
+/// Readings the look-ahead follows when the host asks for none.
+const LOOK_AHEAD_READINGS: usize = 3;
+/// A reading's cost over the best's within which the look-ahead follows it.
+const LOOK_AHEAD_LEAD: f32 = 10.0;
+/// Rows of the best path's speech the look-ahead waits for between advances.
+const LOOK_AHEAD_BATCH: usize = 20;
 
 fn escape_json_number(v: f64) -> String {
     if v.is_finite() {
@@ -423,6 +453,10 @@ impl<'m> Recognizer<'m> {
             sw_traceback_frames: None,
             stable_frames: None,
             last_result: String::new(),
+            spk: None,
+            spk_stream: None,
+            spk_cache: Mutex::new(HashMap::new()),
+            spk_best_speech: None,
         })
     }
 
@@ -510,6 +544,33 @@ impl<'m> Recognizer<'m> {
         self.max_alternatives = n;
     }
 
+    /// libvosk's `SetSpkModel`: speaker evidence on every partial and final, and on every entry
+    /// of their word lists. Audio already fed since the stream began is included. Fails when the
+    /// audio's rate is below the speaker model's, or its frames are not the decoder's 10 ms.
+    /// `None` removes it. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#speaker-evidence>.
+    // [[rr:TD-14#Decision outcome]]
+    pub fn set_spk_model(&mut self, spk: Option<&'m SpeakerModel>) -> std::io::Result<()> {
+        self.spk_cache().clear();
+        let Some(model) = spk else {
+            self.spk = None;
+            self.spk_stream = None;
+            return Ok(());
+        };
+        if model.frame_shift_ms() != self.model.mfcc_opts.frame_shift_ms {
+            return Err(crate::kaldi_io::err(
+                "the speaker model's frames are not the decoder's",
+            ));
+        }
+        let mut stream = SpeakerStream::new(model, self.sample_rate)?;
+        if self.pipeline.is_some() {
+            stream.accept(&self.pcm);
+            stream.forget_before(self.frame_offset * self.model.conf.frame_subsampling_factor);
+        }
+        self.spk = Some(model);
+        self.spk_stream = self.pipeline.is_some().then_some(stream);
+        Ok(())
+    }
+
     fn decoder_config(&self) -> DecoderConfig {
         let c = &self.model.conf;
         DecoderConfig {
@@ -557,6 +618,10 @@ impl<'m> Recognizer<'m> {
         dec.census = self.census;
         self.decoder = Some(dec);
         self.stable.clear();
+        self.spk_stream = self
+            .spk
+            .and_then(|m| SpeakerStream::new(m, self.sample_rate).ok());
+        self.spk_cache().clear();
     }
 
     /// libvosk's `CleanUp`: a new utterance on the same pipeline, or a new pipeline after a
@@ -578,12 +643,18 @@ impl<'m> Recognizer<'m> {
                 nnet.set_frame_offset(self.frame_offset);
                 dec.init_decoding();
                 self.stable.clear();
+                let first = self.frame_offset * self.model.conf.frame_subsampling_factor;
+                if let Some(s) = self.spk_stream.as_mut() {
+                    s.forget_before(first);
+                }
+                self.spk_cache().clear();
             }
             _ => self.rebuild(),
         }
     }
 
     fn forget_best_path(&mut self) {
+        self.spk_best_speech = None;
         self.forget_readings();
         self.best_path = None;
         self.best_path_frames = None;
@@ -776,6 +847,7 @@ impl<'m> Recognizer<'m> {
             self.rebuild();
         }
         self.state = State::Running;
+        let decoded_before = self.decoder.as_ref().map(|d| d.num_frames_decoded());
         let step = (self.sample_rate * 0.2) as usize;
         let mut i = 0;
         while i < samples.len() {
@@ -787,9 +859,19 @@ impl<'m> Recognizer<'m> {
             i = end;
         }
         self.pcm.extend_from_slice(samples);
+        let advanced = self.decoder.as_ref().map(|d| d.num_frames_decoded()) != decoded_before;
+        if let Some(s) = self.spk_stream.as_mut() {
+            s.accept(samples);
+            if advanced {
+                s.catch_up();
+            }
+        }
         self.floor.feed(samples);
         self.samples_processed += samples.len() as u64;
         self.update_stable();
+        if !advanced {
+            self.spk_look_ahead(samples.len());
+        }
         let reason = self.endpoint_reason();
         let endpoint = reason.is_some();
         let decoded = self
@@ -963,7 +1045,9 @@ impl<'m> Recognizer<'m> {
             // [[rr:TD-8#A final word carries its energy]]
             self.write_word(out, &span, true, true, now);
             out.pop();
-            out.push_str(&format!(", \"stable_ms\": {hold}}}"));
+            out.push_str(&format!(", \"stable_ms\": {hold}"));
+            self.push_spk(out, &[(span.start_frame, span.end_frame)]);
+            out.push('}');
         }
     }
 
@@ -978,18 +1062,38 @@ impl<'m> Recognizer<'m> {
         self.stable_frames = Some(decoded);
         self.refresh_best_path();
         let now = self.samples_round_start + self.samples_processed;
-        let Some(tokens) = self.best_path.as_ref().map(|path| {
-            self.entries(path)
-                .iter()
-                .map(|e| match e.word {
-                    EntryWord::Word(w) => w,
-                    EntryWord::Silence => -1,
-                    EntryWord::Speech => -2,
-                })
-                .collect::<Vec<Label>>()
-        }) else {
+        let entries = self.best_path.as_ref().map(|path| self.entries(path));
+        let sf = self.model.conf.frame_subsampling_factor;
+        self.spk_best_speech = entries
+            .as_ref()
+            .and_then(|es| es.last())
+            .filter(|e| e.word != EntryWord::Silence && e.end_frame >= decoded)
+            .map(|e| (self.frame_offset + e.start_frame) * sf);
+        let Some(entries) = entries else {
             return;
         };
+        // [[rr:TD-14#Mean normalisation looks back only]]
+        if let Some(stream) = self.spk_stream.as_ref() {
+            let speech: Vec<(usize, usize)> = entries
+                .iter()
+                .filter(|e| e.word != EntryWord::Silence)
+                .map(|e| (e.start_frame, e.end_frame))
+                .collect();
+            let frames = self.spk_frames(&speech);
+            if stream.poolable(&frames) >= crate::speaker::MIN_FRAMES {
+                let _computed = stream.compute(&frames);
+                #[cfg(test)]
+                tests::ROWS.with(|r| r.set((r.get().0, r.get().1 + _computed)));
+            }
+        }
+        let tokens: Vec<Label> = entries
+            .iter()
+            .map(|e| match e.word {
+                EntryWord::Word(w) => w,
+                EntryWord::Silence => -1,
+                EntryWord::Speech => -2,
+            })
+            .collect();
         let mut keep = 0;
         while keep < tokens.len() && keep < self.stable.len() && self.stable[keep].0 == tokens[keep]
         {
@@ -1140,6 +1244,260 @@ impl<'m> Recognizer<'m> {
         }
     }
 
+    /// A Mutex, not a cell, so the recognizer stays `Sync` for hosts that share it.
+    fn spk_cache(&self) -> MutexGuard<'_, HashMap<Vec<u64>, Option<Arc<Pooled>>>> {
+        self.spk_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Samples of the stream per speaker frame, and in one frame's window.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn spk_hop_and_window(&self) -> (usize, usize) {
+        let o = &self.model.mfcc_opts;
+        let at = |ms: f32| (f64::from(ms) * 0.001 * f64::from(self.sample_rate)).round() as usize;
+        (at(o.frame_shift_ms), at(o.frame_length_ms))
+    }
+
+    /// The speaker evidence over spans of decoder frames of the current utterance, ascending and
+    /// apart. With a floor margin set, a frame whose own energy is within it of the floor is
+    /// not pooled. `[[rr:TD-14#Evidence is pooled over a span]]`
+    fn spk_evidence(&self, spans: &[(usize, usize)]) -> Option<Arc<Pooled>> {
+        let stream = self.spk_stream.as_ref()?;
+        // The floor sorts its history on every read, so it is read only when a margin is set.
+        let threshold = self
+            .endpoint_floor_margin_db
+            .and_then(|margin| self.floor.dbfs().map(|floor| floor + f64::from(margin)));
+        let sf = self.model.conf.frame_subsampling_factor;
+        let frame = |f: usize| ((self.frame_offset + f) * sf) as u64;
+        let reach = spans.iter().map(|s| frame(s.1)).max().unwrap_or(0);
+        // A partial looks up every entry's evidence on every block; the key of a few spans is
+        // built where no allocation is needed to look it up.
+        let mut short = [0u64; 2 + 2 * 4];
+        let mut long: Vec<u64>;
+        let n = 2 + 2 * spans.len();
+        let key: &mut [u64] = if spans.len() <= 4 {
+            &mut short[..n]
+        } else {
+            long = vec![0; n];
+            &mut long[..]
+        };
+        key[0] = threshold.map_or(u64::MAX, f64::to_bits);
+        key[1] = reach.min(stream.rows_end() as u64);
+        for (i, &(a, b)) in spans.iter().enumerate() {
+            key[2 + 2 * i] = frame(a);
+            key[3 + 2 * i] = frame(b);
+        }
+        if let Some(hit) = self.spk_cache().get(&key[..]) {
+            return hit.clone();
+        }
+        let frames = self.spk_frames(spans);
+        let keep = |k: usize| threshold.is_none_or(|t| self.frame_dbfs(k).is_some_and(|e| e > t));
+        let ev = stream.pool(&frames, keep).map(|ev| {
+            let mut vector_json = String::new();
+            Self::write_spk_vector_json(&mut vector_json, &ev);
+            let hop = self.spk_hop_and_window().0 as u64;
+            let span_json = format!(
+                "\"spk_start\": {}, \"spk_end\": {}",
+                self.samples_round_start + ev.first as u64 * hop,
+                self.samples_round_start + ev.end as u64 * hop
+            );
+            Arc::new(Pooled {
+                vector_json,
+                span_json,
+            })
+        });
+        let mut cache = self.spk_cache();
+        if cache.len() >= 1024 {
+            cache.clear();
+        }
+        cache.insert(key.to_vec(), ev.clone());
+        ev
+    }
+
+    /// The energy of the audio under stream frame `k`, over the frame's own window.
+    fn frame_dbfs(&self, k: usize) -> Option<f64> {
+        let (hop, window) = self.spk_hop_and_window();
+        let lo = k * hop;
+        let hi = (lo + window).min(self.pcm.len());
+        if hi <= lo {
+            return None;
+        }
+        let acc: f64 = self.pcm[lo..hi]
+            .iter()
+            .map(|&s| f64::from(s) * f64::from(s))
+            .sum();
+        #[allow(clippy::cast_precision_loss)]
+        dbfs_of_mean_square(acc / (hi - lo) as f64)
+    }
+
+    /// Speaker rows the decoder's next advance is likely to pool, computed on the block before it,
+    /// supposing the next block is the size of this one, so the network does not run on the
+    /// advance's block as well: the speech the best path or a reading is in at the frontier,
+    /// from where it began, and the frames the advance will decode, all of them while a path is
+    /// in speech, else those loud enough to be likely speech. Between advances, while the best
+    /// path is in speech, its rows are kept up with a batch at a time, which leaves a final that
+    /// flushes the stream fewer to compute. A row does not depend on when it is computed, so
+    /// this moves compute and never a result. `[[rr:TD-14#Mean normalisation looks back only]]`
+    fn spk_look_ahead(&mut self, next_block: usize) {
+        let Some(s) = self.spk_stream.as_ref() else {
+            return;
+        };
+        let (Some(dec), Some(pipe)) = (self.decoder.as_ref(), self.pipeline.as_ref()) else {
+            return;
+        };
+        let sf = self.model.conf.frame_subsampling_factor;
+        let decoded = dec.num_frames_decoded();
+        let frontier = (self.frame_offset + decoded) * sf;
+        let speech_start = |p: &Path| {
+            self.entries(p)
+                .last()
+                .filter(|e| e.word != EntryWord::Silence && e.end_frame >= decoded)
+                .map(|e| (self.frame_offset + e.start_frame) * sf)
+        };
+        let (hop, window) = self.spk_hop_and_window();
+        let frames = |samples: usize| {
+            samples
+                .checked_sub(window)
+                .map_or(0, |n| n / hop.max(1) + 1)
+        };
+        let chunk = self.model.conf.frames_per_chunk;
+        let rctx = self.model.net.context.1;
+        let chunks = |ready: usize| ready.saturating_sub(rctx) / chunk;
+        let now = chunks(pipe.mfcc.num_frames_ready());
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+        if chunks(frames(self.pcm.len() + next_block)) > now {
+            // Without readings asked for, the look-ahead reads its own near the best, since the
+            // best path takes up a word a close reading had first.
+            let own;
+            let readings: &[Path] = match self.readings.as_deref() {
+                Some(r) if self.partial_alternatives > 0 => r,
+                _ => {
+                    let groups = dec.grouped(false);
+                    let near = groups
+                        .iter()
+                        .take(LOOK_AHEAD_READINGS)
+                        .take_while(|g| g.cost - groups[0].cost <= LOOK_AHEAD_LEAD)
+                        .count();
+                    own = dec.trace_groups(&groups, near);
+                    &own
+                }
+            };
+            let from = readings
+                .iter()
+                .filter_map(speech_start)
+                .chain(self.spk_best_speech)
+                .min();
+            let boundary = (now + 1) * chunk;
+            if let Some(f) = from.filter(|&f| f < frontier) {
+                spans.push((f, frontier));
+            }
+            let threshold = self
+                .floor
+                .dbfs()
+                .map_or(LOOK_AHEAD_DBFS, |floor| floor + LOOK_AHEAD_OVER_FLOOR_DB);
+            for k in frontier..boundary {
+                if from.is_some() || self.frame_dbfs(k).is_some_and(|e| e > threshold) {
+                    let a = k.saturating_sub(LOOK_AHEAD_PAD).max(frontier);
+                    let b = (k + 1 + LOOK_AHEAD_PAD).min(boundary);
+                    match spans.last_mut() {
+                        Some(last) if a <= last.1 => last.1 = b,
+                        _ => spans.push((a, b)),
+                    }
+                }
+            }
+        } else {
+            let in_speech = self.spk_best_speech.is_some();
+            let end = s.rows_end() + s.pending_frames();
+            if !in_speech || end < s.computed_to().max(frontier) + LOOK_AHEAD_BATCH {
+                return;
+            }
+            spans.push((frontier, end));
+        }
+        if let Some(s) = self.spk_stream.as_mut() {
+            s.catch_up();
+            let _computed = s.compute(&spans);
+            #[cfg(test)]
+            tests::ROWS.with(|r| r.set((r.get().0 + _computed, r.get().1)));
+        }
+    }
+
+    /// Bring the speaker features up to the audio before a result when it could pool a frame
+    /// they have not reached, or when its spans could reach back to where the kept rows begin,
+    /// which moves with the features.
+    fn spk_catch_up_for_result(&mut self) {
+        let sf = self.model.conf.frame_subsampling_factor;
+        let decoded = self.decoder.as_ref().map_or(0, |d| d.num_frames_decoded());
+        let (start, frontier) = (self.frame_offset * sf, (self.frame_offset + decoded) * sf);
+        if let Some(s) = self.spk_stream.as_mut() {
+            if frontier > s.rows_end()
+                || s.rows_end() + s.pending_frames() >= start + crate::speaker::MAX_ROWS
+            {
+                s.catch_up();
+            }
+        }
+    }
+
+    /// Stream frames of spans of decoder frames of the current utterance.
+    fn spk_frames(&self, spans: &[(usize, usize)]) -> Vec<(usize, usize)> {
+        let sf = self.model.conf.frame_subsampling_factor;
+        spans
+            .iter()
+            .map(|&(a, b)| ((self.frame_offset + a) * sf, (self.frame_offset + b) * sf))
+            .collect()
+    }
+
+    fn write_spk_vector(out: &mut String, p: &Pooled) {
+        out.push_str(&p.vector_json);
+    }
+
+    fn write_spk_vector_json(out: &mut String, ev: &Evidence) {
+        out.push_str("\"spk\": [");
+        for (i, v) in ev.vector.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&escape_json_number(f64::from(*v)));
+        }
+        out.push_str(&format!("], \"spk_frames\": {}", ev.frames));
+    }
+
+    /// The cache is cleared whenever the sample clock of `spk_start` restarts.
+    fn write_spk_span(out: &mut String, p: &Pooled) {
+        out.push_str(&p.span_json);
+    }
+
+    /// `, "spk": .., "spk_frames": .., "spk_start": .., "spk_end": ..` when the spans carry
+    /// evidence, nothing otherwise.
+    fn push_spk(&self, out: &mut String, spans: &[(usize, usize)]) {
+        if let Some(ev) = self.spk_evidence(spans) {
+            out.push_str(", ");
+            Self::write_spk_vector(out, &ev);
+            out.push_str(", ");
+            Self::write_spk_span(out, &ev);
+        }
+    }
+
+    /// The spans of a path's entries that are speech, words and `[speech]` alike.
+    fn speech_spans(&self, path: &Path, words_only: bool) -> Vec<(usize, usize)> {
+        self.entries(path)
+            .iter()
+            .filter(|e| match e.word {
+                EntryWord::Word(_) => true,
+                EntryWord::Speech => !words_only,
+                EntryWord::Silence => false,
+            })
+            .map(|e| (e.start_frame, e.end_frame))
+            .collect()
+    }
+
+    /// `push_spk` for one entry of a word list; `[sil]` carries none.
+    fn push_entry_spk(&self, out: &mut String, e: &Entry) {
+        if self.spk.is_some() && e.word != EntryWord::Silence {
+            self.push_spk(out, &[(e.start_frame, e.end_frame)]);
+        }
+    }
+
     /// Whether a phone belongs to a word rather than to silence, by `word_boundary.int`.
     fn is_word_phone(&self, phone: i32) -> bool {
         !matches!(
@@ -1247,6 +1605,7 @@ impl<'m> Recognizer<'m> {
         clippy::cast_sign_loss
     )]
     pub fn partial(&mut self) -> &str {
+        self.spk_catch_up_for_result();
         let empty = |this: &mut Self| {
             let mut out = format!("{{\"partial\": \"{SIL}\"");
             this.push_floor(&mut out);
@@ -1274,7 +1633,8 @@ impl<'m> Recognizer<'m> {
             return &self.last_result;
         };
         let now = self.samples_round_start + self.samples_processed;
-        let mut out = String::from("{\"partial\": ");
+        let mut out = String::with_capacity(self.last_result.len());
+        out.push_str("{\"partial\": ");
         write_string(&mut out, &self.text_of_path(path));
         if self.partial_alternatives > 0 {
             out.push_str(", \"partial_alternatives\": [");
@@ -1298,6 +1658,9 @@ impl<'m> Recognizer<'m> {
                             out.push_str(", ");
                         }
                         self.write_word(&mut out, span, false, false, now);
+                        out.pop();
+                        self.push_entry_spk(&mut out, span);
+                        out.push('}');
                     }
                     out.push(']');
                 }
@@ -1315,9 +1678,14 @@ impl<'m> Recognizer<'m> {
             }
             out.push(']');
         }
+        let entries = if self.partial_words || self.spk.is_some() {
+            self.entries(path)
+        } else {
+            Vec::new()
+        };
         if self.partial_words {
             out.push_str(", \"partial_result\": [");
-            for (j, span) in self.entries(path).iter().enumerate() {
+            for (j, span) in entries.iter().enumerate() {
                 if j > 0 {
                     out.push_str(", ");
                 }
@@ -1327,12 +1695,22 @@ impl<'m> Recognizer<'m> {
                 let since = self.stable.get(j).map(|s| s.1).unwrap_or(now);
                 let stable_ms =
                     ((now - since) as f64 / self.sample_rate as f64 * 1000.0).round() as u64;
-                w.push_str(&format!(", \"stable_ms\": {stable_ms}}}"));
+                w.push_str(&format!(", \"stable_ms\": {stable_ms}"));
                 out.push_str(&w);
+                self.push_entry_spk(&mut out, span);
+                out.push('}');
             }
             out.push(']');
         }
         self.push_floor(&mut out);
+        if self.spk.is_some() {
+            let speech: Vec<(usize, usize)> = entries
+                .iter()
+                .filter(|e| e.word != EntryWord::Silence)
+                .map(|e| (e.start_frame, e.end_frame))
+                .collect();
+            self.push_spk(&mut out, &speech);
+        }
         out.push('}');
         self.last_result = out;
         &self.last_result
@@ -1372,6 +1750,9 @@ impl<'m> Recognizer<'m> {
             out.push(']');
             out.push_str(&format!(", \"endpoint\": \"{}\"", reason.label()));
             self.push_floor(&mut out);
+            if let (Some(top), true) = (alts.first(), self.spk.is_some()) {
+                self.push_spk(&mut out, &self.speech_spans(top, true));
+            }
             out.push('}');
             return out;
         }
@@ -1381,10 +1762,22 @@ impl<'m> Recognizer<'m> {
             self.write_final_words(&mut out, &path, now);
             out.push_str("], ");
         }
+        // libvosk's keys where libvosk puts them, before the text; the span after the others.
+        let ev = self
+            .spk
+            .and_then(|_| self.spk_evidence(&self.speech_spans(&path, true)));
+        if let Some(ev) = ev.as_ref() {
+            Self::write_spk_vector(&mut out, ev);
+            out.push_str(", ");
+        }
         out.push_str("\"text\": ");
         write_string(&mut out, &self.text_of_path(&path));
         out.push_str(&format!(", \"endpoint\": \"{}\"", reason.label()));
         self.push_floor(&mut out);
+        if let Some(ev) = ev.as_ref() {
+            out.push_str(", ");
+            Self::write_spk_span(&mut out, ev);
+        }
         out.push('}');
         out
     }
@@ -1392,6 +1785,7 @@ impl<'m> Recognizer<'m> {
     /// libvosk's `Result`: the final of the utterance decoded so far; the next `accept`
     /// starts a new utterance. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-final-result>.
     pub fn result(&mut self) -> &str {
+        self.spk_catch_up_for_result();
         if self.state != State::Running {
             self.last_result = "{\"text\": \"\"}".into();
             return &self.last_result;
@@ -1417,6 +1811,9 @@ impl<'m> Recognizer<'m> {
         if let Some(p) = self.pipeline.as_mut() {
             p.input_finished();
         }
+        if let Some(s) = self.spk_stream.as_mut() {
+            s.finish();
+        }
         self.update_silence_weights();
         self.advance_decoding();
         self.update_stable();
@@ -1431,6 +1828,7 @@ impl<'m> Recognizer<'m> {
         self.pipeline = None;
         self.nnet = None;
         self.decoder = None;
+        self.spk_stream = None;
         &self.last_result
     }
 
@@ -1476,6 +1874,13 @@ mod tests {
     use super::*;
 
     const RATE: f32 = 16000.0;
+
+    #[test]
+    fn a_recognizer_can_be_shared_across_threads() {
+        fn shared<T: Send + Sync>() {}
+        shared::<Recognizer<'static>>();
+        shared::<SpeakerModel>();
+    }
 
     fn amplitude(dbfs: f64) -> i16 {
         (32768.0 * 10f64.powf(dbfs / 20.0)).round() as i16
@@ -1602,5 +2007,231 @@ mod tests {
         assert_eq!(relation(&[1, 2], &[]), "extends");
         assert_eq!(relation(&[2, 3], &[1, 3]), "differs");
         assert_eq!(relation(&[], &[]), "same");
+    }
+
+    thread_local! {
+        /// Speaker rows computed on this thread: ahead of the acoustic model's chunk, and when
+        /// the best path's speech needed them.
+        pub(super) static ROWS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    }
+
+    /// The stock small English model, named by `UTTER_TEST_MODEL`, and the speaker model.
+    fn models() -> Option<(Model, SpeakerModel)> {
+        let dir = std::path::PathBuf::from(std::env::var_os("UTTER_TEST_MODEL")?);
+        Some((Model::open(&dir).ok()?, crate::speaker::tests::spk_model()?))
+    }
+
+    struct SpkRun<'a> {
+        /// Block sizes in samples, taken in turn.
+        blocks: &'a [usize],
+        set_at: usize,
+        alternatives: usize,
+        margin: Option<f32>,
+        partials: bool,
+        /// Whether a final is read when the endpoint says so; a host may read on instead.
+        finals: bool,
+        eager: bool,
+    }
+
+    /// Every result a host reading after each block would see.
+    fn spk_results(m: &Model, spk: &SpeakerModel, audio: &[i16], run: &SpkRun) -> Vec<String> {
+        let grammar: Vec<String> = ["yes", "no", "seven", "stop", "go"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        crate::speaker::EAGER.with(|e| e.set(run.eager));
+        let mut rec = Recognizer::new(m, RATE, &grammar).unwrap();
+        rec.set_words(true);
+        rec.set_partial_words(true);
+        rec.set_alternatives(run.alternatives);
+        rec.set_max_alternatives(run.alternatives);
+        rec.set_endpoint_floor_margin(run.margin);
+        let mut out = Vec::new();
+        let mut set = false;
+        let (mut at, mut i) = (0, 0);
+        while at < audio.len() {
+            let b = &audio[at..(at + run.blocks[i % run.blocks.len()]).min(audio.len())];
+            if !set && at >= run.set_at {
+                rec.set_spk_model(Some(spk)).unwrap();
+                set = true;
+            }
+            if rec.accept(b).endpoint && run.finals {
+                out.push(rec.result().to_string());
+            } else if run.partials {
+                out.push(rec.partial().to_string());
+            }
+            at += b.len();
+            i += 1;
+        }
+        out.push(rec.final_result().to_string());
+        crate::speaker::EAGER.with(|e| e.set(false));
+        out
+    }
+
+    /// Eager and on-demand rows give the same results; the on-demand results.
+    fn same_as_eager(m: &Model, spk: &SpeakerModel, audio: &[i16], mut run: SpkRun) -> Vec<String> {
+        run.eager = true;
+        let want = spk_results(m, spk, audio, &run);
+        run.eager = false;
+        let got = spk_results(m, spk, audio, &run);
+        assert_eq!(want, got, "blocks {:?} set at {}", run.blocks, run.set_at);
+        got
+    }
+
+    /// Two utterances apart by a second of quiet, so the network starts afresh past a gap.
+    fn spk_audio() -> Vec<i16> {
+        use crate::speaker::tests::clip;
+        [clip("yes"), clip("seven"), noise(60, 1.0), clip("no")].concat()
+    }
+
+    /// 7, 30 and 100 ms blocks do not divide the acoustic model's 240 ms chunk, and a size that
+    /// changes from block to block defeats the look-ahead's guess of the next.
+    const BLOCKS: &[&[usize]] = &[
+        &[160],
+        &[640],
+        &[3200],
+        &[112],
+        &[480],
+        &[1600],
+        &[480, 112, 1600, 640, 3200, 160, 2000],
+    ];
+
+    /// `[[rr:TD-14#Mean normalisation looks back only]]`: rows computed for the speech a result
+    /// pools give every result byte for byte as rows computed for every frame as it arrives.
+    #[test]
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly() {
+        let Some((m, spk)) = models() else { return };
+        let audio = spk_audio();
+        for (alternatives, margin) in [(0, None), (3, Some(6.0))] {
+            for blocks in BLOCKS {
+                for set_at in [0, 8000, 24000] {
+                    let run = SpkRun {
+                        blocks,
+                        set_at,
+                        alternatives,
+                        margin,
+                        partials: true,
+                        finals: true,
+                        eager: true,
+                    };
+                    let got = same_as_eager(&m, &spk, &audio, run);
+                    assert!(got.iter().any(|r| r.contains("\"spk\": [")));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_final_read_alone_pools_every_row() {
+        let Some((m, spk)) = models() else { return };
+        let audio = spk_audio();
+        for (alternatives, margin) in [(0, None), (3, Some(6.0))] {
+            for blocks in [&BLOCKS[1], &BLOCKS[6]] {
+                for set_at in [0, 24000] {
+                    let run = SpkRun {
+                        blocks,
+                        set_at,
+                        alternatives,
+                        margin,
+                        partials: false,
+                        finals: true,
+                        eager: true,
+                    };
+                    let got = same_as_eager(&m, &spk, &audio, run);
+                    let words = got.iter().filter(|r| r.contains("\"word\": ")).count();
+                    assert!(words >= 1, "{got:?}");
+                    assert!(got
+                        .iter()
+                        .filter(|r| r.contains("\"word\": "))
+                        .all(|r| r.contains("\"spk_frames\"")));
+                }
+            }
+        }
+    }
+
+    /// Onsets the look-ahead sees coming and onsets it does not: loud words after digital
+    /// silence, where there is no floor, and after a floor, and words too quiet for it after
+    /// each; with readings asked for, and with the look-ahead reading its own.
+    #[test]
+    fn rows_ahead_of_the_chunk_give_every_result_as_rows_computed_eagerly() {
+        let Some((m, spk)) = models() else { return };
+        use crate::speaker::tests::clip;
+        let quiet = |w: Vec<i16>| w.iter().map(|&v| v / 40).collect::<Vec<i16>>();
+        let silence = |seconds: f64| vec![0i16; (RATE as f64 * seconds) as usize];
+        let audio = [
+            silence(0.6),
+            clip("yes"),
+            noise(60, 1.5),
+            clip("seven"),
+            noise(60, 1.0),
+            quiet(clip("no")),
+            silence(0.8),
+            quiet(clip("yes")),
+        ]
+        .concat();
+        let (mut ahead, mut needed) = (0, 0);
+        for alternatives in [0, 3] {
+            for blocks in BLOCKS {
+                ROWS.with(|r| r.set((0, 0)));
+                let run = SpkRun {
+                    blocks,
+                    set_at: 0,
+                    alternatives,
+                    margin: None,
+                    partials: true,
+                    finals: true,
+                    eager: true,
+                };
+                same_as_eager(&m, &spk, &audio, run);
+                let (a, n) = ROWS.with(std::cell::Cell::get);
+                ahead += a;
+                needed += n;
+            }
+        }
+        assert!(
+            ahead > 0 && needed > 0,
+            "{ahead} ahead, {needed} when needed"
+        );
+    }
+
+    /// A host that reads on past the endpoints keeps one utterance going beyond the 30 s of rows
+    /// kept, so its evidence reaches back to where they begin.
+    #[test]
+    fn a_long_utterance_pools_only_the_kept_rows() {
+        let Some((m, spk)) = models() else { return };
+        use crate::speaker::tests::clip;
+        let audio: Vec<i16> = (0..12)
+            .flat_map(|_| [clip("yes"), clip("seven"), clip("no")].concat())
+            .collect();
+        // With a floor margin the evidence is pooled afresh as the floor moves, between the
+        // acoustic model's chunks as well as on them.
+        let run = SpkRun {
+            blocks: &[640],
+            set_at: 0,
+            alternatives: 0,
+            margin: Some(6.0),
+            partials: true,
+            finals: false,
+            eager: true,
+        };
+        let got = same_as_eager(&m, &spk, &audio, run);
+        let reach = |r: &String| {
+            let (a, b) = (r.rfind("\"spk_start\": "), r.rfind("\"spk_end\": "));
+            let num = |i: usize| -> u64 {
+                r[i..]
+                    .split([',', '}'])
+                    .next()
+                    .unwrap()
+                    .split(": ")
+                    .nth(1)
+                    .unwrap()
+                    .parse()
+                    .unwrap()
+            };
+            a.zip(b).map(|(a, b)| num(b) - num(a))
+        };
+        // The evidence reaches the kept rows' 30 s and no further.
+        let longest = got.iter().filter_map(reach).max().unwrap();
+        assert!((29 * 16000..=30 * 16000).contains(&longest), "{longest}");
     }
 }

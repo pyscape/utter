@@ -4,6 +4,26 @@ Notable changes to the crate, newest first. The project follows semantic
 versioning; release dates are recorded by the git tags and the GitHub
 releases.
 
+## 0.0.5
+
+### Added
+
+- Speaker evidence on every word. With a speaker model set,
+  set_spk_model, SetSpkModel, utter_recognizer_set_spk_model, opened
+  from a vosk speaker model directory such as vosk-model-spk-0.4 by
+  SpeakerModel::open or utter_spk_model_new, every word entry of every
+  word list carries spk, spk_frames, spk_start and spk_end over its own
+  span, and every partial and final carries them over its speech. Off
+  by default; without a speaker model the output is identical to 0.0.4.
+  The network runs only on frames a word's evidence pools or is likely
+  to, so it moves no result to a later block; on the speaker page's
+  streams it takes the real-time factor from 0.0117 to 0.0197 and the
+  99th percentile block from 2.86 to 3.26 ms. TD-14.
+- A speaker evidence benchmark page: how often one word names its
+  speaker, utter's evidence beside the wheel's vector, the same
+  x-vector through Kaldi, TitaNet-small and CAM++, by word length and
+  as speech accumulates, and how soon a partial carries it.
+
 ## 0.0.4
 
 ### Fixed

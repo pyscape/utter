@@ -53,3 +53,5 @@ reaches for the rejected option. Implemented by is optional, because
 | TD-10 | A wordless reading says whether a word has begun |
 | TD-11 | A final says what closed it and how long its words held |
 | TD-12 | The host's bound reads a wordless path at the floor as silence |
+| TD-13 | Preprocessors feed borrowed waveform samples directly into utter |
+| TD-14 | Every word carries the speaker evidence of its own span |

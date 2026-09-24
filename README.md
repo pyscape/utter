@@ -40,58 +40,82 @@ for block in microphone():                 # 40 ms of 16-bit mono PCM
 ## Contents
 
 - [Why utter](#why-utter)
-- [Status](#status)
 - [Quick start](#quick-start)
-- [What a partial tells you](#what-a-partial-tells-you)
 - [Where next](#where-next)
-- [Features](#features)
-- [Models](#models)
 - [Benchmarks](#benchmarks)
 - [Building and testing](#building-and-testing)
-- [Repository layout](#repository-layout)
-- [Third-party code and license](#third-party-code-and-license)
+- [License](#license)
 
 ## Why utter
 
+### Fast command recognition
+
 Vosk is the best small offline recognizer for a closed vocabulary, and
 it is fast: under a grammar of a few dozen words, a spoken word appears
-in the partial result a median 40 ms after the word ends. Streaming
-ONNX models tried under the same grammar took about half a second.
+in the partial result a median 40 ms after the word ends. The [Speech
+Commands measurements](docs/benchmarks/speech-commands.md#full-grammar-accuracy)
+show that latency; the [design measurements](docs/td/0002-the-streaming-runtime-for-vosk-models.md#context-and-problem-statement)
+put streaming ONNX models under the same grammar at about half a second.
+
+### Know when speech falls outside your phrase list
+
+Vosk phrase lists can include `[unk]`, giving speech outside the list a
+named reading instead of the closest listed phrase. The stock Vosk
+recognizer API does not let a host tune how strongly that path competes.
+utter exposes that control in Rust as `RecognizerOptions::unknown_cost`:
+lower it to return `[unk]` more often, raise it to prefer commands, or
+leave it unset to omit `[unk]`. See the [API reference](docs/reference/vosk.md#what-utter-adds)
+and [unknown-word benchmark](docs/benchmarks/speech-commands.md#twelve-class-ten-commands-plus-the-unknown-word-symbol).
+
+### Tell silence from speech
+
+utter reports `[sil]` when the best path is silence and `[speech]` when
+it has entered word phones without reaching a word label. It also reports
+trailing-silence duration and the room's noise floor, so a host can tell
+a pause or quiet room from a command without running a second detector.
+See the [result fields](docs/reference/results.md#the-partial-result) and
+[silence measurements](docs/benchmarks/speech-commands.md#the-floor-gate-a-host-applies).
+
+### Know who spoke each word
+
+With Vosk's speaker model set, every word of every partial and final
+carries a speaker vector over its own span, so a host can gate a
+command on who said it, word by word, before the utterance ends. The
+stock recognizer computes one vector per final over the whole
+utterance, and none under half a second of speech. In the [speaker
+benchmark](docs/benchmarks/speaker-evidence.md), one word names its
+speaker among two enrolled speakers 95.4% of the time with utter and
+48.4% with the stock wheel, and utter's evidence reaches a partial a
+median 40 ms after the word ends. One word is weak evidence for a
+strict gate; the page measures how much speech a gate needs. See the
+[speaker evidence fields](docs/reference/results.md#speaker-evidence).
+
+### Build and ship on every platform
 
 But Vosk is a C++ wrapper around Kaldi, and Kaldi does not build on
 Windows without a Docker cross-compile. Anyone who needs one more field
 out of the decoder than the stock wheel exposes ends up maintaining a
-fork they cannot easily ship.
+fork they cannot easily ship. See the [first consumer's build
+constraint](usecases/live-command-dictation.md#4-what-goes-wrong-today).
 
-utter reimplements the part of that stack a partials-first application
-uses, in Rust, from the files a stock Vosk model directory already
-contains. It is not a port of libvosk and not a general Kaldi. It
-decodes, it tells you what it thinks so far and what else it is still
-considering, and it tells you when the speaker stopped. Its output is
-checked block-for-block against the stock Vosk wheel on the same audio.
+### Make streaming decisions from the decoder
 
-## Status
+utter runs stock Vosk models in Rust for applications that must act before
+speech ends. It reports the current reading and alternatives still in
+contention; word timing, energy, and stability; silence, unlabelled
+speech, and the room's noise floor; and the end of speech. The [results
+reference](docs/reference/results.md#the-partial-result) describes every
+field, and the [partial-state benchmarks](docs/benchmarks/partial-states.md)
+measure how those readings behave over time.
 
-**0.0.1**, the first release: `utter` on crates.io, `utterpy` on PyPI.
-The streaming path is complete and measured: front end, i-vector
-adaptation, chunked neural network, decoder, partials with alternatives
-and word times, endpointing, a C ABI and a Python binding. The API
-keeps the vosk wheel's shape; the keys it adds are in the
-[results reference](docs/reference/results.md). Expect breaking changes
-before 0.1.
+### Verified against Vosk
 
-On the public Speech Commands benchmark it matches the stock Vosk
-wheel: 91.8% against 91.5% accuracy on 11,005 clips, finals agreeing
-on 99.2% of them, the same 40 ms median first-appearance latency. See
-[Benchmarks](#benchmarks).
-
-One parity gap is open: segment-for-segment agreement with libvosk on
-the private test corpus sits just under the mark the gate asks for, on
-near ties in the acoustics. Every gate result is in
-[docs/gates/](docs/gates/).
-
-Supported today: the English small model. Other small models share the
-layout and should work but have not been checked.
+Our public Speech Commands benchmark shows that utter matches the stock
+Vosk wheel: 91.8% against 91.5% accuracy on 11,005 clips, finals
+agreeing on 99.2% of them, and the same 40 ms median first-appearance
+latency. We run both engines on the same audio and record every partial
+and final so that we can demonstrate parity at each decoding step. See
+the [benchmarks](#benchmarks).
 
 ## Quick start
 
@@ -209,49 +233,6 @@ without reaching GitHub:
 gh attestation verify utter-linux-x86_64.tar.gz --bundle utter-v0.0.3.sigstore.json --owner pyscape
 ```
 
-## What a partial tells you
-
-The stock Vosk partial is a line of text:
-
-```json
-{"partial": "alpha seven"}
-```
-
-utter returns the same text, and beside it the evidence an application
-otherwise has to reconstruct with its own detectors:
-
-```json
-{
-  "partial": "alpha seven",
-  "partial_alternatives": [
-    {"text": "alpha seven",  "confidence": 1.94,  "result": [ ... ],
-     "relation": "same",    "lead_delta": 0.41},
-    {"text": "alpha eleven", "confidence": -3.32, "result": [ ... ],
-     "relation": "differs", "lead_delta": -0.41}
-  ],
-  "partial_result": [
-    {"word": "alpha", "start_sample": 196800, "end_sample": 202080, "energy_dbfs": -23.2, "stable_ms": 960},
-    {"word": "seven", "start_sample": 202080, "end_sample": 207680, "energy_dbfs": -22.8, "stable_ms": 240},
-    {"word": "[sil]",  "start_sample": 207680, "end_sample": 208320, "energy_dbfs": -48.6, "stable_ms": 0}
-  ],
-  "floor_dbfs": -51.7
-}
-```
-
-Each word also carries Vosk's `start` and `end` in seconds, left out
-here for room. The key layout matches libvosk's, so a parser written
-for Vosk keeps working; the new keys are added after the old ones.
-Every key, its type, when it is present and whether Vosk has it is in
-the [results reference](docs/reference/results.md).
-
-In one line each: the gap between the first two confidences predicts
-whether the leading word will be revised; a reading that `extends` the
-partial and is gaining lead is the next word forming; `stable_ms` is
-the hold to wait out before acting on a word; `energy_dbfs` against
-`floor_dbfs` tells a spoken word from one read into a quiet room;
-`[sil]` and `[speech]` say whether the decoder heard nothing or a word
-it cannot yet name; and `endpoint` on a final says what closed it.
-
 ## Where next
 
 | You are | Start with |
@@ -262,57 +243,6 @@ it cannot yet name; and `endpoint` on a final says what closed it.
 | Building on the partials | [Reading a partial](docs/guide/reading-a-partial.md): the trust read as a calibrated probability, the next-word preview, silence and the doubtful last word, each a line of Python. Then [Ending speech sooner](docs/guide/ending-speech-sooner.md): the endpoint bound and its veto, with what they buy and cost. |
 
 The [docs index](docs/README.md) lists every directory.
-
-## Features
-
-- Loads a stock Vosk model directory: the nnet3 chain acoustic model,
-  the i-vector extractor and the `HCLr.fst` lookahead graph.
-- Takes a grammar at construction as a list of words or phrases, builds
-  the same bigram libvosk builds, and composes it with the graph.
-- Kaldi-exact MFCC, online CMVN, splice, LDA and online i-vector
-  estimation, then the network in streaming chunks.
-- Frame-synchronous decoding with Kaldi's beam, max-active and
-  min-active semantics.
-- After every block: the best path as the partial, each word's span in
-  samples, its loudness and how long it has held.
-- The distinct word sequences still alive in the beam, ranked, with
-  each one's relation to the partial and the motion of its lead.
-- Kaldi's endpoint rules, plus an optional bound of your own.
-- The room's noise floor, so silence detection needs no second detector
-  on a second clock.
-- A C ABI and a Python binding with the `vosk` package's API.
-
-Not included, by design:
-
-- Lattices, lattice determinization, minimum Bayes risk confidences or
-  lattice n-best. Beam n-best takes their place.
-- Decoding against the model's full language model. A grammar is
-  required.
-- RNNLM or ARPA rescoring, speaker vectors, batch or GPU decoding.
-
-## Models
-
-Models are downloaded from
-[alphacephei.com/vosk/models](https://alphacephei.com/vosk/models) and
-unpacked into a directory the examples open by name:
-
-```bash
-curl -LO https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
-unzip vosk-model-small-en-us-0.15.zip
-```
-
-Any Vosk small model with the standard layout: `am/final.mdl`,
-`graph/HCLr.fst`, `graph/words.txt`, `graph/disambig_tid.int`,
-`graph/phones/word_boundary.int`, `ivector/`, `conf/mfcc.conf`,
-`conf/model.conf`. The English small model
-`vosk-model-small-en-us-0.15` is the reference. The German, French,
-Spanish and Russian small models share the layout and are expected to
-work; they have not been checked against the wheel yet.
-
-A model that uses a network component this runtime does not implement
-is refused when opened, naming the component. The larger English model
-`vosk-model-en-us-0.22-lgraph` is refused for that reason: it is a
-CNN-TDNN and convolution is not implemented.
 
 ## Benchmarks
 
@@ -328,6 +258,7 @@ each paired against the stock Vosk wheel on identical audio, live in
 | [partial-states.md](docs/benchmarks/partial-states.md) | What the readings say about silence and the next word, on words spliced into streams: end of speech, the preview an extending reading gives, and what the endpoint bound does to real finals |
 | [quiet-onsets.md](docs/benchmarks/quiet-onsets.md) | What an endpoint bound does to a word whose first frames sit near the floor, and what the floor margin costs there |
 | [word-times.md](docs/benchmarks/word-times.md) | Whether the word times on finals are the wheel's: every word paired across the engines, exact and within one 30 ms frame |
+| [speaker-evidence.md](docs/benchmarks/speaker-evidence.md) | Whether one spoken word names its speaker: utter's per-word evidence against the Vosk wheel's vector and two 16 kHz models, by word length, as speech accumulates, and how soon a partial carries it |
 
 Headline figures from the Speech Commands page:
 
@@ -369,35 +300,7 @@ The benchmark scripts under `scripts/` need Python 3 with `numpy` and
 the `vosk` package for the oracle; each script's header says how to run
 it.
 
-## Repository layout
+## License
 
-| Path | Contents |
-|---|---|
-| `src/` | The runtime. `recognizer.rs` is the streaming API and JSON, `decoder.rs` the search, `frontend.rs` and `ivector.rs` the features, `compose.rs` the grammar composition, `capi.rs` the C ABI. |
-| `src/bin/stream.rs` | The command-line decoder the gates and benchmarks use. |
-| `include/utter.h` | The C header. |
-| `examples/` | The Rust sketch from this README, built by CI. |
-| `docs/` | Reference, guides, benchmarks, gates and decision records; [docs/README.md](docs/README.md) is the index. |
-| `tests/` | Integration tests; the decoding ones run when `UTTER_TEST_MODEL` is set. |
-| `scripts/` | Gate and benchmark scripts. |
-| `docs/benchmarks/` | Public benchmark pages, regenerated by the scripts. |
-| `docs/gates/` | Results of the parity gates on private audio. |
-| `docs/td/` | Technical decision records: why the runtime is built the way it is. TD-2 is the specification. |
-| `usecases/` | The application the runtime was built for. |
-| `third_party/` | Vendored code and its notices. |
-
-Design decisions are recorded before code lands, one file per decision
-in `docs/td/`. Comments and documents cite those records by anchor
-rather than restating them; `docs/td/README.md` explains the
-conventions if you want to contribute.
-
-## Third-party code and license
-
-The Kaldi model reader, MFCC and nnet3 forward pass started from
-[Vosk-Rust](https://github.com/Reza2kn/Vosk-Rust), Apache-2.0, vendored
-as source with its notices kept. Kaldi and OpenFst were read for the
-semantics this crate reproduces; no code from either is included.
-
-utter is MIT licensed, see [LICENSE](LICENSE). The crate declares
-MIT AND Apache-2.0 because the vendored files keep their own headers
-and license.
+utter is MIT licensed. Vendored code retains its own Apache-2.0 headers
+and notices; see [LICENSE](LICENSE).
