@@ -473,6 +473,11 @@ impl<'m> SpeakerStream<'m> {
         computed
     }
 
+    /// One past the last row of the stream's running network.
+    pub fn computed_to(&self) -> usize {
+        self.net().next.unwrap_or(0)
+    }
+
     /// The frames of `spans` a pool could read: the most it could pool.
     pub fn poolable(&self, spans: &[(usize, usize)]) -> usize {
         let (lo, hi) = (self.rows_start(), self.rows_end());

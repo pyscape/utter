@@ -320,16 +320,17 @@ pub struct Recognizer<'m> {
     /// Evidence already pooled, by the frames it could pool and the floor threshold that
     /// chose them; cleared with each utterance.
     spk_cache: Mutex<HashMap<Vec<u64>, Option<Arc<Pooled>>>>,
+    /// The stream frame the speech the best path is in at the frontier began at, if it is.
+    spk_best_speech: Option<usize>,
 }
 
-/// Evidence as pooled once, with its vector already written as JSON for every result that
-/// carries it.
+/// Evidence as pooled once, written as JSON once for every result that carries it.
 struct Pooled {
-    ev: Evidence,
     vector_json: String,
+    span_json: String,
 }
 
-// The look-ahead's three settings, and what they cost and save:
+// The look-ahead's settings, and what they cost and save:
 // [[rr:TD-14#Mean normalisation looks back only]]
 /// A frame this far over the floor is likely speech, so the look-ahead computes its row.
 const LOOK_AHEAD_OVER_FLOOR_DB: f64 = 20.0;
@@ -338,6 +339,12 @@ const LOOK_AHEAD_DBFS: f64 = -40.0;
 /// Frames either side of a likely-speech frame the look-ahead also computes, since a word's
 /// span starts and ends in quieter frames than its loudest.
 const LOOK_AHEAD_PAD: usize = 16;
+/// Readings the look-ahead follows when the host asks for none.
+const LOOK_AHEAD_READINGS: usize = 3;
+/// A reading's cost over the best's within which the look-ahead follows it.
+const LOOK_AHEAD_LEAD: f32 = 10.0;
+/// Rows of the best path's speech the look-ahead waits for between advances.
+const LOOK_AHEAD_BATCH: usize = 20;
 
 fn escape_json_number(v: f64) -> String {
     if v.is_finite() {
@@ -449,6 +456,7 @@ impl<'m> Recognizer<'m> {
             spk: None,
             spk_stream: None,
             spk_cache: Mutex::new(HashMap::new()),
+            spk_best_speech: None,
         })
     }
 
@@ -646,6 +654,7 @@ impl<'m> Recognizer<'m> {
     }
 
     fn forget_best_path(&mut self) {
+        self.spk_best_speech = None;
         self.forget_readings();
         self.best_path = None;
         self.best_path_frames = None;
@@ -1053,7 +1062,14 @@ impl<'m> Recognizer<'m> {
         self.stable_frames = Some(decoded);
         self.refresh_best_path();
         let now = self.samples_round_start + self.samples_processed;
-        let Some(entries) = self.best_path.as_ref().map(|path| self.entries(path)) else {
+        let entries = self.best_path.as_ref().map(|path| self.entries(path));
+        let sf = self.model.conf.frame_subsampling_factor;
+        self.spk_best_speech = entries
+            .as_ref()
+            .and_then(|es| es.last())
+            .filter(|e| e.word != EntryWord::Silence && e.end_frame >= decoded)
+            .map(|e| (self.frame_offset + e.start_frame) * sf);
+        let Some(entries) = entries else {
             return;
         };
         // [[rr:TD-14#Mean normalisation looks back only]]
@@ -1252,29 +1268,50 @@ impl<'m> Recognizer<'m> {
         let threshold = self
             .endpoint_floor_margin_db
             .and_then(|margin| self.floor.dbfs().map(|floor| floor + f64::from(margin)));
-        let frames = self.spk_frames(spans);
-        let reach = frames
-            .iter()
-            .map(|f| f.1)
-            .max()
-            .unwrap_or(0)
-            .min(stream.rows_end());
-        let mut key = vec![threshold.map_or(u64::MAX, f64::to_bits), reach as u64];
-        key.extend(frames.iter().flat_map(|&(a, b)| [a as u64, b as u64]));
-        if let Some(hit) = self.spk_cache().get(&key) {
+        let sf = self.model.conf.frame_subsampling_factor;
+        let frame = |f: usize| ((self.frame_offset + f) * sf) as u64;
+        let reach = spans.iter().map(|s| frame(s.1)).max().unwrap_or(0);
+        // A partial looks up every entry's evidence on every block; the key of a few spans is
+        // built where no allocation is needed to look it up.
+        let mut short = [0u64; 2 + 2 * 4];
+        let mut long: Vec<u64>;
+        let n = 2 + 2 * spans.len();
+        let key: &mut [u64] = if spans.len() <= 4 {
+            &mut short[..n]
+        } else {
+            long = vec![0; n];
+            &mut long[..]
+        };
+        key[0] = threshold.map_or(u64::MAX, f64::to_bits);
+        key[1] = reach.min(stream.rows_end() as u64);
+        for (i, &(a, b)) in spans.iter().enumerate() {
+            key[2 + 2 * i] = frame(a);
+            key[3 + 2 * i] = frame(b);
+        }
+        if let Some(hit) = self.spk_cache().get(&key[..]) {
             return hit.clone();
         }
+        let frames = self.spk_frames(spans);
         let keep = |k: usize| threshold.is_none_or(|t| self.frame_dbfs(k).is_some_and(|e| e > t));
         let ev = stream.pool(&frames, keep).map(|ev| {
             let mut vector_json = String::new();
             Self::write_spk_vector_json(&mut vector_json, &ev);
-            Arc::new(Pooled { ev, vector_json })
+            let hop = self.spk_hop_and_window().0 as u64;
+            let span_json = format!(
+                "\"spk_start\": {}, \"spk_end\": {}",
+                self.samples_round_start + ev.first as u64 * hop,
+                self.samples_round_start + ev.end as u64 * hop
+            );
+            Arc::new(Pooled {
+                vector_json,
+                span_json,
+            })
         });
         let mut cache = self.spk_cache();
         if cache.len() >= 1024 {
             cache.clear();
         }
-        cache.insert(key, ev.clone());
+        cache.insert(key.to_vec(), ev.clone());
         ev
     }
 
@@ -1294,17 +1331,29 @@ impl<'m> Recognizer<'m> {
         dbfs_of_mean_square(acc / (hi - lo) as f64)
     }
 
-    /// In the block before the one that will run the acoustic model's next chunk, supposing the
-    /// next block is the size of this one, the speaker rows that chunk is likely to pool, so the
-    /// network does not run on the chunk's block as well. A row does not depend on when it is
-    /// computed, so this moves compute and never a result.
-    /// `[[rr:TD-14#Mean normalisation looks back only]]`
+    /// Speaker rows the decoder's next advance is likely to pool, computed on the block before it,
+    /// supposing the next block is the size of this one, so the network does not run on the
+    /// advance's block as well: the speech the best path or a reading is in at the frontier,
+    /// from where it began, and the frames the advance will decode, all of them while a path is
+    /// in speech, else those loud enough to be likely speech. Between advances, while the best
+    /// path is in speech, its rows are kept up with a batch at a time, which leaves a final that
+    /// flushes the stream fewer to compute. A row does not depend on when it is computed, so
+    /// this moves compute and never a result. `[[rr:TD-14#Mean normalisation looks back only]]`
     fn spk_look_ahead(&mut self, next_block: usize) {
-        if self.spk_stream.is_none() {
+        let Some(s) = self.spk_stream.as_ref() else {
             return;
-        }
+        };
         let (Some(dec), Some(pipe)) = (self.decoder.as_ref(), self.pipeline.as_ref()) else {
             return;
+        };
+        let sf = self.model.conf.frame_subsampling_factor;
+        let decoded = dec.num_frames_decoded();
+        let frontier = (self.frame_offset + decoded) * sf;
+        let speech_start = |p: &Path| {
+            self.entries(p)
+                .last()
+                .filter(|e| e.word != EntryWord::Silence && e.end_frame >= decoded)
+                .map(|e| (self.frame_offset + e.start_frame) * sf)
         };
         let (hop, window) = self.spk_hop_and_window();
         let frames = |samples: usize| {
@@ -1316,31 +1365,54 @@ impl<'m> Recognizer<'m> {
         let rctx = self.model.net.context.1;
         let chunks = |ready: usize| ready.saturating_sub(rctx) / chunk;
         let now = chunks(pipe.mfcc.num_frames_ready());
-        if chunks(frames(self.pcm.len() + next_block)) <= now {
-            return;
-        }
-        let sf = self.model.conf.frame_subsampling_factor;
-        let decoded = dec.num_frames_decoded();
-        let (frontier, boundary) = ((self.frame_offset + decoded) * sf, (now + 1) * chunk);
-        let in_speech = self.best_path.as_ref().is_some_and(|p| {
-            self.entries(p)
-                .last()
-                .is_some_and(|e| e.word != EntryWord::Silence && e.end_frame >= decoded)
-        });
-        let threshold = self
-            .floor
-            .dbfs()
-            .map_or(LOOK_AHEAD_DBFS, |floor| floor + LOOK_AHEAD_OVER_FLOOR_DB);
         let mut spans: Vec<(usize, usize)> = Vec::new();
-        for k in frontier..boundary {
-            if in_speech || self.frame_dbfs(k).is_some_and(|e| e > threshold) {
-                let a = k.saturating_sub(LOOK_AHEAD_PAD).max(frontier);
-                let b = (k + 1 + LOOK_AHEAD_PAD).min(boundary);
-                match spans.last_mut() {
-                    Some(last) if a <= last.1 => last.1 = b,
-                    _ => spans.push((a, b)),
+        if chunks(frames(self.pcm.len() + next_block)) > now {
+            // Without readings asked for, the look-ahead reads its own near the best, since the
+            // best path takes up a word a close reading had first.
+            let own;
+            let readings: &[Path] = match self.readings.as_deref() {
+                Some(r) if self.partial_alternatives > 0 => r,
+                _ => {
+                    let groups = dec.grouped(false);
+                    let near = groups
+                        .iter()
+                        .take(LOOK_AHEAD_READINGS)
+                        .take_while(|g| g.cost - groups[0].cost <= LOOK_AHEAD_LEAD)
+                        .count();
+                    own = dec.trace_groups(&groups, near);
+                    &own
+                }
+            };
+            let from = readings
+                .iter()
+                .filter_map(speech_start)
+                .chain(self.spk_best_speech)
+                .min();
+            let boundary = (now + 1) * chunk;
+            if let Some(f) = from.filter(|&f| f < frontier) {
+                spans.push((f, frontier));
+            }
+            let threshold = self
+                .floor
+                .dbfs()
+                .map_or(LOOK_AHEAD_DBFS, |floor| floor + LOOK_AHEAD_OVER_FLOOR_DB);
+            for k in frontier..boundary {
+                if from.is_some() || self.frame_dbfs(k).is_some_and(|e| e > threshold) {
+                    let a = k.saturating_sub(LOOK_AHEAD_PAD).max(frontier);
+                    let b = (k + 1 + LOOK_AHEAD_PAD).min(boundary);
+                    match spans.last_mut() {
+                        Some(last) if a <= last.1 => last.1 = b,
+                        _ => spans.push((a, b)),
+                    }
                 }
             }
+        } else {
+            let in_speech = self.spk_best_speech.is_some();
+            let end = s.rows_end() + s.pending_frames();
+            if !in_speech || end < s.computed_to().max(frontier) + LOOK_AHEAD_BATCH {
+                return;
+            }
+            spans.push((frontier, end));
         }
         if let Some(s) = self.spk_stream.as_mut() {
             s.catch_up();
@@ -1390,14 +1462,9 @@ impl<'m> Recognizer<'m> {
         out.push_str(&format!("], \"spk_frames\": {}", ev.frames));
     }
 
-    fn write_spk_span(&self, out: &mut String, p: &Pooled) {
-        let ev = &p.ev;
-        let hop = self.spk_hop_and_window().0 as u64;
-        out.push_str(&format!(
-            "\"spk_start\": {}, \"spk_end\": {}",
-            self.samples_round_start + ev.first as u64 * hop,
-            self.samples_round_start + ev.end as u64 * hop
-        ));
+    /// The cache is cleared whenever the sample clock of `spk_start` restarts.
+    fn write_spk_span(out: &mut String, p: &Pooled) {
+        out.push_str(&p.span_json);
     }
 
     /// `, "spk": .., "spk_frames": .., "spk_start": .., "spk_end": ..` when the spans carry
@@ -1407,7 +1474,7 @@ impl<'m> Recognizer<'m> {
             out.push_str(", ");
             Self::write_spk_vector(out, &ev);
             out.push_str(", ");
-            self.write_spk_span(out, &ev);
+            Self::write_spk_span(out, &ev);
         }
     }
 
@@ -1709,7 +1776,7 @@ impl<'m> Recognizer<'m> {
         self.push_floor(&mut out);
         if let Some(ev) = ev.as_ref() {
             out.push_str(", ");
-            self.write_spk_span(&mut out, ev);
+            Self::write_spk_span(&mut out, ev);
         }
         out.push('}');
         out
@@ -2084,7 +2151,7 @@ mod tests {
 
     /// Onsets the look-ahead sees coming and onsets it does not: loud words after digital
     /// silence, where there is no floor, and after a floor, and words too quiet for it after
-    /// each.
+    /// each; with readings asked for, and with the look-ahead reading its own.
     #[test]
     fn rows_ahead_of_the_chunk_give_every_result_as_rows_computed_eagerly() {
         let Some((m, spk)) = models() else { return };
@@ -2102,24 +2169,29 @@ mod tests {
             quiet(clip("yes")),
         ]
         .concat();
-        for blocks in BLOCKS {
-            ROWS.with(|r| r.set((0, 0)));
-            let run = SpkRun {
-                blocks,
-                set_at: 0,
-                alternatives: 3,
-                margin: None,
-                partials: true,
-                finals: true,
-                eager: true,
-            };
-            same_as_eager(&m, &spk, &audio, run);
-            let (ahead, needed) = ROWS.with(std::cell::Cell::get);
-            assert!(
-                ahead > 0 && needed > 0,
-                "{blocks:?}: {ahead} ahead, {needed} when needed"
-            );
+        let (mut ahead, mut needed) = (0, 0);
+        for alternatives in [0, 3] {
+            for blocks in BLOCKS {
+                ROWS.with(|r| r.set((0, 0)));
+                let run = SpkRun {
+                    blocks,
+                    set_at: 0,
+                    alternatives,
+                    margin: None,
+                    partials: true,
+                    finals: true,
+                    eager: true,
+                };
+                same_as_eager(&m, &spk, &audio, run);
+                let (a, n) = ROWS.with(std::cell::Cell::get);
+                ahead += a;
+                needed += n;
+            }
         }
+        assert!(
+            ahead > 0 && needed > 0,
+            "{ahead} ahead, {needed} when needed"
+        );
     }
 
     /// A host that reads on past the endpoints keeps one utterance going beyond the 30 s of rows
