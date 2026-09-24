@@ -15,7 +15,10 @@ releases.
   word list carries spk, spk_frames, spk_start and spk_end over its own
   span, and every partial and final carries them over its speech. Off
   by default; without a speaker model the output is identical to 0.0.4.
-  TD-14.
+  The network runs only on frames a word's evidence pools or is likely
+  to, so it moves no result to a later block; on the speaker page's
+  streams it takes the real-time factor from 0.0117 to 0.0197 and the
+  99th percentile block from 2.86 to 3.26 ms. TD-14.
 - A speaker evidence benchmark page: how often one word names its
   speaker, utter's evidence beside the wheel's vector, the same
   x-vector through Kaldi, TitaNet-small and CAM++, by word length and
