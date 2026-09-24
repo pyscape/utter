@@ -27,8 +27,9 @@ callhome diarization x-vector: 23 MFCCs at 8 kHz up to 3.7 kHz, five
 frame-level TDNN layers seeing seven frames either side, mean and
 standard-deviation pooling, and a 128-dimensional embedding.
 Everything before the pooling is local in time and the pooling is a
-sum, so the network can run once per frame as audio arrives, and any
-span's vector follows from the rows of its frames.
+sum, so the network can compute each frame's row once, when a span
+first needs it, and any span's vector follows from the rows of its
+frames.
 
 ## Considered options
 
@@ -106,8 +107,8 @@ Each frame is normalised by the mean of itself and the 299 frames
 before it, over all audio since the stream began, silence included,
 and across the finals of one stream. Kaldi's recipe normalises over 300
 frames centred on each frame, before selecting speech; here a frame
-never waits for audio after it, so the network runs once per frame and
-a word's rows never change. The price is paid in the first three
+never waits for audio after it, so a frame's row is computed at most
+once and a word's rows never change. The price is paid in the first three
 seconds of a stream, normalised over fewer frames, and in a mean that
 carries the previous speaker's frames into the next speaker's first
 words. The benchmark page measures both against the centred reference.
@@ -115,6 +116,22 @@ words. The benchmark page measures both against the centred reference.
 A frame's row exists once the network's right context has arrived,
 seven frames later, so a span's last 70 ms join its evidence on a later
 partial; `final_result` flushes the stream and pools every frame.
+
+A row is computed only when a span needs it. Each time the decoder
+advances, the rows of its best path's words and `[speech]` are
+computed, and the network starts afresh past a gap of more than eight
+frames; a reading, an alternative or a final that pools a frame not
+yet computed computes it then. Silence no span covers never runs the
+network. A row does not depend on which frames are computed with it,
+so every result is byte for byte the one computing every frame as it
+arrives gives,
+`[[rr:rows_on_demand_give_every_result_as_rows_computed_eagerly]]`.
+Over 400 Speech Commands test clips in streams of ten with half-second
+gaps, results read after every 40 ms block, the network ran on 37% of
+the frames, and the fastest of five runs per block put the real-time
+factor with the speaker model set at 0.0143 against 0.0193 when every
+frame ran. The speaker page's latency pass, `[[rr:latency_pass]]`,
+measures the cost on its game streams.
 
 ### A span needs a quarter second
 
