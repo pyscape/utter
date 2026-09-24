@@ -6,16 +6,16 @@
  "grammar_size": 92,
  "out": "docs/benchmarks/decoder-diagnostics",
  "provenance": {
-  "date": "2026-09-14 01:02:20Z",
-  "utter_revision": "474a578",
+  "date": "2026-09-24 07:22:16Z",
+  "utter_revision": "765482d",
   "source_dirty": false,
-  "docs_dirty": false,
-  "wheel_path": "/home/jared/Repos/utterpy/python/utterpy/__init__.py",
-  "wheel_revision": "474a5783d84690eb66fd3c407dd6866d19efb170",
+  "docs_dirty": true,
+  "wheel_path": "/home/jared/Repos/utter-bench-data/site-765482d/utterpy/__init__.py",
+  "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
   "wheel_matches_head": true,
   "engines": {
    "vosk": "0.3.45",
-   "utterpy": "0.0.1"
+   "utterpy": "0.0.5"
   },
   "model": "vosk-model-small-en-us-0.15",
   "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
@@ -25,13 +25,13 @@
  "preflight": {
   "vosk": {
    "ok": true,
-   "model_load_s": 0.17871660902164876,
-   "first_ctor_ms": 0.3955957945436239
+   "model_load_s": 0.16949653899064288,
+   "first_ctor_ms": 0.3821270074695349
   },
   "utterpy": {
    "ok": true,
-   "model_load_s": 0.13428230886347592,
-   "first_ctor_ms": 22.01712178066373
+   "model_load_s": 0.1370841720199678,
+   "first_ctor_ms": 21.329079987481236
   }
  },
  "oracle": {
@@ -367,33 +367,33 @@
   "compute": {
    "stock": {
     "vosk": {
-     "rtf": 0.012487413522520065,
-     "ms_p50": 0.04882807843387127,
-     "ms_p95": 2.8666460420936346,
-     "ms_p99": 3.3628831151872873,
+     "rtf": 0.012207034318225661,
+     "ms_p50": 0.04846800584346056,
+     "ms_p95": 2.8119079943280667,
+     "ms_p99": 3.230444999644533,
      "seconds": 295.3100625
     },
     "utterpy": {
-     "rtf": 0.010582872815164708,
-     "ms_p50": 0.04226202145218849,
-     "ms_p95": 2.424586098641157,
-     "ms_p99": 2.6745761279016733,
+     "rtf": 0.010336161770951206,
+     "ms_p50": 0.041803024942055345,
+     "ms_p95": 2.3541729897260666,
+     "ms_p99": 2.5854079867713153,
      "seconds": 295.3100625
     }
    },
    "wide": {
     "vosk": {
-     "rtf": 0.015550334408787201,
-     "ms_p50": 0.05389191210269928,
-     "ms_p95": 3.6349049769341946,
-     "ms_p99": 4.909723997116089,
+     "rtf": 0.015156968250586614,
+     "ms_p50": 0.053288007620722055,
+     "ms_p95": 3.5658679844345897,
+     "ms_p99": 4.756776994327083,
      "seconds": 295.3100625
     },
     "utterpy": {
-     "rtf": 0.01221682299753159,
-     "ms_p50": 0.04381081089377403,
-     "ms_p95": 2.8287051245570183,
-     "ms_p99": 3.1654341146349907,
+     "rtf": 0.011822715827344473,
+     "ms_p50": 0.04325498593971133,
+     "ms_p95": 2.7337759966030717,
+     "ms_p99": 3.055257984669879,
      "seconds": 295.3100625
     }
    }

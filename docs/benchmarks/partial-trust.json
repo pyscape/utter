@@ -1,5 +1,5 @@
 {
-  "run": "2026-09-13 22:16:53Z",
+  "run": "2026-09-24 07:18:44Z",
   "split": "testing",
   "block_ms": 40,
   "alternatives": 5,
@@ -7,15 +7,15 @@
   "fit_on": "the validation split",
   "fit_clips": 8322,
   "provenance": {
-    "date": "2026-09-13 22:16:52Z",
-    "utter_revision": "f158147",
+    "date": "2026-09-24 07:18:43Z",
+    "utter_revision": "765482d",
     "source_dirty": false,
-    "docs_dirty": false,
-    "wheel_path": "/home/jared/Repos/utterpy/python/utterpy/__init__.py",
-    "wheel_revision": "f15814796b546844b11a0480cc56a4dab9765df9",
+    "docs_dirty": true,
+    "wheel_path": "/home/jared/Repos/utter-bench-data/site-765482d/utterpy/__init__.py",
+    "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
     "wheel_matches_head": true,
     "engines": {
-      "utterpy": "0.0.1"
+      "utterpy": "0.0.5"
     },
     "model": "vosk-model-small-en-us-0.15",
     "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
@@ -30,7 +30,7 @@
     "out": "docs/benchmarks/partial-trust.md",
     "clips": "docs/benchmarks/partial-trust.clips.jsonl",
     "from_clips": null,
-    "fit_clips": "/tmp/claude-1000/-home-jared-Repos-utter/dfd11b2e-7bc3-48f3-bc91-cb30b0ffb0c5/scratchpad/validation.clips.jsonl",
+    "fit_clips": "/home/jared/Repos/utter-bench-data/partial-trust/validation.clips.jsonl",
     "json": "docs/benchmarks/partial-trust.json",
     "split": "testing",
     "census": "docs/benchmarks/partial-trust.census.json",

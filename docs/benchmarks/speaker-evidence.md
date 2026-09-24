@@ -1,6 +1,6 @@
 # Speaker evidence on short commands
 
-Run 2026-09-23 22:40:32Z, utter 0.0.5 from d0fee7087c3b07f5b315c81eb51838ac76b8806a through its C ABI (checkout d0fee70), vosk 0.3.45, sherpa-onnx 1.13.4, numpy 2.5.3, model vosk-model-small-en-us-0.15, speaker models vosk-model-spk-0.4, nemo_en_titanet_small.onnx and wespeaker_en_voxceleb_CAM++.onnx, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4, blocks of 40 ms.
+Run 2026-09-24 06:37:28Z, utter 0.0.5 from 765482d7b70a6d3f5c4071e56e280b7d5df7b598 through its C ABI (checkout 765482d), vosk 0.3.45, sherpa-onnx 1.13.4, numpy 2.5.3, model vosk-model-small-en-us-0.15, speaker models vosk-model-spk-0.4, nemo_en_titanet_small.onnx and wespeaker_en_voxceleb_CAM++.onnx, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4, blocks of 40 ms.
 
 A host that gates commands per word needs to know, word by word, whose voice it is, and whether the evidence is there when the word is. This page measures that on the test split of Speech Commands: 206 speakers with at least 20 clips (4 more had no profile under some engine but the wheel), each enrolled from 10 clips, with 1990 probe words scored against every profile (probe clips whose final had no word are left out: 70). The wheel's half-second floor left 15 of the speakers with no profile at all: their words count as no evidence for the wheel, and they are no rival to anyone else's.
 
@@ -50,7 +50,7 @@ Each speaker's probe words joined into 3 streams in shuffled orders and cut at e
 
 | engine | 250 ms | 500 ms | 750 ms | 1000 ms | 1500 ms | 2000 ms | 3000 ms |
 |---|---|---|---|---|---|---|---|
-| vosk | 0.0%, 0.0% | 0.0%, 0.0% | 53.1%, 21.1% | 78.3%, 34.5% | 86.0%, 43.0% | 88.0%, 49.8% | 90.8%, 55.2% |
+| vosk | 0.0%, 0.0% | 0.0%, 0.0% | 53.7%, 21.1% | 78.2%, 34.8% | 86.0%, 43.2% | 88.0%, 50.3% | 90.9%, 55.0% |
 | utter | 86.6%, 26.4% | 93.6%, 36.4% | 96.4%, 43.6% | 97.9%, 52.5% | 98.9%, 65.7% | 98.6%, 74.1% | 95.8%, 81.4% |
 | utter, 8 dB floor margin | 85.6%, 26.4% | 93.8%, 39.5% | 97.2%, 49.9% | 97.7%, 59.2% | 95.9%, 69.5% | 91.5%, 73.9% | 70.4%, 63.1% |
 | x-vector (Kaldi) | 0.0%, 0.0% | 87.9%, 35.4% | 93.9%, 43.4% | 96.1%, 51.1% | 97.8%, 61.1% | 98.3%, 69.6% | 99.2%, 74.6% |
@@ -61,12 +61,25 @@ Each speaker's probe words joined into 3 streams in shuffled orders and cut at e
 
 Of 1990 probe words, 1923 carried evidence on a partial before their final. It first appeared a median 40 ms after the word's end (90th percentile 220 ms), counting the audio fed, with the network's 70 ms of right context and the block included. Top-1 of 2 on that first evidence: 93.2%; on the final's: 95.4%.
 
-## Agreement and cost
+## Agreement
 
 utter's word vector against the wheel's clip vector: median cosine 0.721 over 1019 probes both score. utter normalises by a mean that looks back over the stream and pools the word's own span; the wheel normalises by a centred mean over the frames it keeps.
 The Kaldi row against the wheel: median cosine 0.993 over 1023.
 
-Decoding the game streams, utter runs at a real-time factor of 0.0245 with the speaker model set and 0.0126 without, results read after every block. Compute per second of speech embedded: TitaNet-small 10.5 ms, CAM++ 13.4 ms, x-vector (Kaldi) 6.1 ms (the Kaldi figure is a batch through three processes).
+## Latency and compute
+
+The game streams again, 2014 s of audio, through each engine with and without its speaker model, the four in alternating order, blocks of 40 ms with words on partials. A block's compute runs from the call that takes its audio to the return of the partial or final read after it; a closing block is one that returned a final. Parsing is the host's json.loads of that result in Python.
+
+| engine | real-time factor | per block, ms p50 / p95 / p99 / max | closing blocks, ms p50 / max | result text per block | parsing, ms p50 / p99 |
+|---|---|---|---|---|---|
+| vosk | 0.0129 | 0.053 / 2.92 / 3.45 / 6.8 | 3.04 / 6.8 | 0.11 KiB | 0.001 / 0.004 |
+| vosk, speaker model set | 0.0190 | 0.080 / 3.01 / 14.77 / 42.9 | 15.47 / 42.9 | 0.13 KiB | 0.001 / 0.012 |
+| utter | 0.0117 | 0.060 / 2.56 / 2.86 / 8.7 | 2.31 / 8.7 | 0.54 KiB | 0.003 / 0.011 |
+| utter, speaker model set | 0.0197 | 0.078 / 2.94 / 3.26 / 7.0 | 2.55 / 7.0 | 3.99 KiB | 0.021 / 0.091 |
+
+With the speaker model set, none of utter's 50478 results differ from its results without it once the four speaker keys are removed: the evidence moves no word, partial or final to a later block.
+
+Compute per second of speech embedded by the offline engines: TitaNet-small 10.0 ms, CAM++ 12.8 ms, x-vector (Kaldi) 5.9 ms (the Kaldi figure is a batch through three processes).
 
 ## Caveats
 
@@ -130,5 +143,15 @@ utter's vectors are not the wheel's. Their median cosine is 0.721, while
 the same network through Kaldi agrees with the wheel at 0.993. The
 difference is the normalisation and the frames pooled, not the network.
 Profiles and thresholds fitted on the wheel's vectors do not carry over,
-`[[rr:TD-14#Consequences]]`. Setting the speaker model takes utter's decode of the
-game streams from a real-time factor of 0.0126 to 0.0245.
+`[[rr:TD-14#Consequences]]`.
+
+The speaker model costs compute on the frames words pool, not on the
+whole stream. On the game streams, clips back to back with no pause
+between them, it takes utter's real-time factor from 0.0117 to 0.0197,
+the median block from 0.060 to 0.078 ms and the 99th percentile from
+2.86 to 3.26 ms, and it moves no result to a later block. The wheel with
+its own speaker model costs about as much in total, 0.0190, but most of
+it on the block that closes an utterance: a median 15.5 ms there and
+42.9 ms at worst, against utter's 2.55 and 7.0. The results grow from
+0.54 to 3.99 KiB a block, and parsing one in Python from 3 to 21 µs at
+the median.

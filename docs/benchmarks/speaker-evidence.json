@@ -1,12 +1,12 @@
 {
  "provenance": {
-  "date": "2026-09-23 22:40:32Z",
-  "utter_revision": "d0fee70",
+  "date": "2026-09-24 06:37:28Z",
+  "utter_revision": "765482d",
   "source_dirty": false,
   "docs_dirty": false,
-  "wheel_path": "/home/jared/Repos/utterpy/python/utterpy/__init__.py",
-  "wheel_revision": "e1d4fb442b58ba1572ea7c1e21cbe3ed7cd69c9f",
-  "wheel_matches_head": false,
+  "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
+  "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
+  "wheel_matches_head": true,
   "engines": {
    "vosk": "0.3.45",
    "sherpa-onnx": "1.13.4",
@@ -22,8 +22,8 @@
   "model": "/home/jared/Repos/ChessAmis/assets/voice/models/vosk-model-small-en-us-0.15",
   "speaker_models": "/home/jared/Repos/utter-bench-data/speaker-models",
   "kaldi": "/home/jared/Repos/kaldi/src",
-  "lib": "/tmp/claude-1000/-home-jared-Repos-utter/f56b73a9-494d-4e9e-b3d2-17f073274a68/scratchpad/libutter-d0fee70.so",
-  "out": "/tmp/claude-1000/-home-jared-Repos-utter/f56b73a9-494d-4e9e-b3d2-17f073274a68/scratchpad/full/speaker-evidence",
+  "lib": "/home/jared/Repos/utter-bench-data/speaker-cost-harness/libutter-765482d.so",
+  "out": "docs/benchmarks/speaker-evidence",
   "min_clips": 20,
   "enroll": 10,
   "probes": 10,
@@ -31,7 +31,7 @@
   "block_ms": 40,
   "seed": 14
  },
- "seconds": 903.8622104639944,
+ "seconds": 925.647372684005,
  "result": {
   "speakers": 210,
   "kept": 206,
@@ -375,57 +375,57 @@
     },
     "750": {
      "probes": 615,
-     "no_evidence": 0.3886178861788618,
+     "no_evidence": 0.383739837398374,
      "top1": {
-      "4": 0.53130081300813
+      "4": 0.5365040650406504
      },
      "accepted": 0.21138211382113822,
-     "eer": 0.1728723404255319,
-     "threshold": 0.4203610094348659,
+     "eer": 0.1741424802110818,
+     "threshold": 0.4197278177110997,
      "bins": {}
     },
     "1000": {
      "probes": 612,
      "no_evidence": 0.12418300653594772,
      "top1": {
-      "4": 0.7830065359477124
+      "4": 0.7820261437908497
      },
-     "accepted": 0.34477124183006536,
+     "accepted": 0.3480392156862745,
      "eer": 0.15111940298507465,
-     "threshold": 0.4407741431126949,
+     "threshold": 0.4406835056367123,
      "bins": {}
     },
     "1500": {
      "probes": 609,
      "no_evidence": 0.07060755336617405,
      "top1": {
-      "4": 0.8604269293924466
+      "4": 0.8597701149425288
      },
-     "accepted": 0.4302134646962233,
-     "eer": 0.1274935965748687,
-     "threshold": 0.4845132018388986,
+     "accepted": 0.4318555008210181,
+     "eer": 0.1254416961130742,
+     "threshold": 0.48474138399343675,
      "bins": {}
     },
     "2000": {
      "probes": 606,
      "no_evidence": 0.06930693069306931,
      "top1": {
-      "4": 0.8797029702970297
+      "4": 0.87986798679868
      },
-     "accepted": 0.49834983498349833,
-     "eer": 0.1100275807722616,
-     "threshold": 0.5023595732824664,
+     "accepted": 0.5033003300330033,
+     "eer": 0.10836710570753127,
+     "threshold": 0.5025866785900107,
      "bins": {}
     },
     "3000": {
      "probes": 591,
      "no_evidence": 0.050761421319796954,
      "top1": {
-      "4": 0.9084602368866328
+      "4": 0.9085448392554992
      },
-     "accepted": 0.5516074450084603,
-     "eer": 0.09982174688057042,
-     "threshold": 0.5286126890082621,
+     "accepted": 0.5499153976311336,
+     "eer": 0.1016042780748663,
+     "threshold": 0.5283633841733141,
      "bins": {}
     }
    },
@@ -837,17 +837,74 @@
   },
   "cost": {
    "seconds_per_speech_second": {
-    "TitaNet-small": 0.010466162036972372,
-    "CAM++": 0.013443534775179254,
-    "x-vector (Kaldi)": 0.006132729419995405
+    "TitaNet-small": 0.00998004237903784,
+    "CAM++": 0.012804622700313762,
+    "x-vector (Kaldi)": 0.005872217180748197
    },
-   "speech_seconds": 2004.1893125,
-   "utter_rtf_with": 0.02453654897491659,
-   "utter_rtf_without": 0.012629790874204724
+   "speech_seconds": 2004.1893125
+  },
+  "latency": {
+   "audio_seconds": 2013.9344375,
+   "rows": {
+    "vosk": {
+     "rtf": 0.012927892885344119,
+     "blocks": 50478,
+     "p50": 0.05349350249161944,
+     "p95": 2.9170854017138477,
+     "p99": 3.449361114180642,
+     "max": 6.791396008338779,
+     "closing_p50": 3.0406420046347193,
+     "closing_max": 6.791396008338779,
+     "kib_per_block": 0.11155211645419787,
+     "parse_p50": 0.0008849892765283585,
+     "parse_p99": 0.004219224065309386
+    },
+    "vosk, speaker model set": {
+     "rtf": 0.01901566614327465,
+     "blocks": 50478,
+     "p50": 0.07967350393300876,
+     "p95": 3.0109200000879346,
+     "p99": 14.770017984992583,
+     "max": 42.87271900102496,
+     "closing_p50": 15.470362493942957,
+     "closing_max": 42.87271900102496,
+     "kib_per_block": 0.130027368048952,
+     "parse_p50": 0.0008799979696050286,
+     "parse_p99": 0.011969467013841486
+    },
+    "utter": {
+     "rtf": 0.011708329565774582,
+     "blocks": 50478,
+     "p50": 0.060425998526625335,
+     "p95": 2.56282894697506,
+     "p99": 2.8578364214627068,
+     "max": 8.68957900092937,
+     "closing_p50": 2.3052220058161765,
+     "closing_max": 8.68957900092937,
+     "kib_per_block": 0.5429158572175007,
+     "parse_p50": 0.0032030075090005994,
+     "parse_p99": 0.011451996833784506
+    },
+    "utter, speaker model set": {
+     "rtf": 0.01969063769320404,
+     "blocks": 50478,
+     "p50": 0.07835250289645046,
+     "p95": 2.9444673396938015,
+     "p99": 3.259755375765962,
+     "max": 6.963409003219567,
+     "closing_p50": 2.5463470083195716,
+     "closing_max": 6.963409003219567,
+     "kib_per_block": 3.9910847415891575,
+     "parse_p50": 0.02147999475710094,
+     "parse_p99": 0.09114675805903967
+    }
+   },
+   "documents": 50478,
+   "differ": 0
   },
   "utter": {
    "version": "0.0.5",
-   "revision": "d0fee7087c3b07f5b315c81eb51838ac76b8806a"
+   "revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598"
   }
  }
 }

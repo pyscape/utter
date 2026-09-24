@@ -56,5 +56,15 @@ utter's vectors are not the wheel's. Their median cosine is 0.721, while
 the same network through Kaldi agrees with the wheel at 0.993. The
 difference is the normalisation and the frames pooled, not the network.
 Profiles and thresholds fitted on the wheel's vectors do not carry over,
-`[[rr:TD-14#Consequences]]`. Setting the speaker model takes utter's decode of the
-game streams from a real-time factor of 0.0126 to 0.0245.
+`[[rr:TD-14#Consequences]]`.
+
+The speaker model costs compute on the frames words pool, not on the
+whole stream. On the game streams, clips back to back with no pause
+between them, it takes utter's real-time factor from 0.0117 to 0.0197,
+the median block from 0.060 to 0.078 ms and the 99th percentile from
+2.86 to 3.26 ms, and it moves no result to a later block. The wheel with
+its own speaker model costs about as much in total, 0.0190, but most of
+it on the block that closes an utterance: a median 15.5 ms there and
+42.9 ms at worst, against utter's 2.55 and 7.0. The results grow from
+0.54 to 3.99 KiB a block, and parsing one in Python from 3 to 21 µs at
+the median.

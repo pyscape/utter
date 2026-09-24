@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-14 04:40:19Z, utter 2464960, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/tmp/claude-1000/-home-jared-Repos-utter/cd366a0c-1f10-42bf-9d90-02def22aec2d/scratchpad/site4/utterpy/__init__.py` built from utter addb7a839a9ebfcb5ef3409dd320065e9aec8e3c, **not** the checkout as it stands (2464960). Pages under `docs` were modified at the time of the run.
+Run 2026-09-24 06:37:57Z, utter 765482d, vosk 0.3.45, utterpy 0.0.5, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utter-bench-data/site-765482d/utterpy/__init__.py` built from utter 765482d7b70a6d3f5c4071e56e280b7d5df7b598, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
 
 ## Engines
 
@@ -10,8 +10,8 @@ Each engine opened the model and decoded a clip before the run began; a model an
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
-| vosk | 0.19 | 0.4 |
-| utterpy | 0.15 | 25.6 |
+| vosk | 0.18 | 0.4 |
+| utterpy | 0.14 | 24.3 |
 
 ## Full grammar: accuracy
 
@@ -31,8 +31,8 @@ Compute, one recognizer per clip:
 
 | engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |
 |---|---|---|---|---|---|
-| vosk | 0.32 | 0.306 | 0.306 | 0.0174 | 0.0177 |
-| utterpy | 2.50 | 0.030 | 0.030 | 0.0146 | 0.0146 |
+| vosk | 0.32 | 0.299 | 0.299 | 0.0172 | 0.0175 |
+| utterpy | 2.44 | 0.028 | 0.028 | 0.0141 | 0.0142 |
 
 | word | vosk | utterpy |
 |---|---|---|
@@ -166,15 +166,15 @@ Nothing here separates one bound from another or from the stock rules, the bound
 
 | block ms | engine | accuracy | first appearance p50 / p90 | same instant as the finest block | RTF, decode only |
 |---|---|---|---|---|---|
-| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0177 |
-| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0141 |
-| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0171 |
-| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0138 |
-| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0170 |
-| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0139 |
-| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0169 |
+| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0170 |
+| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0138 |
+| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0168 |
+| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0137 |
+| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0167 |
+| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0136 |
+| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0165 |
 | 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0145 |
-| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 316, up to 60 ms later | 0.0177 |
+| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 316, up to 60 ms later | 0.0166 |
 | 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0138 |
 
 The column that carries the result is the per-clip one, not the quantiles: two block sizes can produce the same p50 by luck, and only a clip-by-clip comparison against the finest block (10 ms) shows whether the word actually appeared at the same instant.
@@ -185,8 +185,8 @@ One recognizer over 295 s of the clips joined end to end.
 
 | engine | RTF | per-block compute ms p50 / p95 / p99 |
 |---|---|---|
-| vosk | 0.0123 | 0.049 / 2.83 / 3.32 |
-| utterpy | 0.0107 | 0.042 / 2.44 / 2.68 |
+| vosk | 0.0121 | 0.048 / 2.78 / 3.17 |
+| utterpy | 0.0104 | 0.042 / 2.36 / 2.57 |
 
 ## Accuracy against noise
 
@@ -213,12 +213,12 @@ Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNem
 
 | entries | vosk accuracy | vosk first ms | vosk later ms | vosk RTF | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF |
 |---|---|---|---|---|---|---|---|---|
-| 35 | 94.0% | 0.23 | 0.196 | 0.0154 | 94.5% | 0.91 | 0.016 | 0.0146 |
-| 60 | 92.5% | 0.31 | 0.232 | 0.0165 | 92.8% | 1.60 | 0.022 | 0.0140 |
-| 92 | 92.0% | 0.40 | 0.313 | 0.0178 | 92.2% | 2.46 | 0.031 | 0.0156 |
-| 150 | 91.0% | 0.53 | 0.435 | 0.0190 | 92.0% | 3.95 | 0.046 | 0.0154 |
-| 200 | 90.2% | 0.69 | 0.519 | 0.0197 | 91.5% | 5.46 | 0.052 | 0.0169 |
-| 246 | 89.0% | 0.69 | 0.587 | 0.0202 | 89.8% | 6.73 | 0.063 | 0.0157 |
+| 35 | 94.0% | 0.22 | 0.182 | 0.0150 | 94.5% | 0.90 | 0.017 | 0.0142 |
+| 60 | 92.5% | 0.29 | 0.216 | 0.0162 | 92.8% | 1.51 | 0.020 | 0.0136 |
+| 92 | 92.0% | 0.37 | 0.275 | 0.0167 | 92.2% | 2.38 | 0.028 | 0.0136 |
+| 150 | 91.0% | 0.46 | 0.373 | 0.0172 | 92.0% | 3.64 | 0.041 | 0.0138 |
+| 200 | 90.2% | 0.54 | 0.450 | 0.0177 | 91.5% | 5.04 | 0.048 | 0.0139 |
+| 246 | 89.0% | 0.61 | 0.510 | 0.0183 | 89.8% | 6.13 | 0.058 | 0.0139 |
 
 ## Twelve-class: ten commands plus the unknown-word symbol
 
