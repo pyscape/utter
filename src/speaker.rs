@@ -19,7 +19,7 @@ pub const MIN_FRAMES: usize = 25;
 /// `[[rr:TD-14#Mean normalisation looks back only]]`
 const CMN_WINDOW: usize = 300;
 /// `[[rr:TD-14#Pooling reads the frames it keeps]]`
-const MAX_ROWS: usize = 3000;
+pub(crate) const MAX_ROWS: usize = 3000;
 
 /// A speaker model directory as vosk's `SpkModel` reads it: `mfcc.conf`, the x-vector network
 /// `final.ext.raw` ending in an affine over pooled statistics, and the centring vector
@@ -284,6 +284,10 @@ pub struct SpeakerStream<'m> {
     cmn_sum: Vec<f64>,
     normalized: Vec<Vec<f32>>,
     finished: bool,
+    /// Audio accepted and not yet through the front end, which runs when rows are wanted.
+    pending: Vec<i16>,
+    /// Samples of the input per frame.
+    input_hop: usize,
     /// Behind a lock so a result, which only reads the recognizer, can compute the rows it pools.
     net: Mutex<Net<'m>>,
     /// Every row as soon as the input allows, as the network ran before rows were computed on
@@ -295,7 +299,11 @@ pub struct SpeakerStream<'m> {
 impl<'m> SpeakerStream<'m> {
     /// Audio at `sample_rate` is resampled to the model's rate, as Kaldi's online features do
     /// when the audio is faster. Slower audio is refused, as Kaldi refuses it by default.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
     pub fn new(model: &'m SpeakerModel, sample_rate: f32) -> Result<Self> {
         let (rate, want) = (
             sample_rate.round() as i64,
@@ -315,6 +323,10 @@ impl<'m> SpeakerStream<'m> {
             cmn_sum: vec![0.0; model.mfcc.num_ceps],
             normalized: Vec::new(),
             finished: false,
+            pending: Vec::new(),
+            input_hop: ((f64::from(model.mfcc.frame_shift_ms) * 0.001 * f64::from(sample_rate))
+                .round() as usize)
+                .max(1),
             net: Mutex::new(Net {
                 streamer: model.net.streamer(),
                 origin: 0,
@@ -333,12 +345,26 @@ impl<'m> SpeakerStream<'m> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Feed 16-bit samples at the stream's rate.
+    /// Feed 16-bit samples at the stream's rate. They reach the features at the next
+    /// [`catch_up`](Self::catch_up).
     pub fn accept(&mut self, samples: &[i16]) {
         if self.finished {
             return;
         }
-        let x: Vec<f32> = samples.iter().map(|&s| f32::from(s)).collect();
+        self.pending.extend_from_slice(samples);
+        #[cfg(test)]
+        if self.eager {
+            self.catch_up();
+        }
+    }
+
+    /// Run the front end over the audio accepted since it last ran. The features do not depend
+    /// on how the audio is divided between runs.
+    pub fn catch_up(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        let x: Vec<f32> = self.pending.drain(..).map(f32::from).collect();
         match self.resampler.as_mut() {
             Some(r) => {
                 let y = r.resample(&x, false);
@@ -349,12 +375,19 @@ impl<'m> SpeakerStream<'m> {
         self.normalize();
     }
 
+    /// At most how many frames catching up would add: the audio not yet through the front end,
+    /// and what the resampler and the frame window already hold back, under four frames.
+    pub fn pending_frames(&self) -> usize {
+        self.pending.len().div_ceil(self.input_hop) + 4
+    }
+
     /// The input has ended: the resampler flushes, and the last frame is repeated for the right
     /// context of the rows computed from here on.
     pub fn finish(&mut self) {
         if self.finished {
             return;
         }
+        self.catch_up();
         if let Some(r) = self.resampler.as_mut() {
             let y = r.resample(&[], true);
             self.mfcc.accept(&y);
@@ -420,26 +453,40 @@ impl<'m> SpeakerStream<'m> {
         self.net().forget_before(frame);
     }
 
-    /// Compute the rows of `spans`, stream frames ascending, as far as the input allows.
-    pub fn compute(&self, spans: &[(usize, usize)]) {
+    /// Compute the rows of `spans`, stream frames ascending and apart, as far as the features
+    /// allow; the number computed.
+    pub fn compute(&self, spans: &[(usize, usize)]) -> usize {
         let mut net = self.net();
-        self.compute_into(&mut net, spans);
+        self.compute_into(&mut net, spans)
     }
 
-    fn compute_into(&self, net: &mut Net<'m>, spans: &[(usize, usize)]) {
+    fn compute_into(&self, net: &mut Net<'m>, spans: &[(usize, usize)]) -> usize {
         let (lo, hi) = (self.rows_start(), self.rows_end());
         net.forget_before(lo);
+        let mut computed = 0;
         for &(a, b) in spans {
             let (a, b) = (a.max(net.rows_first), b.min(hi));
             if a < b {
-                self.fill(net, a, b);
+                computed += self.fill(net, a, b);
             }
         }
+        computed
     }
 
-    /// Every row in `[a, b)`, where `b` is at most [`rows_end`](Self::rows_end).
+    /// The frames of `spans` a pool could read: the most it could pool.
+    pub fn poolable(&self, spans: &[(usize, usize)]) -> usize {
+        let (lo, hi) = (self.rows_start(), self.rows_end());
+        spans
+            .iter()
+            .map(|&(a, b)| b.min(hi).saturating_sub(a.max(lo)))
+            .sum()
+    }
+
+    /// Every row in `[a, b)`, where `b` is at most [`rows_end`](Self::rows_end); the number
+    /// computed.
     #[allow(clippy::cast_possible_wrap)]
-    fn fill(&self, net: &mut Net<'m>, a: usize, b: usize) {
+    fn fill(&self, net: &mut Net<'m>, a: usize, b: usize) -> usize {
+        let mut computed = 0;
         let left = self.model.net.context.0 as i64;
         let next = net.next.unwrap_or(0);
         // Holes behind the streamer, left where it started afresh past a gap.
@@ -455,11 +502,11 @@ impl<'m> SpeakerStream<'m> {
             }
             let rows_first = net.rows_first;
             let mut streamer = self.model.net.streamer();
-            self.run(&mut streamer, k as i64 - left, e, &mut net.rows, rows_first);
+            computed += self.run(&mut streamer, k as i64 - left, e, &mut net.rows, rows_first);
             k = e;
         }
         if b <= next && net.next.is_some() {
-            return;
+            return computed;
         }
         let start = match net.next {
             Some(n) if a <= n + RESTART_GAP => n,
@@ -477,12 +524,14 @@ impl<'m> SpeakerStream<'m> {
             rows_first,
             ..
         } = net;
-        self.run(streamer, *origin, b, rows, *rows_first);
+        computed += self.run(streamer, *origin, b, rows, *rows_first);
         net.next = Some(b);
+        computed
     }
 
     /// Run `streamer`, whose timeline starts at input frame `origin`, until its rows reach `to`,
-    /// and keep in `rows`, from stream frame `rows_first`, those not kept already.
+    /// and keep in `rows`, from stream frame `rows_first`, those not kept already; the number
+    /// kept.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn run(
         &self,
@@ -491,7 +540,8 @@ impl<'m> SpeakerStream<'m> {
         to: usize,
         rows: &mut VecDeque<Option<Vec<f32>>>,
         rows_first: usize,
-    ) {
+    ) -> usize {
+        let mut kept = 0;
         let ready = self.normalized.len();
         let view = InputView {
             frames: &self.normalized,
@@ -512,13 +562,18 @@ impl<'m> SpeakerStream<'m> {
             }
             if rows[at].is_none() {
                 rows[at] = Some(row.to_vec());
+                kept += 1;
             }
         }
+        kept
     }
 
     /// The vector over the frames of `spans`, stream frames ascending and apart, that `keep`
     /// admits; frames beyond the kept rows are skipped. `None` below [`MIN_FRAMES`].
     pub fn pool(&self, spans: &[(usize, usize)], keep: impl Fn(usize) -> bool) -> Option<Evidence> {
+        if self.poolable(spans) < MIN_FRAMES {
+            return None;
+        }
         let mut net = self.net();
         self.compute_into(&mut net, spans);
         let hi = self.rows_end();
@@ -578,6 +633,7 @@ pub(crate) mod tests {
         for b in audio.chunks(640) {
             s.accept(b);
         }
+        s.catch_up();
         s
     }
 
@@ -599,6 +655,8 @@ pub(crate) mod tests {
         let Some(m) = spk_model() else { return };
         let audio = [clip("yes"), clip("seven"), clip("no")].concat();
         let (mut eager, mut asked) = (stream(&m, &audio, true), stream(&m, &audio, false));
+        // The front end run once over all the audio gives the features it gives block by block.
+        assert_eq!(eager.features(), asked.features());
         let n = asked.rows_end();
         // A late span first, so the network starts past a gap; then spans reaching back into
         // the gap, across it, and to the end.
