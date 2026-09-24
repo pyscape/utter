@@ -202,6 +202,15 @@ of the vectors. The
 [speaker evidence page](../benchmarks/speaker-evidence.md) measures how
 well the stock model identifies speakers from one word and from more.
 
+Evidence is off until a speaker model is set, and setting none
+(`None` in Python and Rust, `NULL` in C) removes it and its keys. A
+model set
+partway through a stream includes the audio already fed. The speaker
+network runs only on frames a span pools or is likely to, so its
+compute follows the speech, not the audio; what it costs per block and
+over a stream is the
+[speaker page's latency section](../benchmarks/speaker-evidence.md#latency-and-compute).
+
 ## Clocks and units
 
 - `start` and `end` are seconds since the recognizer was built,

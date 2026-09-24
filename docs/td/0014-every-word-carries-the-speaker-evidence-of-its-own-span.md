@@ -207,9 +207,8 @@ benchmark page measures what the evidence identifies.
   they are; thresholds fitted on the wheel's vectors do not carry over,
   because the normalisation and the frames pooled differ.
 - A result grows by about 1.3 KB of text per word that carries
-  evidence. On three test clips decoded with three readings, the
-  speaker model took the decode from 34 ms to 72 ms of compute for 3 s
-  of audio.
+  evidence. The network's rows cost compute on speech frames; the
+  speaker page's latency section gives the cost per block and in all.
 - `[[rr:TD-2#Scope]]` no longer excludes speaker vectors; this record
   is where they are specified.
 - A model of another architecture needs its own record: this one fixes
