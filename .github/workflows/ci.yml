@@ -40,7 +40,7 @@ jobs:
         run: |
           gcc -x c -std=c99 -fsyntax-only -Wall -Wextra -Werror include/utter.h
           g++ -x c++ -std=c++11 -fsyntax-only -Wall -Wextra -Werror include/utter.h
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab  # v2.87.13
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5  # v2.87.19
         with:
           tool: cbindgen@0.29.4
       - name: The C header declares exactly the exported functions, with their signatures
@@ -156,7 +156,7 @@ jobs:
           curl -sfL -o models/spk.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip
           unzip -q models/spk.zip -d models
           rm models/spk.zip
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab  # v2.87.13
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5  # v2.87.19
         with:
           tool: cargo-llvm-cov
       - name: Tests with coverage
