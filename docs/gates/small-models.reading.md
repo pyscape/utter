@@ -24,3 +24,7 @@ which the stock wheel does not unescape: it drops every non-ASCII word
 with a warning, all of Russian and German "fünf" among them, while
 utterpy reads the grammar correctly. The script sends the grammar
 unescaped to both engines.
+
+The binding is the v0.0.5 build. The runtime's sources (src, build.rs,
+Cargo.toml, Cargo.lock) are unchanged between it and the revision the
+script ran at, so its figures stand for that revision.
