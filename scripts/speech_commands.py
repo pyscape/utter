@@ -1758,8 +1758,29 @@ def steady_state_pass(
     report["steady_state"] = out
 
 
+def preflight_worker(job_json: str) -> None:
+    """One engine's half of the preflight, in a process that imports only that engine."""
+    job = json.loads(job_json)
+    name = job["engine"]
+    try:
+        mod = __import__(name.split("@")[0])
+        if name == "vosk":
+            mod.SetLogLevel(-1)
+        t = time.perf_counter()
+        eng = Engine(name, mod, job["model"], job["grammar"])
+        load = time.perf_counter() - t
+        t = time.perf_counter()
+        rec = eng.new()
+        ctor = time.perf_counter() - t
+        feed(rec, read_pcm(job["clip"]), job["block_ms"])
+    except BaseException as e:  # noqa: BLE001 - a panic in the engine is the finding
+        json.dump(dict(ok=False, error=f"{type(e).__name__}: {e}"), sys.stdout)
+        return
+    json.dump(dict(ok=True, model_load_s=load, first_ctor_ms=1000.0 * ctor), sys.stdout)
+
+
 def preflight(
-    modules: Mapping[str, ModuleType],
+    engines: Iterable[str],
     model: str | Path,
     grammar: Sequence[str],
     block_ms: int,
@@ -1772,31 +1793,36 @@ def preflight(
     the first ten seconds and in one piece: without this the run ends part-way through a pass,
     having written nothing. A Rust panic reaches Python as a BaseException, so the catch is wide.
 
+    Each engine runs in a process of its own: in one process, whichever engine opened second paid
+    about 20 ms more on its first recognizer, in either order.
+
     The run stops rather than dropping the engine, because every comparison on this page is
     paired. A page with one engine's columns silently missing is worse than no page."""
-    out = {}
+    out: dict[str, Json] = {}
     failed = []
-    for name, mod in modules.items():
-        t = time.perf_counter()
-        try:
-            eng = Engine(name, mod, model, grammar)
-            load = time.perf_counter() - t
-            t = time.perf_counter()
-            rec = eng.new()
-            ctor = time.perf_counter() - t
-            feed(rec, read_pcm(clips[0][1]), block_ms)
-        except BaseException as e:  # noqa: BLE001 - a panic in the engine is the finding
-            failed.append(f"{name}: {type(e).__name__}: {str(e).splitlines()[0] if str(e) else '(no message)'}")
-            out[name] = dict(ok=False, error=f"{type(e).__name__}: {e}")
+    for name in engines:
+        job = dict(engine=name, model=str(model), grammar=list(grammar), block_ms=block_ms, clip=str(clips[0][1]))
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--preflight-job", json.dumps(job)],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            tail = proc.stderr.strip().splitlines()[-1:] or ["(no message)"]
+            out[name] = dict(ok=False, error=f"process exited {proc.returncode}: {tail[0]}")
+        else:
+            out[name] = json.loads(proc.stdout)
+        r = out[name]
+        if not r["ok"]:
+            failed.append(f"{name}: {r['error'].splitlines()[0]}")
             continue
-        out[name] = dict(ok=True, model_load_s=load, first_ctor_ms=1000.0 * ctor)
-        note(f"preflight {name}: model {load:.2f} s, first recognizer {1000.0 * ctor:.1f} ms")
+        note(f"preflight {name}: model {r['model_load_s']:.2f} s, first recognizer {r['first_ctor_ms']:.1f} ms")
     report["preflight"] = out
     if failed:
         for line in failed:
             note(f"preflight FAILED {line}")
         raise SystemExit(
-            f"{len(failed)} of {len(modules)} engines cannot decode {Path(model).name}:\n  "
+            f"{len(failed)} of {len(out)} engines cannot decode {Path(model).name}:\n  "
             + "\n  ".join(failed)
             + "\nEvery comparison on this page is paired, so the run stops here rather than "
             "writing a page with an engine missing. Use --engines to measure one deliberately."
@@ -1806,10 +1832,9 @@ def preflight(
     lines.append(
         "Each engine opened the model and decoded a clip before the run began; a model an engine "
         "cannot decode stops the run here rather than part-way through a pass. The first recognizer "
-        "is timed right after each engine's model loads, in the order listed and in one process, and "
-        "an engine opened after another pays about 20 ms more on it, in either order: the column is "
-        "a check that the engine runs, not what a recognizer costs to build, which the Speech "
-        "Commands page's compute section times over every clip."
+        "is timed right after each engine's model loads, in a process that loads only that engine: "
+        "the column is a check that the engine runs, not what a recognizer costs to build, which "
+        "the Speech Commands page's compute section times over every clip."
     )
     lines.append("")
     lines.append("| engine | model load, s | first recognizer, ms |")
@@ -2217,10 +2242,13 @@ def wordless_pass(
 def main() -> None:
     if len(sys.argv) == 3 and sys.argv[1] == "--trace-job":
         return trace_worker(sys.argv[2])
+    if len(sys.argv) == 3 and sys.argv[1] == "--preflight-job":
+        return preflight_worker(sys.argv[2])
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--model", required=True)
-    ap.add_argument("--out", required=True, help="output prefix; writes .md and .json")
+    ap.add_argument("--out", help="output prefix; writes .md and .json")
+    ap.add_argument("--preflight-only", action="store_true", help="run the preflight, print it as JSON and stop")
     ap.add_argument("--split", default="testing", choices=["testing", "validation"])
     ap.add_argument("--limit", type=int, default=0, help="clips per word, 0 for all")
     ap.add_argument("--block-ms", type=int, default=40)
@@ -2275,6 +2303,8 @@ def main() -> None:
     ap.add_argument("--block-sizes", default="10,20,40,80,100", help="block-size sweep, empty to skip")
     ap.add_argument("--block-clips", type=int, default=400, help="clips per block size")
     args = ap.parse_args()
+    if not args.out and not args.preflight_only:
+        ap.error("--out is required")
     data = Path(args.data)
     listed = [line.strip() for line in (data / f"{args.split}_list.txt").read_text().splitlines() if line.strip()]
     by_word: defaultdict[str, list[str]] = defaultdict(list)
@@ -2288,18 +2318,26 @@ def main() -> None:
         clips.extend((w, data / rel) for rel in items)
     noise = sorted((data / "_background_noise_").glob("*.wav"))
 
-    modules: dict[str, ModuleType] = {}
-    for name in args.engines.split(","):
-        modules[name] = __import__(name.split("@")[0])
-        if name == "vosk":
-            modules[name].SetLogLevel(-1)
-
+    engines = args.engines.split(",")
     bound = [n for n in args.bound_engines.split(",") if n.strip()]
-    absent = sorted({n.split("@")[0] for n in bound} - set(modules))
+    absent = sorted({n.split("@")[0] for n in bound} - set(engines))
     if absent:
         ap.error(f"--bound-engines names {absent}, which --engines does not carry")
 
     full_grammar = DATASET_WORDS + LETTERS + NATO + COLOURS
+    checked: Json = {}
+    engines_section: list[str] = []
+    preflight(engines, args.model, full_grammar, args.block_ms, clips, engines_section, checked)
+    if args.preflight_only:
+        print(json.dumps(checked["preflight"], indent=1))
+        return
+
+    modules: dict[str, ModuleType] = {}
+    for name in engines:
+        modules[name] = __import__(name.split("@")[0])
+        if name == "vosk":
+            modules[name].SetLogLevel(-1)
+
     prov = provenance(args, modules)
     report = {
         "split": args.split,
@@ -2308,6 +2346,7 @@ def main() -> None:
         "grammar_size": len(full_grammar),
         "out": args.out,
         "provenance": prov,
+        "preflight": checked["preflight"],
     }
     lines = [
         f"# Speech Commands v2, {prov['model']}, {args.split} split, {len(clips)} clips, {args.block_ms} ms blocks",
@@ -2319,7 +2358,7 @@ def main() -> None:
     lines.append("")
     lines.append(provenance_line(prov))
     lines.append("")
-    preflight(modules, args.model, full_grammar, args.block_ms, clips, lines, report)
+    lines.extend(engines_section)
     full_grammar_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report)
     write_clip_records(args.out + ".clips.jsonl", clips, report["full"])
     for r in report["full"].values():
