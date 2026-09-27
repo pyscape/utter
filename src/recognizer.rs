@@ -2137,6 +2137,18 @@ mod tests {
     }
 
     #[test]
+    fn history_stays_integer_until_a_sample_is_not_one() {
+        let mut h = History::Int(Vec::new());
+        h.extend(&[1.0, -0.0, -32768.0, 32767.0]);
+        assert!(matches!(h, History::Int(_)));
+        h.extend(&[32768.0]);
+        assert!(matches!(&h, History::Float(v) if v[..] == [1.0, 0.0, -32768.0, 32767.0, 32768.0]));
+        h.extend(&[0.5]);
+        h.drop_front(1);
+        assert_eq!(h.sum_sq(3, 5), (32768.0 * 32768.0 + 0.25, 2));
+    }
+
+    #[test]
     fn a_fraction_of_a_count_has_a_level() {
         let mut f = FloorTracker::new(RATE);
         f.feed(&vec![0.25; (RATE * 0.1) as usize]);
