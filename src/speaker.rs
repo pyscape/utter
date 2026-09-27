@@ -289,7 +289,7 @@ pub struct SpeakerStream<'m> {
     normalized_first: usize,
     finished: bool,
     /// Audio accepted and not yet through the front end, which runs when rows are wanted.
-    pending: Vec<i16>,
+    pending: Vec<f32>,
     /// Samples of the input per frame.
     input_hop: usize,
     /// Behind a lock so a result, which only reads the recognizer, can compute the rows it pools.
@@ -356,9 +356,9 @@ impl<'m> SpeakerStream<'m> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Feed 16-bit samples at the stream's rate. They reach the features at the next
+    /// Feed samples at the stream's rate, one 16-bit PCM count to the unit. They reach the features at the next
     /// [`catch_up`](Self::catch_up).
-    pub fn accept(&mut self, samples: &[i16]) {
+    pub fn accept(&mut self, samples: &[f32]) {
         if self.finished {
             return;
         }
@@ -375,14 +375,14 @@ impl<'m> SpeakerStream<'m> {
         if self.pending.is_empty() {
             return;
         }
-        let x: Vec<f32> = self.pending.drain(..).map(f32::from).collect();
         match self.resampler.as_mut() {
             Some(r) => {
-                let y = r.resample(&x, false);
+                let y = r.resample(&self.pending, false);
                 self.mfcc.accept(&y);
             }
-            None => self.mfcc.accept(&x),
+            None => self.mfcc.accept(&self.pending),
         }
+        self.pending.clear();
         self.normalize();
     }
 
@@ -678,7 +678,7 @@ pub(crate) mod tests {
         let mut s = SpeakerStream::new(model, 16000.0).unwrap();
         EAGER.with(|e| e.set(false));
         for b in audio.chunks(640) {
-            s.accept(b);
+            s.accept(&b.iter().map(|&v| f32::from(v)).collect::<Vec<_>>());
         }
         s.catch_up();
         s

@@ -167,7 +167,7 @@ impl FloorTracker {
         }
     }
 
-    fn feed(&mut self, samples: &[i16]) {
+    fn feed(&mut self, samples: &[f32]) {
         for &s in samples {
             self.open_sum_sq += (s as f64) * (s as f64);
             self.open_len += 1;
@@ -261,6 +261,70 @@ fn relation(words: &[Label], best: &[Label]) -> &'static str {
     }
 }
 
+/// Audio a recognizer keeps, one 16-bit PCM count to the unit: as 16-bit integers until a sample
+/// that is not one arrives, so an integer host keeps two bytes a sample.
+// [[rr:TD-13#A shared waveform path preserves scale and precision]]
+enum History {
+    Int(Vec<i16>),
+    Float(Vec<f32>),
+}
+
+impl History {
+    fn len(&self) -> usize {
+        match self {
+            History::Int(v) => v.len(),
+            History::Float(v) => v.len(),
+        }
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::float_cmp)]
+    fn extend(&mut self, samples: &[f32]) {
+        if let History::Int(v) = self {
+            let fits = |s: f32| s == f32::from(s as i16);
+            if samples.iter().all(|&s| fits(s)) {
+                v.extend(samples.iter().map(|&s| s as i16));
+                return;
+            }
+            *self = History::Float(v.iter().map(|&s| f32::from(s)).collect());
+        }
+        if let History::Float(v) = self {
+            v.extend_from_slice(samples);
+        }
+    }
+
+    fn drop_front(&mut self, n: usize) {
+        match self {
+            History::Int(v) => drop(v.drain(..n)),
+            History::Float(v) => drop(v.drain(..n)),
+        }
+    }
+
+    fn sum_sq(&self, lo: usize, hi: usize) -> (f64, usize) {
+        let sq = |s: f64| s * s;
+        match self {
+            History::Int(v) => v.get(lo..hi).map_or((0.0, 0), |v| {
+                (v.iter().map(|&s| sq(f64::from(s))).sum(), v.len())
+            }),
+            History::Float(v) => v.get(lo..hi).map_or((0.0, 0), |v| {
+                (v.iter().map(|&s| sq(f64::from(s))).sum(), v.len())
+            }),
+        }
+    }
+
+    /// The samples from `from` on, in pieces.
+    fn replay(&self, from: usize, mut f: impl FnMut(&[f32])) {
+        match self {
+            History::Int(v) => {
+                for piece in v[from..].chunks(4096) {
+                    let x: Vec<f32> = piece.iter().map(|&s| f32::from(s)).collect();
+                    f(&x);
+                }
+            }
+            History::Float(v) => f(&v[from..]),
+        }
+    }
+}
+
 /// A stream of audio decoded against one grammar. Construct with [`new`](Self::new), feed
 /// [`accept`](Self::accept), read [`partial`](Self::partial) between calls and
 /// [`result`](Self::result) when [`Step::endpoint`] is set. Every result is a JSON string:
@@ -283,8 +347,10 @@ pub struct Recognizer<'m> {
     samples_processed: u64,
     samples_round_start: u64,
     /// PCM fed since the pipeline began, from sample `pcm_first` on, for energy under words.
-    pcm: Vec<i16>,
+    pcm: History,
     pcm_first: usize,
+    /// A call's samples in raw scale, reused from call to call.
+    scratch: Vec<f32>,
     floor: FloorTracker,
     words: bool,
     partial_words: bool,
@@ -432,8 +498,9 @@ impl<'m> Recognizer<'m> {
             frame_offset: 0,
             samples_processed: 0,
             samples_round_start: 0,
-            pcm: Vec::new(),
+            pcm: History::Int(Vec::new()),
             pcm_first: 0,
+            scratch: Vec::new(),
             floor: FloorTracker::new(sample_rate),
             words: false,
             partial_words: false,
@@ -572,7 +639,7 @@ impl<'m> Recognizer<'m> {
         let (hop, _) = self.spk_hop_and_window();
         let mut stream = SpeakerStream::starting_at(model, self.sample_rate, from / hop)?;
         if self.pipeline.is_some() {
-            stream.accept(&self.pcm[from - self.pcm_first..]);
+            self.pcm.replay(from - self.pcm_first, |s| stream.accept(s));
             stream.forget_before(self.frame_offset * self.model.conf.frame_subsampling_factor);
         }
         self.spk = Some(model);
@@ -611,7 +678,7 @@ impl<'m> Recognizer<'m> {
         self.samples_round_start += self.samples_processed;
         self.samples_processed = 0;
         self.frame_offset = 0;
-        self.pcm.clear();
+        self.pcm = History::Int(Vec::new());
         self.pcm_first = 0;
         self.forget_best_path();
         let mut opts = self.model.mfcc_opts.clone();
@@ -683,20 +750,20 @@ impl<'m> Recognizer<'m> {
     fn forget_pcm(&mut self) {
         let keep = self.pcm_kept_from(self.frame_offset);
         let n = keep.saturating_sub(self.pcm_first).min(self.pcm.len());
-        self.pcm.drain(..n);
+        self.pcm.drop_front(n);
         self.pcm_first += n;
     }
 
-    /// Kept audio from sample `lo` of the pipeline to `hi`, or to the last kept.
-    fn pcm_span(&self, lo: usize, hi: usize) -> &[i16] {
+    /// The sum of squares and the count of the kept audio from sample `lo` of the pipeline to
+    /// `hi`, or to the last kept.
+    fn pcm_sum_sq(&self, lo: usize, hi: usize) -> (f64, usize) {
         assert!(
             lo >= self.pcm_first,
             "audio asked for before the audio kept"
         );
         let hi = hi.min(self.pcm_first + self.pcm.len());
         self.pcm
-            .get(lo - self.pcm_first..hi.saturating_sub(self.pcm_first))
-            .unwrap_or(&[])
+            .sum_sq(lo - self.pcm_first, hi.saturating_sub(self.pcm_first))
     }
 
     fn forget_best_path(&mut self) {
@@ -885,8 +952,13 @@ impl<'m> Recognizer<'m> {
     /// libvosk's `AcceptWaveform`: feed 16-bit mono PCM at the recognizer's rate. Any block
     /// size; the decoder advances in 200 ms chunks internally and the partial is current to the
     /// last decoded frame.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn accept(&mut self, samples: &[i16]) -> Step {
+        self.accept_raw(samples, f32::from)
+    }
+
+    // [[rr:TD-13#A shared waveform path preserves scale and precision]]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn accept_raw<S: Copy>(&mut self, samples: &[S], raw: impl Fn(S) -> f32) -> Step {
         if !(self.state == State::Running || self.state == State::Initialized) {
             self.clean_up();
         } else if self.pipeline.is_none() {
@@ -895,24 +967,24 @@ impl<'m> Recognizer<'m> {
         self.state = State::Running;
         let decoded_before = self.decoder.as_ref().map(|d| d.num_frames_decoded());
         let step = (self.sample_rate * 0.2) as usize;
-        let mut i = 0;
-        while i < samples.len() {
-            let end = (i + step).min(samples.len());
-            let chunk: Vec<f32> = samples[i..end].iter().map(|&s| s as f32).collect();
-            self.pipeline.as_mut().unwrap().accept(&chunk);
+        let mut scratch = std::mem::take(&mut self.scratch);
+        scratch.clear();
+        scratch.extend(samples.iter().map(|&s| raw(s)));
+        for piece in scratch.chunks(step.max(1)) {
+            self.pipeline.as_mut().unwrap().accept(piece);
             self.update_silence_weights();
             self.advance_decoding();
-            i = end;
         }
-        self.pcm.extend_from_slice(samples);
+        self.pcm.extend(&scratch);
         let advanced = self.decoder.as_ref().map(|d| d.num_frames_decoded()) != decoded_before;
         if let Some(s) = self.spk_stream.as_mut() {
-            s.accept(samples);
+            s.accept(&scratch);
             if advanced {
                 s.catch_up();
             }
         }
-        self.floor.feed(samples);
+        self.floor.feed(&scratch);
+        self.scratch = scratch;
         self.samples_processed += samples.len() as u64;
         self.update_stable();
         if !advanced {
@@ -1230,15 +1302,11 @@ impl<'m> Recognizer<'m> {
     fn energy_dbfs(&self, start_sample: u64, end_sample: u64) -> Option<f64> {
         let lo = start_sample.saturating_sub(self.samples_round_start) as usize;
         let hi = end_sample.saturating_sub(self.samples_round_start) as usize;
-        let pcm = self.pcm_span(lo, hi);
-        if pcm.is_empty() {
+        let (acc, n) = self.pcm_sum_sq(lo, hi);
+        if n == 0 {
             return None;
         }
-        let mut acc = 0.0f64;
-        for &s in pcm {
-            acc += (s as f64) * (s as f64);
-        }
-        dbfs_of_mean_square(acc / pcm.len() as f64)
+        dbfs_of_mean_square(acc / n as f64)
     }
 
     fn write_word(
@@ -1365,13 +1433,12 @@ impl<'m> Recognizer<'m> {
     /// The energy of the audio under stream frame `k`, over the frame's own window.
     fn frame_dbfs(&self, k: usize) -> Option<f64> {
         let (hop, window) = self.spk_hop_and_window();
-        let pcm = self.pcm_span(k * hop, k * hop + window);
-        if pcm.is_empty() {
+        let (acc, n) = self.pcm_sum_sq(k * hop, k * hop + window);
+        if n == 0 {
             return None;
         }
-        let acc: f64 = pcm.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
         #[allow(clippy::cast_precision_loss)]
-        dbfs_of_mean_square(acc / pcm.len() as f64)
+        dbfs_of_mean_square(acc / n as f64)
     }
 
     /// Speaker rows the decoder's next advance is likely to pool, computed on the block before it,
@@ -1929,8 +1996,8 @@ mod tests {
         (32768.0 * 10f64.powf(dbfs / 20.0)).round() as i16
     }
 
-    fn constant(dbfs: f64, seconds: f64) -> Vec<i16> {
-        vec![amplitude(dbfs); (RATE as f64 * seconds) as usize]
+    fn constant(dbfs: f64, seconds: f64) -> Vec<f32> {
+        vec![f32::from(amplitude(dbfs)); (RATE as f64 * seconds) as usize]
     }
 
     /// Uniform over `[-peak, peak]`, from a fixed seed so the sequence repeats.
@@ -1947,12 +2014,16 @@ mod tests {
             .collect()
     }
 
+    fn raw(samples: &[i16]) -> Vec<f32> {
+        samples.iter().map(|&s| f32::from(s)).collect()
+    }
+
     #[test]
     fn the_floor_is_absent_until_a_window_exists() {
         let mut f = FloorTracker::new(RATE);
-        f.feed(&vec![1000i16; 1599]);
+        f.feed(&vec![1000.0; 1599]);
         assert_eq!(f.dbfs(), None);
-        f.feed(&[1000]);
+        f.feed(&[1000.0]);
         assert!(f.dbfs().is_some());
     }
 
@@ -1967,10 +2038,10 @@ mod tests {
     #[test]
     fn a_floor_of_digital_silence_is_no_floor() {
         let mut f = FloorTracker::new(RATE);
-        f.feed(&noise(180, 9.0));
+        f.feed(&raw(&noise(180, 9.0)));
         f.feed(&constant(-999.0, 1.0));
         assert_eq!(f.dbfs(), None);
-        f.feed(&noise(180, 10.0));
+        f.feed(&raw(&noise(180, 10.0)));
         assert!((f.dbfs().unwrap() + 50.0).abs() < 1.0, "{:?}", f.dbfs());
     }
 
@@ -1978,8 +2049,8 @@ mod tests {
     fn a_quarter_second_of_digital_silence_does_not_take_the_floor() {
         let mut f = FloorTracker::new(RATE);
         // peak 180 is -50 dBFS RMS for a uniform sequence
-        f.feed(&noise(180, 10.0));
-        f.feed(&vec![0i16; (RATE * 0.25) as usize]);
+        f.feed(&raw(&noise(180, 10.0)));
+        f.feed(&vec![0.0; (RATE * 0.25) as usize]);
         assert!((f.dbfs().unwrap() + 50.0).abs() < 1.0, "{:?}", f.dbfs());
     }
 
@@ -1989,6 +2060,14 @@ mod tests {
         f.feed(&constant(-20.0, 10.0));
         f.feed(&constant(-60.0, 10.0));
         assert!((f.dbfs().unwrap() + 60.0).abs() < 1.0, "{:?}", f.dbfs());
+    }
+
+    #[test]
+    fn a_fraction_of_a_count_has_a_level() {
+        let mut f = FloorTracker::new(RATE);
+        f.feed(&vec![0.25; (RATE * 0.1) as usize]);
+        let want = 20.0 * (0.25f64 / 32768.0).log10();
+        assert!((f.dbfs().unwrap() - want).abs() < 1e-9, "{:?}", f.dbfs());
     }
 
     fn group(words: &[Label], cost: f32, lead: Option<f32>) -> (Vec<Label>, f32, Option<f32>, i32) {
