@@ -156,6 +156,29 @@ jobs:
           curl -sfL -o models/spk.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip
           unzip -q models/spk.zip -d models
           rm models/spk.zip
+      # TitaNet-small as sherpa-onnx publishes it, pinned by its SHA-256, converted by the
+      # repository's script under pinned requirements; the conversion is cached with both.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        id: titanet
+        with:
+          path: models/titanet-small
+          key: titanet-small-ad4a1802-${{ hashFiles('scripts/titanet_convert.py', '.github/requirements/titanet.txt') }}
+      - if: steps.titanet.outputs.cache-hit != 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Download and convert TitaNet-small
+        if: steps.titanet.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          curl -sfL -o models/titanet-small.onnx \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx
+          echo "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e  models/titanet-small.onnx" \
+            | sha256sum --check
+          python -m venv models/convert
+          models/convert/bin/pip install --require-hashes -r .github/requirements/titanet.txt
+          models/convert/bin/python scripts/titanet_convert.py models/titanet-small.onnx models/titanet-small
+          rm -rf models/convert models/titanet-small.onnx
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab  # v2.87.13
         with:
           tool: cargo-llvm-cov
@@ -163,11 +186,12 @@ jobs:
         env:
           UTTER_TEST_MODEL: ${{ github.workspace }}/models/vosk-model-small-en-us-0.15
           UTTER_TEST_SPK_MODEL: ${{ github.workspace }}/models/vosk-model-spk-0.4
+          UTTER_TEST_TITANET_MODEL: ${{ github.workspace }}/models/titanet-small
         run: |
-          # The five diagnostic tools need a corpus and a model directory each; stream, which
+          # The six diagnostic tools need a corpus and a model directory each; stream, which
           # the releases ship, is measured through its test.
           cargo llvm-cov --release --lcov --output-path lcov.info --fail-under-lines 90 \
-            --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump|spk_dump)\.rs'
+            --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump|spk_dump|titanet_dump)\.rs'
           cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
