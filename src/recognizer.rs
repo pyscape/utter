@@ -282,8 +282,9 @@ pub struct Recognizer<'m> {
     frame_offset: usize,
     samples_processed: u64,
     samples_round_start: u64,
-    /// PCM fed since the pipeline began, for energy under words.
+    /// PCM fed since the pipeline began, from sample `pcm_first` on, for energy under words.
     pcm: Vec<i16>,
+    pcm_first: usize,
     floor: FloorTracker,
     words: bool,
     partial_words: bool,
@@ -432,6 +433,7 @@ impl<'m> Recognizer<'m> {
             samples_processed: 0,
             samples_round_start: 0,
             pcm: Vec::new(),
+            pcm_first: 0,
             floor: FloorTracker::new(sample_rate),
             words: false,
             partial_words: false,
@@ -545,7 +547,7 @@ impl<'m> Recognizer<'m> {
     }
 
     /// libvosk's `SetSpkModel`: speaker evidence on every partial and final, and on every entry
-    /// of their word lists. Audio already fed since the stream began is included. Fails when the
+    /// of their word lists. The current utterance's audio already fed is included. Fails when the
     /// audio's rate is below the speaker model's, or its frames are not the decoder's 10 ms.
     /// `None` removes it. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#speaker-evidence>.
     // [[rr:TD-14#Decision outcome]]
@@ -561,9 +563,16 @@ impl<'m> Recognizer<'m> {
                 "the speaker model's frames are not the decoder's",
             ));
         }
-        let mut stream = SpeakerStream::new(model, self.sample_rate)?;
+        // A final already read has ended its utterance, though its audio goes at the next accept.
+        let utterance = match (self.state, self.decoder.as_ref()) {
+            (State::Endpoint, Some(d)) => self.frame_offset + d.num_frames_decoded(),
+            _ => self.frame_offset,
+        };
+        let from = self.pcm_kept_from(utterance).max(self.pcm_first);
+        let (hop, _) = self.spk_hop_and_window();
+        let mut stream = SpeakerStream::starting_at(model, self.sample_rate, from / hop)?;
         if self.pipeline.is_some() {
-            stream.accept(&self.pcm);
+            stream.accept(&self.pcm[from - self.pcm_first..]);
             stream.forget_before(self.frame_offset * self.model.conf.frame_subsampling_factor);
         }
         self.spk = Some(model);
@@ -603,6 +612,7 @@ impl<'m> Recognizer<'m> {
         self.samples_processed = 0;
         self.frame_offset = 0;
         self.pcm.clear();
+        self.pcm_first = 0;
         self.forget_best_path();
         let mut opts = self.model.mfcc_opts.clone();
         opts.sample_rate = self.sample_rate;
@@ -647,10 +657,46 @@ impl<'m> Recognizer<'m> {
                 if let Some(s) = self.spk_stream.as_mut() {
                     s.forget_before(first);
                 }
+                if let Some(iv) = self.pipeline.as_mut().and_then(|p| p.ivector.as_mut()) {
+                    iv.forget_before(first);
+                }
+                self.forget_pcm();
                 self.spk_cache().clear();
             }
             _ => self.rebuild(),
         }
+    }
+
+    /// The first sample of the pipeline kept for the utterance that begins at decoder frame
+    /// `utterance`: its first stream frame's start, or its first sample if earlier, back to a
+    /// stream frame's start so that a speaker model set later can start from it.
+    // [[rr:TD-14#A model set mid-stream starts at the current utterance]]
+    #[allow(clippy::cast_possible_truncation)]
+    fn pcm_kept_from(&self, utterance: usize) -> usize {
+        let (hop, _) = self.spk_hop_and_window();
+        let frame = utterance * self.model.conf.frame_subsampling_factor;
+        let sample = utterance * self.frame_samples() as usize;
+        (frame * hop).min(sample) / hop * hop
+    }
+
+    /// Drop the audio before the current utterance.
+    fn forget_pcm(&mut self) {
+        let keep = self.pcm_kept_from(self.frame_offset);
+        let n = keep.saturating_sub(self.pcm_first).min(self.pcm.len());
+        self.pcm.drain(..n);
+        self.pcm_first += n;
+    }
+
+    /// Kept audio from sample `lo` of the pipeline to `hi`, or to the last kept.
+    fn pcm_span(&self, lo: usize, hi: usize) -> &[i16] {
+        assert!(
+            lo >= self.pcm_first,
+            "audio asked for before the audio kept"
+        );
+        let hi = hi.min(self.pcm_first + self.pcm.len());
+        self.pcm
+            .get(lo - self.pcm_first..hi.saturating_sub(self.pcm_first))
+            .unwrap_or(&[])
     }
 
     fn forget_best_path(&mut self) {
@@ -1183,15 +1229,16 @@ impl<'m> Recognizer<'m> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn energy_dbfs(&self, start_sample: u64, end_sample: u64) -> Option<f64> {
         let lo = start_sample.saturating_sub(self.samples_round_start) as usize;
-        let hi = (end_sample.saturating_sub(self.samples_round_start) as usize).min(self.pcm.len());
-        if hi <= lo {
+        let hi = end_sample.saturating_sub(self.samples_round_start) as usize;
+        let pcm = self.pcm_span(lo, hi);
+        if pcm.is_empty() {
             return None;
         }
         let mut acc = 0.0f64;
-        for &s in &self.pcm[lo..hi] {
+        for &s in pcm {
             acc += (s as f64) * (s as f64);
         }
-        dbfs_of_mean_square(acc / (hi - lo) as f64)
+        dbfs_of_mean_square(acc / pcm.len() as f64)
     }
 
     fn write_word(
@@ -1318,17 +1365,13 @@ impl<'m> Recognizer<'m> {
     /// The energy of the audio under stream frame `k`, over the frame's own window.
     fn frame_dbfs(&self, k: usize) -> Option<f64> {
         let (hop, window) = self.spk_hop_and_window();
-        let lo = k * hop;
-        let hi = (lo + window).min(self.pcm.len());
-        if hi <= lo {
+        let pcm = self.pcm_span(k * hop, k * hop + window);
+        if pcm.is_empty() {
             return None;
         }
-        let acc: f64 = self.pcm[lo..hi]
-            .iter()
-            .map(|&s| f64::from(s) * f64::from(s))
-            .sum();
+        let acc: f64 = pcm.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
         #[allow(clippy::cast_precision_loss)]
-        dbfs_of_mean_square(acc / (hi - lo) as f64)
+        dbfs_of_mean_square(acc / pcm.len() as f64)
     }
 
     /// Speaker rows the decoder's next advance is likely to pool, computed on the block before it,
@@ -1366,7 +1409,7 @@ impl<'m> Recognizer<'m> {
         let chunks = |ready: usize| ready.saturating_sub(rctx) / chunk;
         let now = chunks(pipe.mfcc.num_frames_ready());
         let mut spans: Vec<(usize, usize)> = Vec::new();
-        if chunks(frames(self.pcm.len() + next_block)) > now {
+        if chunks(frames(self.pcm_first + self.pcm.len() + next_block)) > now {
             // Without readings asked for, the look-ahead reads its own near the best, since the
             // best path takes up a word a close reading had first.
             let own;

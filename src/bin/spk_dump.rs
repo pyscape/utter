@@ -30,7 +30,10 @@ fn main() {
         stream.accept(block);
     }
     stream.finish();
-    let (raw, normalized) = stream.features();
+    // The stream keeps the last 300 frames of features, more than a Speech Commands clip has.
+    let ((raw, 0), (normalized, 0)) = stream.features() else {
+        panic!("the clip is longer than the features the stream keeps");
+    };
     write_ark(&format!("{prefix}.mfcc.ark"), "utt", raw);
     write_ark(&format!("{prefix}.feats.ark"), "utt", normalized);
     let n = normalized.len();

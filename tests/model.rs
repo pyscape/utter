@@ -976,6 +976,42 @@ fn speaker_evidence_rides_every_word_list_whatever_the_blocks() {
         .any(|e| e.contains("\"spk")));
 }
 
+// [[rr:TD-14#A model set mid-stream starts at the current utterance]]
+#[test]
+fn a_speaker_model_set_after_a_final_replays_the_utterance_kept() {
+    let (Some(dir), Some(sdir)) = (model_dir(), spk_dir()) else {
+        return;
+    };
+    let m = Model::open(&dir).unwrap();
+    let s = SpeakerModel::open(&sdir).unwrap();
+    let gap = vec![0i16; 16000];
+    let audio: Vec<i16> = [clip("yes"), gap.clone(), clip("seven"), gap, clip("no")].concat();
+    let run = |every: bool| {
+        let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+        rec.set_words(true);
+        let (mut finals, mut set) = (Vec::new(), false);
+        for b in audio.chunks(640) {
+            if !finals.is_empty() && ((every && finals.len() == 1) || !set) {
+                rec.set_spk_model(Some(&s)).unwrap();
+                set = true;
+            }
+            if rec.accept(b).endpoint {
+                finals.push(rec.result().to_string());
+            }
+        }
+        finals.push(rec.final_result().to_string());
+        finals
+    };
+    let once = run(false);
+    assert!(once.len() >= 3, "{once:?}");
+    assert!(!once[0].contains("spk"));
+    assert!(
+        once[1..].iter().any(|f| f.contains("\"spk_frames\"")),
+        "{once:?}"
+    );
+    assert_eq!(once, run(true));
+}
+
 #[test]
 fn speaker_evidence_needs_the_models_rate_and_goes_when_removed() {
     let (Some(dir), Some(sdir)) = (model_dir(), spk_dir()) else {

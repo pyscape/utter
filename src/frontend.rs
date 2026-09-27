@@ -12,7 +12,9 @@ pub struct OnlineMfcc {
     remainder: Vec<f32>,
     /// Sample index of `remainder[0]` in the stream.
     remainder_offset: usize,
-    pub frames: Vec<Vec<f32>>,
+    /// Frames from `frames_first` on; those before it are gone.
+    frames: Vec<Vec<f32>>,
+    frames_first: usize,
     input_finished: bool,
 }
 
@@ -23,8 +25,17 @@ impl OnlineMfcc {
             remainder: Vec::new(),
             remainder_offset: 0,
             frames: Vec::new(),
+            frames_first: 0,
             input_finished: false,
         }
+    }
+
+    /// A stream whose first frame is `frame`: its samples begin at that frame's start.
+    pub fn starting_at(opts: &MfccOptions, frame: usize) -> Self {
+        let mut m = OnlineMfcc::new(opts);
+        m.frames_first = frame;
+        m.remainder_offset = frame * m.mfcc.frame_shift;
+        m
     }
 
     pub fn dim(&self) -> usize {
@@ -37,7 +48,7 @@ impl OnlineMfcc {
         let (len, shift) = (self.mfcc.frame_len, self.mfcc.frame_shift);
         let mut row = vec![0.0f32; self.mfcc.dim()];
         loop {
-            let start = self.frames.len() * shift;
+            let start = self.num_frames_ready() * shift;
             if start < self.remainder_offset {
                 unreachable!("frame start before the retained samples");
             }
@@ -50,7 +61,7 @@ impl OnlineMfcc {
             self.frames.push(row.clone());
         }
         // Drop samples no future frame will read.
-        let next_start = self.frames.len() * shift;
+        let next_start = self.num_frames_ready() * shift;
         if next_start > self.remainder_offset {
             let drop = next_start - self.remainder_offset;
             self.remainder.drain(..drop.min(self.remainder.len()));
@@ -67,7 +78,25 @@ impl OnlineMfcc {
     }
 
     pub fn num_frames_ready(&self) -> usize {
-        self.frames.len()
+        self.frames_first + self.frames.len()
+    }
+
+    pub fn frame(&self, t: usize) -> &[f32] {
+        &self.frames[t - self.frames_first]
+    }
+
+    /// The frames kept, and the frame the first of them is.
+    pub fn frames(&self) -> (&[Vec<f32>], usize) {
+        (&self.frames, self.frames_first)
+    }
+
+    /// Frames before `frame` will not be read again.
+    pub fn forget_before(&mut self, frame: usize) {
+        let n = frame
+            .saturating_sub(self.frames_first)
+            .min(self.frames.len());
+        self.frames.drain(..n);
+        self.frames_first += n;
     }
 }
 
@@ -90,8 +119,8 @@ impl<'a> FeaturePipeline<'a> {
     pub fn accept(&mut self, samples: &[f32]) {
         self.mfcc.accept(samples);
         if let Some(iv) = self.ivector.as_mut() {
-            while self.ivector_pushed < self.mfcc.frames.len() {
-                iv.push_frame(&self.mfcc.frames[self.ivector_pushed]);
+            while self.ivector_pushed < self.mfcc.num_frames_ready() {
+                iv.push_frame(self.mfcc.frame(self.ivector_pushed));
                 self.ivector_pushed += 1;
             }
         }
