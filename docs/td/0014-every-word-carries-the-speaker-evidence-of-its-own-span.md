@@ -53,7 +53,8 @@ frames.
 - **A 16 kHz model such as TitaNet or CAM++.** Their encoders average
   over the whole input inside every block, so each partial reruns the
   network from the start, and they ship as ONNX, which this crate does
-  not read. Not taken; the benchmark page measures them beside the
+  not read. Not taken here; TitaNet-small is taken on those terms in
+  `[[rr:TD-15]]`, and the benchmark page measures them beside the
   x-vector on the same words.
 
 ## Decision outcome
@@ -212,4 +213,4 @@ benchmark page measures what the evidence identifies.
 - `[[rr:TD-2#Scope]]` no longer excludes speaker vectors; this record
   is where they are specified.
 - A model of another architecture needs its own record: this one fixes
-  the pooling the runtime computes.
+  the pooling the runtime computes. TitaNet-small's is `[[rr:TD-15]]`.
