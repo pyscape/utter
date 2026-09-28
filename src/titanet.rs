@@ -1125,6 +1125,8 @@ mod tests {
     }
 
     #[test]
+    // Miri perturbs float intrinsics by a few ULP, so the exact-bytes compare below only holds natively.
+    #[cfg_attr(miri, ignore)]
     fn a_tiny_model_embeds_the_same_bytes_in_any_slices() {
         let m = tiny_model();
         assert_eq!(m.dim(), 3);
@@ -1169,6 +1171,8 @@ mod tests {
     }
 
     #[test]
+    // Miri perturbs float intrinsics by a few ULP, so the exact-bytes compare below only holds natively.
+    #[cfg_attr(miri, ignore)]
     fn a_job_starts_over_on_begin() {
         let m = tiny_model();
         let (a, b) = (signal(6_000), signal(9_000));

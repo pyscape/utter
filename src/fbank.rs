@@ -221,6 +221,8 @@ mod tests {
     }
 
     #[test]
+    // Miri perturbs ln() by a few ULP, so the exact-bytes compare below only holds natively.
+    #[cfg_attr(miri, ignore)]
     fn a_zero_frame_is_the_log_floor() {
         let mut f = Fbank::new();
         let mut out = vec![0.0; NUM_BANDS];
