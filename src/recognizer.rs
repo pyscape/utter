@@ -476,6 +476,7 @@ struct SpkWork {
     /// Jobs numbered below this were forgotten and their results are dropped.
     first_kept: u64,
     stop: bool,
+    running: bool,
     /// A sleep before each job, for tests that make the thread lag.
     delay: std::time::Duration,
     /// Time spent embedding.
@@ -583,6 +584,7 @@ fn spk_thread_main(shared: &SpkShared, model: &TitaNet, sample_rate: f32) {
                     return;
                 }
                 if let Some(j) = work.jobs.pop_front() {
+                    work.running = true;
                     break (j, work.delay);
                 }
                 work = shared
@@ -607,6 +609,7 @@ fn spk_thread_main(shared: &SpkShared, model: &TitaNet, sample_rate: f32) {
         let spent = began.elapsed();
         let mut work = lock();
         work.busy += spent;
+        work.running = false;
         if next.number >= work.first_kept {
             work.done.insert(next.number, pooled);
         }
@@ -1056,6 +1059,22 @@ impl<'m> Recognizer<'m> {
     pub fn set_spk_thread_delay(&mut self, delay: std::time::Duration) {
         if let Some(t) = self.spk_spans.as_ref().and_then(|sp| sp.thread.as_ref()) {
             t.work().delay = delay;
+        }
+    }
+
+    /// Wait until the thread has finished every span it was given; for tests that make it lead.
+    #[doc(hidden)]
+    pub fn spk_thread_settle(&self) {
+        let Some(t) = self.spk_spans.as_ref().and_then(|sp| sp.thread.as_ref()) else {
+            return;
+        };
+        let mut work = t.work();
+        while work.running || !work.jobs.is_empty() {
+            work = t
+                .shared
+                .wake
+                .wait(work)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 
@@ -3065,6 +3084,7 @@ mod tests {
         Some((Model::open(&dir).ok()?, SpeakerModel::open(&tn).ok()?))
     }
 
+    #[derive(Clone, Copy)]
     struct TnRun<'a> {
         /// Block sizes in samples, taken in turn.
         blocks: &'a [usize],
@@ -3074,6 +3094,13 @@ mod tests {
         margin: Option<f32>,
         /// A seed for a budget drawn afresh before every block, or the default budget.
         budgets: Option<u64>,
+        threads: bool,
+        /// Where the thread is switched the other way, in samples.
+        switch_at: Option<usize>,
+        /// A sleep before each of the thread's jobs, so that it lags.
+        lag: Option<std::time::Duration>,
+        /// After each block, wait for the thread to finish, so that it leads.
+        lead: bool,
     }
 
     impl TnRun<'_> {
@@ -3084,6 +3111,10 @@ mod tests {
                 readings: 0,
                 margin: None,
                 budgets: None,
+                threads: true,
+                switch_at: None,
+                lag: None,
+                lead: false,
             }
         }
     }
@@ -3100,12 +3131,19 @@ mod tests {
         rec.set_alternatives(run.readings);
         rec.set_max_alternatives(run.readings);
         rec.set_endpoint_floor_margin(run.margin);
+        rec.set_spk_threads(run.threads);
         let mut seed = run.budgets.unwrap_or(0);
         let (mut out, mut at, mut i) = (Vec::new(), 0, 0);
         while at < audio.len() {
             let b = &audio[at..(at + run.blocks[i % run.blocks.len()]).min(audio.len())];
             if run.set_at == Some(at) || run.set_at.is_some_and(|s| s > at && s < at + b.len()) {
                 rec.set_spk_model(Some(spk)).unwrap();
+                if let Some(lag) = run.lag {
+                    rec.set_spk_thread_delay(lag);
+                }
+            }
+            if run.switch_at.is_some_and(|s| s >= at && s < at + b.len()) {
+                rec.set_spk_threads(!run.threads);
             }
             if run.budgets.is_some() {
                 seed ^= seed << 13;
@@ -3117,6 +3155,9 @@ mod tests {
                 out.push(rec.result().to_string());
             } else {
                 out.push(rec.partial().to_string());
+            }
+            if run.lead {
+                rec.spk_thread_settle();
             }
             at += b.len();
             i += 1;
@@ -3214,11 +3255,17 @@ mod tests {
         let audio = tn_audio();
         let mut carried = 0;
         for blocks in TN_BLOCKS {
-            for budgets in [None, Some(0x2545_f491), Some(7)] {
+            for (threads, budgets) in [
+                (true, None),
+                (false, None),
+                (false, Some(0x2545_f491)),
+                (false, Some(7)),
+            ] {
                 for readings in [0, 3] {
                     let run = TnRun {
                         readings,
                         budgets,
+                        threads,
                         ..TnRun::plain(blocks)
                     };
                     let got = tn_results(&m, &spk, &audio, &run);
@@ -3304,6 +3351,66 @@ mod tests {
             assert!(spans.is_subset(&from_start));
             let stripped: Vec<String> = late.iter().map(|r| without_spk(r)).collect();
             assert_eq!(stripped, without);
+        }
+    }
+
+    /// The thread lagging behind the deadlines or finishing ahead of them gives the same bytes.
+    /// `[[rr:TD-16#Verification]]`
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_thread_lagging_or_leading_gives_the_same_results() {
+        let Some((m, spk)) = titanet_models() else {
+            return;
+        };
+        let audio = tn_audio();
+        for blocks in [TN_BLOCKS[2], TN_BLOCKS[4]] {
+            for readings in [0, 3] {
+                let run = TnRun {
+                    readings,
+                    ..TnRun::plain(blocks)
+                };
+                let free = tn_results(&m, &spk, &audio, &run);
+                let lag = Some(std::time::Duration::from_millis(60));
+                let lagging = tn_results(&m, &spk, &audio, &TnRun { lag, ..run });
+                let leading = tn_results(&m, &spk, &audio, &TnRun { lead: true, ..run });
+                assert!(!check_evidence(&spk, &audio, &free).is_empty());
+                assert_eq!(lagging, free);
+                assert_eq!(leading, free);
+            }
+        }
+    }
+
+    /// Switching the thread on or off mid-stream carries the queued spans over, and every span's
+    /// evidence is still the stateless call's.
+    /// `[[rr:TD-16#Multi-threaded by default, single-threaded by configuration]]`
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_thread_switched_mid_stream_gives_the_same_evidence() {
+        let Some((m, spk)) = titanet_models() else {
+            return;
+        };
+        let audio = tn_audio();
+        let without = tn_results(
+            &m,
+            &spk,
+            &audio,
+            &TnRun {
+                set_at: None,
+                ..TnRun::plain(TN_BLOCKS[2])
+            },
+        );
+        for threads in [true, false] {
+            for switch_at in [0, 8000, 24000, 40000] {
+                let run = TnRun {
+                    threads,
+                    switch_at: Some(switch_at),
+                    ..TnRun::plain(TN_BLOCKS[2])
+                };
+                let got = tn_results(&m, &spk, &audio, &run);
+                assert!(!check_evidence(&spk, &audio, &got).is_empty());
+                let stripped: Vec<String> = got.iter().map(|r| without_spk(r)).collect();
+                assert_eq!(stripped, without);
+            }
         }
     }
 }
