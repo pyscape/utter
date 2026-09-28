@@ -145,7 +145,7 @@ scratch a recognizer keeps for one embedding at about 3.5 MB.
 ### Any span can be embedded from any thread
 
 The model embeds any span it is given, without a recognizer: in Rust
-SpeakerModel::embed(&[f32]) -> Result<Vec<f32>> on 16 kHz samples in
+`SpeakerModel::embed(&[f32]) -> Result<Vec<f32>>` on 16 kHz samples in
 [-1, 1], and in C
 
 ```c
