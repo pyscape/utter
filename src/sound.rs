@@ -347,7 +347,7 @@ fn push_tenths(out: &mut String, v: f64) {
     use std::fmt::Write;
     let scaled = v * 10.0;
     let n = scaled.round();
-    if !(n.abs() < 1e9) || (scaled - n).abs() > 0.499_99 {
+    if n.is_nan() || n.abs() >= 1e9 || (scaled - n).abs() > 0.499_99 {
         let _ = write!(out, "{v:.1}");
         return;
     }
@@ -609,7 +609,7 @@ mod tests {
 
     // [[rr:TD-17#Each band is measured against its own floor]]
     #[test]
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn each_floor_is_its_bands_hop_at_the_rank() {
         let bands = 3;
         let mut track = SoundTrack::new(bands);
