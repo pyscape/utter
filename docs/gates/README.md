@@ -15,3 +15,7 @@ the Speech Commands page's wordless pass: how often either engine puts a
 word at rank 0, among the rivals or in a final on a block the audio says
 carries no speech, over the replay corpus, by grammar and by the take
 property a word that is neither held nor straddling goes with.
+
+`small-models.md` holds the G2 and G5 bars applied to the German, French,
+Spanish and Russian small models, on Common Voice's Single Word Target
+segment, with the English model's segment figure beside theirs.
