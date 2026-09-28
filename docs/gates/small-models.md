@@ -4,7 +4,7 @@ Gates: `[[rr:TD-2#Verification and acceptance]]`, the G2 and G5 bars as `g2-g5-s
 
 ## What ran
 
-- Run 2026-09-27 22:30:52Z, utter 36b0a5b, vosk 0.3.45, utterpy 0.0.5, model vosk-model-small-de-0.15, vosk-model-small-fr-0.22, vosk-model-small-es-0.42, vosk-model-small-ru-0.22, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `/home/jared/Repos/utter-bench-data/site-765482d/utterpy/__init__.py` built from utter 765482d7b70a6d3f5c4071e56e280b7d5df7b598, **not** the checkout as it stands (36b0a5b).
+- Run 2026-09-27 22:30:52Z, utter 36b0a5b, vosk 0.3.45, utterpy 0.0.5, model vosk-model-small-de-0.15, vosk-model-small-fr-0.22, vosk-model-small-es-0.42, vosk-model-small-ru-0.22, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `site-765482d/utterpy/__init__.py` built from utter 765482d7b70a6d3f5c4071e56e280b7d5df7b598, **not** the checkout as it stands (36b0a5b).
 - Models: the latest small model per language from alphacephei (Apache 2.0), stock configuration, both engines reading one copy whose `mfcc.conf` adds `--dither=0`.
 - Corpus: Common Voice 7.0, Single Word Target segment (CC0), every validated clip of the language, converted from mp3 to 16 kHz mono by sox without dither. A take is up to 20 of one speaker's clips back to back, so a segment closes on the pauses the recordings carry.
 - Grammar: the language's distinct prompts (the digits, yes, no, and the segment's wake words) that the model's vocabulary holds, no unknown-word symbol.

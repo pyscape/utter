@@ -376,7 +376,7 @@
   "utter_revision": "ec82d1c",
   "source_dirty": false,
   "docs_dirty": false,
-  "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
+  "wheel_path": "site-packages/utterpy/__init__.py",
   "wheel_revision": "ec82d1cffd8f9ca50cfc6901693d44d36376e97c",
   "wheel_matches_head": true,
   "engines": {
@@ -388,7 +388,7 @@
   "python": "3.14.4",
   "block_ms": 40
  },
- "provenance_line": "Run 2026-09-13 05:11:02Z, utter ec82d1c, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding /home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py built from utter ec82d1cffd8f9ca50cfc6901693d44d36376e97c, the checkout's HEAD.",
+ "provenance_line": "Run 2026-09-13 05:11:02Z, utter ec82d1c, vosk 0.3.45, utterpy 0.0.1, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding site-packages/utterpy/__init__.py built from utter ec82d1cffd8f9ca50cfc6901693d44d36376e97c, the checkout's HEAD.",
  "args": {
   "corpus": "the 2026-08-30 replay set",
   "model": "vosk-model-small-en-us-0.15",
