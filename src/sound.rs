@@ -13,16 +13,18 @@ pub fn certainty(row: &[f32], scale: f32) -> f64 {
         return 1.0;
     }
     let inv = 1.0 / scale;
-    let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     #[cfg(target_arch = "x86_64")]
     let (z, t) = if crate::gemm::have_avx2() {
-        // SAFETY: the CPU has AVX2 and FMA.
-        unsafe { softmax_sums_avx2(row, max, inv) }
+        // SAFETY: the CPU has AVX2.
+        unsafe {
+            let max = avx2::row_max(row);
+            avx2::softmax_sums(row, max, inv)
+        }
     } else {
-        softmax_sums(row, max, inv)
+        softmax_sums(row, row_max(row), inv)
     };
     #[cfg(not(target_arch = "x86_64"))]
-    let (z, t) = softmax_sums(row, max, inv);
+    let (z, t) = softmax_sums(row, row_max(row), inv);
     let entropy = z.ln() - t / z;
     (1.0 - entropy / (row.len() as f64).ln()).clamp(0.0, 1.0)
 }
@@ -30,6 +32,11 @@ pub fn certainty(row: &[f32], scale: f32) -> f64 {
 /// Lanes the softmax's sums run in. Fixed, and with no fused multiply-add in Rust unless asked
 /// for, so the AVX2 build adds in the same order as any other and gives the same bits.
 const LANES: usize = 8;
+
+#[inline(always)]
+fn row_max(row: &[f32]) -> f32 {
+    row.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+}
 
 /// `sum e^d` and `sum e^d d` over `d = (x - max) * inv`, the softmax's normaliser and the
 /// numerator of its mean log.
@@ -47,6 +54,18 @@ fn softmax_sums(row: &[f32], max: f32, inv: f32) -> (f64, f64) {
             t[k] += e * d;
         }
     }
+    finish_sums(z, t, rest, max, inv)
+}
+
+/// The row's last, partial chunk into the first lanes, then the lanes' sums in `f64`.
+#[inline(always)]
+fn finish_sums(
+    mut z: [f32; LANES],
+    mut t: [f32; LANES],
+    rest: &[f32],
+    max: f32,
+    inv: f32,
+) -> (f64, f64) {
     for (k, &x) in rest.iter().enumerate() {
         let d = (x - max) * inv;
         let e = exp_nonpositive(d);
@@ -57,11 +76,92 @@ fn softmax_sums(row: &[f32], max: f32, inv: f32) -> (f64, f64) {
     (sum(z), sum(t))
 }
 
+/// [`softmax_sums`] and [`row_max`] eight lanes to a register, each lane's operations those of
+/// the portable path in its order: a division where it divides, no fused multiply-add.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
-unsafe fn softmax_sums_avx2(row: &[f32], max: f32, inv: f32) -> (f64, f64) {
-    softmax_sums(row, max, inv)
+mod avx2 {
+    use super::{LANES, ROUND};
+    use std::arch::x86_64::*;
+
+    /// The maximum is exact in any order, but for the sign of a zero, which no sum can see.
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn row_max(row: &[f32]) -> f32 {
+        let chunks = row.chunks_exact(LANES);
+        let rest = chunks.remainder();
+        let mut m = _mm256_set1_ps(f32::NEG_INFINITY);
+        // The running maximum second: `max_ps` returns its second operand against a NaN, so a
+        // NaN in the row loses, as it does to `f32::max`.
+        for c in chunks {
+            // SAFETY: the chunk holds eight floats; the caller checked for AVX2.
+            m = _mm256_max_ps(unsafe { _mm256_loadu_ps(c.as_ptr()) }, m);
+        }
+        let mut lanes = [0.0f32; LANES];
+        // SAFETY: the array holds eight floats.
+        unsafe { _mm256_storeu_ps(lanes.as_mut_ptr(), m) };
+        super::row_max(&lanes).max(super::row_max(rest))
+    }
+
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn softmax_sums(row: &[f32], max: f32, inv: f32) -> (f64, f64) {
+        let chunks = row.chunks_exact(LANES);
+        let rest = chunks.remainder();
+        let (maxv, invv) = (_mm256_set1_ps(max), _mm256_set1_ps(inv));
+        let mut z = _mm256_setzero_ps();
+        let mut t = _mm256_setzero_ps();
+        for c in chunks {
+            // SAFETY: the chunk holds eight floats; the caller checked for AVX2.
+            let x = unsafe { _mm256_loadu_ps(c.as_ptr()) };
+            let d = _mm256_mul_ps(_mm256_sub_ps(x, maxv), invv);
+            let e = exp(d);
+            z = _mm256_add_ps(z, e);
+            t = _mm256_add_ps(t, _mm256_mul_ps(e, d));
+        }
+        let (mut zs, mut ts) = ([0.0f32; LANES], [0.0f32; LANES]);
+        // SAFETY: each array holds eight floats.
+        unsafe {
+            _mm256_storeu_ps(zs.as_mut_ptr(), z);
+            _mm256_storeu_ps(ts.as_mut_ptr(), t);
+        }
+        super::finish_sums(zs, ts, rest, max, inv)
+    }
+
+    /// [`exp_nonpositive`](super::exp_nonpositive) on eight lanes.
+    #[target_feature(enable = "avx2")]
+    fn exp(x: __m256) -> __m256 {
+        let round = _mm256_set1_ps(ROUND);
+        let x = _mm256_max_ps(x, _mm256_set1_ps(-87.0));
+        let y = _mm256_add_ps(
+            _mm256_mul_ps(x, _mm256_set1_ps(std::f32::consts::LOG2_E)),
+            round,
+        );
+        let n = _mm256_sub_ps(y, round);
+        let r = _mm256_add_ps(
+            _mm256_sub_ps(x, _mm256_mul_ps(n, _mm256_set1_ps(0.693_359_4))),
+            _mm256_mul_ps(n, _mm256_set1_ps(2.121_944_4e-4)),
+        );
+        let p = _mm256_add_ps(
+            _mm256_set1_ps(1.0 / 720.0),
+            _mm256_div_ps(r, _mm256_set1_ps(5040.0)),
+        );
+        let p = _mm256_add_ps(_mm256_set1_ps(1.0 / 120.0), _mm256_mul_ps(r, p));
+        let p = _mm256_add_ps(_mm256_set1_ps(1.0 / 24.0), _mm256_mul_ps(r, p));
+        let p = _mm256_add_ps(_mm256_set1_ps(1.0 / 6.0), _mm256_mul_ps(r, p));
+        let p = _mm256_add_ps(_mm256_set1_ps(0.5), _mm256_mul_ps(r, p));
+        let p = _mm256_add_ps(_mm256_set1_ps(1.0), _mm256_mul_ps(r, p));
+        let p = _mm256_add_ps(_mm256_set1_ps(1.0), _mm256_mul_ps(r, p));
+        let two_n = _mm256_castsi256_ps(_mm256_slli_epi32::<23>(_mm256_add_epi32(
+            _mm256_sub_epi32(
+                _mm256_castps_si256(y),
+                _mm256_set1_epi32(ROUND.to_bits().cast_signed()),
+            ),
+            _mm256_set1_epi32(127),
+        )));
+        _mm256_mul_ps(p, two_n)
+    }
 }
+
+/// Adding 1.5 * 2^23 leaves the nearest integer in the low mantissa bits.
+const ROUND: f32 = 12_582_912.0;
 
 /// `e^x` for `x <= 0` within about one ulp, in operations a compiler can run across lanes: `2^n
 /// e^r` with `n` the nearest integer to `x / ln 2`, `e^r` by its Taylor series to the seventh power,
@@ -69,8 +169,6 @@ unsafe fn softmax_sums_avx2(row: &[f32], max: f32, inv: f32) -> (f64, f64) {
 /// terms can tell from zero.
 #[inline(always)]
 fn exp_nonpositive(x: f32) -> f32 {
-    // Adding 1.5 * 2^23 leaves the nearest integer in the low mantissa bits.
-    const ROUND: f32 = 12_582_912.0;
     let x = x.max(-87.0);
     let y = x * std::f32::consts::LOG2_E + ROUND;
     let n = y - ROUND;
@@ -516,6 +614,44 @@ mod tests {
                 softmax_certainty_portable(&row, scale),
                 "every build adds alike"
             );
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn the_avx2_sums_are_the_portable_sums_bit_for_bit() {
+        if !crate::gemm::have_avx2() {
+            return;
+        }
+        let mut s = 17u64;
+        let mut next = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 40) as f32 / (1u64 << 24) as f32
+        };
+        for (len, spread) in (1..=41)
+            .map(|n| (n, 30.0))
+            .chain([(2192, 30.0), (2192, 300.0)])
+        {
+            for _ in 0..50 {
+                let row: Vec<f32> = (0..len).map(|_| next() * spread - spread).collect();
+                for scale in [0.1, 0.7, 1.0] {
+                    let max = row_max(&row);
+                    let want = softmax_sums(&row, max, 1.0 / scale);
+                    // SAFETY: the CPU has AVX2.
+                    let (got_max, got) = unsafe {
+                        (
+                            avx2::row_max(&row),
+                            avx2::softmax_sums(&row, max, 1.0 / scale),
+                        )
+                    };
+                    assert_eq!(got_max.to_bits(), max.to_bits(), "{len}");
+                    assert_eq!(got.0.to_bits(), want.0.to_bits(), "{len} {scale}");
+                    assert_eq!(got.1.to_bits(), want.1.to_bits(), "{len} {scale}");
+                }
+            }
         }
     }
 
