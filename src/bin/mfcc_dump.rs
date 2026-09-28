@@ -21,11 +21,12 @@ fn main() {
         mfcc.accept(chunk);
     }
     let mut out = std::io::BufWriter::new(std::fs::File::create(&args[2]).expect("out"));
-    let rows = i32::try_from(mfcc.frames.len()).expect("header dimension fits i32");
+    let (frames, _) = mfcc.frames();
+    let rows = i32::try_from(frames.len()).expect("header dimension fits i32");
     let cols = i32::try_from(mfcc.dim()).expect("header dimension fits i32");
     out.write_all(&rows.to_le_bytes()).unwrap();
     out.write_all(&cols.to_le_bytes()).unwrap();
-    for f in &mfcc.frames {
+    for f in frames {
         for v in f {
             out.write_all(&v.to_le_bytes()).unwrap();
         }

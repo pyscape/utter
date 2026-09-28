@@ -91,7 +91,10 @@ originating from `i16`.
 
 The shared path owns the existing input slicing, feature advancement,
 silence weighting, PCM accounting, stability updates and endpoint check.
-Do not add an integer cast anywhere on the normalized float path.
+It also feeds the speaker stream,
+`[[rr:TD-14#The front end is the model's own]]`.
+Do not add an integer cast anywhere on the normalized float path, the
+speaker stream's input included.
 Preserve the old call and decoder-advance order so an equivalent integer
 input does not change recognition behavior.
 
@@ -158,7 +161,11 @@ which incomplete result, if any, to publish at that discontinuity.
 
 Energy and floor results describe the waveform utter receives. When that
 waveform has been filtered, raw-microphone thresholds are not automatically
-valid. The recognizer applies its configured endpoint rules as before;
+valid. Speaker evidence also describes the waveform utter receives,
+`[[rr:TD-14#Evidence is pooled over a span]]`: behind an extractor, a
+profile enrolled from unfiltered audio is not automatically valid against
+it, and profiles and their thresholds remain the host's.
+The recognizer applies its configured endpoint rules as before;
 speaker rejection policy stays with the extractor and application.
 
 ### Compatibility is verified at the input and result boundaries

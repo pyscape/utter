@@ -108,5 +108,7 @@ pub mod wav;
 pub const REVISION: &str = env!("UTTER_REVISION");
 
 pub use model::Model;
-pub use recognizer::{Endpoint, Recognizer, RecognizerOptions, Step};
+pub use recognizer::{
+    AudioInputError, AudioInputErrorKind, Endpoint, Recognizer, RecognizerOptions, Step,
+};
 pub use speaker::SpeakerModel;

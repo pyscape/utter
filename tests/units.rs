@@ -101,8 +101,8 @@ fn mfcc_frame_count_and_shape() {
     for chunk in tone.chunks(640) {
         online.accept(chunk);
     }
-    assert_eq!(online.frames.len(), 98);
-    for (t, row) in online.frames.iter().enumerate() {
+    assert_eq!(online.frames().0.len(), 98);
+    for (t, row) in online.frames().0.iter().enumerate() {
         for (a, b) in row.iter().zip(feats.row(t)) {
             assert!((a - b).abs() < 1e-4);
         }
