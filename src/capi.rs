@@ -258,6 +258,42 @@ pub unsafe extern "C" fn utter_recognizer_set_spk_model(
     }
 }
 
+/// With TitaNet set, nonzero embeds on a thread of the recognizer's own, the default; zero
+/// embeds in slices on the caller's thread.
+/// `[[rr:TD-16#Multi-threaded by default, single-threaded by configuration]]`
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_spk_threads(rec: *mut UtterRecognizer, on: c_int) {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner.set_spk_threads(on != 0);
+    }
+}
+
+/// Multi-threaded, nonzero makes a final queue its words and wait for every span given to the
+/// thread; zero drops a span still pending.
+/// `[[rr:TD-16#A final waits for its words: decided by measurement]]`
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_spk_final_waits(
+    rec: *mut UtterRecognizer,
+    on: c_int,
+) {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner.set_spk_final_waits(on != 0);
+    }
+}
+
+/// Multi-threaded, nonzero also queues the best path's last word over the audio its span holds
+/// at each advance; zero queues closed spans only.
+/// `[[rr:TD-16#The open word: decided by measurement]]`
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_spk_open_word(rec: *mut UtterRecognizer, on: c_int) {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner.set_spk_open_word(on != 0);
+    }
+}
+
 /// Free a recognizer and the last result string it returned; null is ignored.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_free(rec: *mut UtterRecognizer) {

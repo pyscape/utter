@@ -14,7 +14,7 @@ use crate::titanet::TitaNet;
 use std::collections::VecDeque;
 use std::io::Result;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Pooled frames below which a span carries no evidence.
 /// `[[rr:TD-14#A span needs a quarter second]]`
@@ -32,9 +32,10 @@ pub struct SpeakerModel {
     kind: Kind,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Kind {
     XVector(XVector),
-    TitaNet(TitaNet),
+    TitaNet(Arc<TitaNet>),
 }
 
 #[doc(hidden)]
@@ -107,7 +108,7 @@ impl SpeakerModel {
     /// this crate does not implement; for TitaNet, on weights that are not TitaNet-small's.
     pub fn open(dir: &Path) -> Result<SpeakerModel> {
         let kind = if dir.join("titanet.conf").exists() {
-            Kind::TitaNet(TitaNet::open(dir)?)
+            Kind::TitaNet(Arc::new(TitaNet::open(dir)?))
         } else {
             Kind::XVector(XVector::open(dir)?)
         };
@@ -152,6 +153,14 @@ impl SpeakerModel {
     pub fn titanet(&self) -> Option<&TitaNet> {
         match &self.kind {
             Kind::TitaNet(t) => Some(t),
+            Kind::XVector(_) => None,
+        }
+    }
+
+    /// The TitaNet network, for a thread that may outlive the borrow of this model.
+    pub(crate) fn titanet_shared(&self) -> Option<Arc<TitaNet>> {
+        match &self.kind {
+            Kind::TitaNet(t) => Some(Arc::clone(t)),
             Kind::XVector(_) => None,
         }
     }

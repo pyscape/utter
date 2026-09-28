@@ -52,6 +52,14 @@ void utter_recognizer_set_endpoint_floor_margin(UtterRecognizer *rec, float marg
 /* Speaker evidence on every result and word entry; NULL removes it. 0 on success, -1 on a null
    recognizer or a speaker model this audio cannot feed. */
 int utter_recognizer_set_spk_model(UtterRecognizer *rec, const UtterSpkModel *spk);
+/* With TitaNet set, nonzero embeds on a thread of the recognizer's own, the default; zero embeds
+   in slices on the caller's thread. Either before or after the model is set. */
+void utter_recognizer_set_spk_threads(UtterRecognizer *rec, int on);
+/* Two rules for the thread, off by default, that measurement decides between. Final waits:
+   nonzero makes a final queue its words and wait for every span given to the thread. Open word:
+   nonzero also queues the best path's last word over the audio its span holds at each advance. */
+void utter_recognizer_set_spk_final_waits(UtterRecognizer *rec, int on);
+void utter_recognizer_set_spk_open_word(UtterRecognizer *rec, int on);
 void utter_recognizer_set_alternatives(UtterRecognizer *rec, int n);
 void utter_recognizer_set_max_alternatives(UtterRecognizer *rec, int n);
 
