@@ -55,3 +55,4 @@ reaches for the rejected option. Implemented by is optional, because
 | TD-12 | The host's bound reads a wordless path at the floor as silence |
 | TD-13 | Preprocessors feed borrowed waveform samples directly into utter |
 | TD-14 | Every word carries the speaker evidence of its own span |
+| TD-15 | TitaNet-small is a native speaker model that embeds each word's span whole |
