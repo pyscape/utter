@@ -26,11 +26,15 @@ fn main() {
     let wav = read_wav(std::path::Path::new(&args[1])).expect("wav");
     let prefix = &args[2];
     let mut stream = SpeakerStream::new(&model, wav.sample_rate as f32).expect("stream");
-    for block in wav.samples.chunks(640) {
+    let samples: Vec<f32> = wav.samples.iter().map(|&s| f32::from(s)).collect();
+    for block in samples.chunks(640) {
         stream.accept(block);
     }
     stream.finish();
-    let (raw, normalized) = stream.features();
+    // The stream keeps the last 300 frames of features, more than a Speech Commands clip has.
+    let ((raw, 0), (normalized, 0)) = stream.features() else {
+        panic!("the clip is longer than the features the stream keeps");
+    };
     write_ark(&format!("{prefix}.mfcc.ark"), "utt", raw);
     write_ark(&format!("{prefix}.feats.ark"), "utt", normalized);
     let n = normalized.len();

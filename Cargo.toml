@@ -49,6 +49,14 @@ harness = false
 name = "titanet"
 harness = false
 
+[[bench]]
+name = "retained_heap"
+harness = false
+
+[[bench]]
+name = "float_delivery"
+harness = false
+
 [profile.release]
 opt-level = 3
 debug = 1

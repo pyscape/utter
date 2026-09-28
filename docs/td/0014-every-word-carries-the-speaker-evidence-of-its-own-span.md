@@ -53,7 +53,8 @@ frames.
 - **A 16 kHz model such as TitaNet or CAM++.** Their encoders average
   over the whole input inside every block, so each partial reruns the
   network from the start, and they ship as ONNX, which this crate does
-  not read. Not taken; the benchmark page measures them beside the
+  not read. Not taken here; TitaNet-small is taken on those terms in
+  `[[rr:TD-15]]`, and the benchmark page measures them beside the
   x-vector on the same words.
 
 ## Decision outcome
@@ -187,6 +188,18 @@ covers: the model's own extraction graph pools at most 401 frames,
 which only a span over four seconds would reach, and its vector
 differs from libvosk's there.
 
+### A model set mid-stream starts at the current utterance
+
+A recognizer keeps the audio of the current utterance only; each final
+drops what came before it, so a stream's memory does not grow with its
+length. A speaker model set while a stream is under way replays that
+audio, from the first 10 ms frame of the current utterance, and the
+speaker's stream begins there: its mean normalisation starts afresh at
+that frame, as it does at the start of a stream. Set before the first
+final, the evidence is the evidence of a model set at the start; set
+after one, it is not, because the frames before the utterance no
+longer enter the mean.
+
 ### Verification
 
 `scripts/speaker_oracle.py` checks the stages against Kaldi on 70
@@ -197,8 +210,10 @@ the decoder's own MFCC show the same take-dependent bound. The vector
 over the runtime's normalised features agrees with
 `nnet3-xvector-compute` without padding within 1.6e-3, cosine at least
 0.9999998. The model tests check that a word's evidence does not
-depend on the block size, or on when the speaker model was set. The
-benchmark page measures what the evidence identifies.
+depend on the block size, or on when in the first utterance the
+speaker model was set, and that a model set after a final gives the
+same results whether it is set once or again on every block of that
+utterance. The benchmark page measures what the evidence identifies.
 
 ## Consequences
 
@@ -212,4 +227,4 @@ benchmark page measures what the evidence identifies.
 - `[[rr:TD-2#Scope]]` no longer excludes speaker vectors; this record
   is where they are specified.
 - A model of another architecture needs its own record: this one fixes
-  the pooling the runtime computes.
+  the pooling the runtime computes. TitaNet-small's is `[[rr:TD-15]]`.

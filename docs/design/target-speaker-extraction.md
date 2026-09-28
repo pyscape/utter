@@ -18,7 +18,9 @@ The deployed library owns enrollment inference, speaker-conditioned
 separation, waveform reconstruction, and sample accounting. The application
 owns microphone capture, conversion to 16 kHz mono, device recovery, and
 delivery to utter. utter owns recognition, phrase lists, partials, word
-timing, and endpointing. Neither library depends on the other at runtime.
+timing, per-word speaker evidence
+(`[[rr:TD-14#Evidence is pooled over a span]]`), and endpointing.
+Neither library depends on the other at runtime.
 
 ```mermaid
 flowchart LR
@@ -851,6 +853,8 @@ For Alice-absent input, report
 `10*log10(mean(y^2)+1e-10)` output dBFS. Do not count already-silent
 mixtures as successful speaker suppression. Speech distortion,
 interferer leakage, and recognition errors are complementary measurements.
+A word that leaks through the extractor still meets the host's per-word
+speaker gate downstream, `[[rr:TD-14#Evidence is pooled over a span]]`.
 
 ### Recognition with utter and stock Vosk
 
