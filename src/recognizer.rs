@@ -760,7 +760,6 @@ impl<'m> Recognizer<'m> {
         if let Some(net) = model.titanet() {
             return self.set_titanet(model, net);
         }
-        self.spk_spans = None;
         let xvector = model.xvector().expect("TitaNet returned above");
         if xvector.frame_shift_ms() != self.model.mfcc_opts.frame_shift_ms {
             return Err(crate::kaldi_io::err(
@@ -780,6 +779,7 @@ impl<'m> Recognizer<'m> {
             stream.forget_before(self.frame_offset * self.model.conf.frame_subsampling_factor);
         }
         self.spk = Some(model);
+        self.spk_spans = None;
         self.spk_stream = self.pipeline.is_some().then_some(stream);
         Ok(())
     }
