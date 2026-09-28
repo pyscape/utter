@@ -179,6 +179,50 @@ pub unsafe extern "C" fn utter_spk_model_free(model: *mut UtterSpkModel) {
     }
 }
 
+/// Length of the model's speaker vector; -1 on a null handle.
+#[no_mangle]
+pub unsafe extern "C" fn utter_spk_model_dim(model: *const UtterSpkModel) -> c_int {
+    // SAFETY: null or a live handle from `utter_spk_model_new`.
+    unsafe { model.as_ref() }.map_or(-1, |m| c_int::try_from(m.inner.dim()).unwrap_or(-1))
+}
+
+/// TitaNet's embedding of `n` samples in [-1, 1] at `sample_rate` Hz, 16 kHz or faster, written
+/// to `out`: the dimension written, or -1 for an x-vector model, a null pointer, `cap` under the
+/// dimension, or a span the model refuses. `[[rr:TD-15#Any span can be embedded from any thread]]`
+#[no_mangle]
+pub unsafe extern "C" fn utter_spk_model_embed(
+    model: *const UtterSpkModel,
+    samples: *const c_float,
+    n: c_int,
+    sample_rate: c_float,
+    out: *mut c_float,
+    cap: c_int,
+) -> c_int {
+    // SAFETY: null or a live handle from `utter_spk_model_new`.
+    let Some(m) = (unsafe { model.as_ref() }) else {
+        return -1;
+    };
+    let (Ok(n), Ok(cap)) = (usize::try_from(n), usize::try_from(cap)) else {
+        return -1;
+    };
+    if samples.is_null() || out.is_null() || cap < m.inner.dim() {
+        return -1;
+    }
+    // SAFETY: the caller passes `n` readable samples.
+    let x = unsafe { std::slice::from_raw_parts(samples, n) };
+    match m.inner.embed_at_rate(x, sample_rate) {
+        Ok(v) => {
+            // SAFETY: the caller passes room for `cap` values, at least the dimension.
+            unsafe { std::slice::from_raw_parts_mut(out, v.len()) }.copy_from_slice(&v);
+            c_int::try_from(v.len()).unwrap_or(-1)
+        }
+        Err(e) => {
+            eprintln!("utter: {e}");
+            -1
+        }
+    }
+}
+
 /// vosk's `vosk_recognizer_set_spk_model`: speaker evidence on every result and word entry.
 /// Null removes it. 0 on success, -1 on a null recognizer or a speaker model this audio cannot
 /// feed. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#speaker-evidence>.
@@ -270,6 +314,31 @@ pub unsafe extern "C" fn utter_recognizer_set_endpoint_floor_margin(
     if let Some(r) = unsafe { rec.as_mut() } {
         r.inner
             .set_endpoint_floor_margin((margin_db > 0.0).then_some(margin_db));
+    }
+}
+
+/// With TitaNet set, nonzero queues the closed words of readings after the best path's; zero
+/// leaves them only spans the best path queued.
+/// `[[rr:TD-15#Readings and alternatives: decided by measurement]]`
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_spk_reading_jobs(
+    rec: *mut UtterRecognizer,
+    on: c_int,
+) {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner.set_spk_reading_jobs(on != 0);
+    }
+}
+
+/// With TitaNet and a floor margin set, nonzero cuts a span's frames within the margin of the
+/// floor at either edge before it is embedded; zero embeds it as reported.
+/// `[[rr:TD-15#The floor margin: decided by measurement]]`
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_spk_trim_floor(rec: *mut UtterRecognizer, on: c_int) {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner.set_spk_trim_floor(on != 0);
     }
 }
 
