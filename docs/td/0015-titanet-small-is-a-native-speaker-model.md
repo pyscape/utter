@@ -56,7 +56,8 @@ to 3.6 s and readings to 6.1 s.
   changes the vector the accuracy was measured on. Rejected.
 - **A second thread in the crate.** Evidence would arrive early and
   cost the recognizer's thread nothing, but when it arrives would depend
-  on the machine, and the crate owns no thread. Rejected.
+  on the machine, and the crate owns no thread. Rejected here; taken by
+  `[[rr:TD-16]]`, which publishes at a deadline counted in audio.
 - **TitaNet-large, or any size but small.** Large passes fewer of the
   page's words, 82.0%, at 3.4 times the cost. Rejected, as is CAM++.
 - **Embed a word on the block that closes it.** 2.2 to 4.1 ms more on
