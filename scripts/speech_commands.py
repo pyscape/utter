@@ -94,9 +94,20 @@ class GateRow(TypedDict):
     floor: float
 
 
+def recorded_path(path: str | Path, keep: int = 1) -> str:
+    """A local path as a page records it: its last `keep` components, never the machine's layout."""
+    return "/".join(Path(path).parts[-keep:])
+
+
 def recorded_args(args: dict[str, object]) -> dict[str, object]:
-    """A run's arguments as a page records them: an absolute path by its name alone."""
-    return {k: Path(v).name if isinstance(v, str) and Path(v).is_absolute() else v for k, v in args.items()}
+    """A run's arguments as a page records them: each absolute path, comma lists included, by name."""
+
+    def one(v: object) -> object:
+        if isinstance(v, str) and v.startswith("/"):
+            return ",".join(recorded_path(x) for x in v.split(","))
+        return v
+
+    return {k: one(v) for k, v in args.items()}
 
 
 def note(msg: str) -> None:
@@ -427,7 +438,7 @@ def provenance(args: argparse.Namespace, modules: Iterable[str]) -> dict[str, An
         utter_revision=head,
         source_dirty=bool(dirty),
         docs_dirty=bool(docs_dirty),
-        wheel_path=wheel_path,
+        wheel_path=wheel_path and recorded_path(wheel_path, 3),
         wheel_revision=wheel_rev,
         wheel_matches_head=same_revision(wheel_rev, rev, bool(dirty)),
         engines=versions,
@@ -492,7 +503,7 @@ def write_clip_records(path: str | Path, clips: Sequence[Clip], results: Mapping
     """One line per clip with every engine's reading, so two runs can be diffed."""
     with open(path, "w") as f:
         for label, clip in clips:
-            row = {"clip": str(clip), "label": label}
+            row = {"clip": recorded_path(clip, 2), "label": label}
             for name, r in results.items():
                 o = r["outcome"].get(str(clip))
                 if o is not None:

@@ -4,7 +4,7 @@
   "utter_revision": "765482d",
   "source_dirty": false,
   "docs_dirty": true,
-  "wheel_path": "/home/jared/Repos/utter-bench-data/site-765482d/utterpy/__init__.py",
+  "wheel_path": "site-765482d/utterpy/__init__.py",
   "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
   "wheel_matches_head": true,
   "engines": {
@@ -34,9 +34,9 @@
   "wordless_gap_floors": "-70,-60,-40",
   "wordless_words": 600,
   "no_streams": false,
-  "bound_runs": "/home/jared/Repos/utter-bench-data/page-runs/boundruns/b100.json,/home/jared/Repos/utter-bench-data/page-runs/boundruns/b300.json,/home/jared/Repos/utter-bench-data/page-runs/boundruns/b300-4.json,/home/jared/Repos/utter-bench-data/page-runs/boundruns/b300-8.json,/home/jared/Repos/utter-bench-data/page-runs/boundruns/b300-8-8.json"
+  "bound_runs": "b100.json,b300.json,b300-4.json,b300-8.json,b300-8-8.json"
  },
- "wheel": "/home/jared/Repos/utter-bench-data/site-765482d/utterpy/__init__.py",
+ "wheel": "site-765482d/utterpy/__init__.py",
  "grammar_size": 92,
  "seed": 20260912,
  "alternatives": 8,
