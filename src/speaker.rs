@@ -280,9 +280,13 @@ impl Net<'_> {
 pub struct SpeakerStream<'m> {
     model: &'m SpeakerModel,
     resampler: Option<LinearResample>,
+    /// The stream frame the audio begins at.
+    start: usize,
     mfcc: OnlineMfcc,
     cmn_sum: Vec<f64>,
+    /// Normalised frames from `normalized_first` on.
     normalized: Vec<Vec<f32>>,
+    normalized_first: usize,
     finished: bool,
     /// Audio accepted and not yet through the front end, which runs when rows are wanted.
     pending: Vec<i16>,
@@ -299,12 +303,17 @@ pub struct SpeakerStream<'m> {
 impl<'m> SpeakerStream<'m> {
     /// Audio at `sample_rate` is resampled to the model's rate, as Kaldi's online features do
     /// when the audio is faster. Slower audio is refused, as Kaldi refuses it by default.
+    pub fn new(model: &'m SpeakerModel, sample_rate: f32) -> Result<Self> {
+        Self::starting_at(model, sample_rate, 0)
+    }
+
+    /// [`new`](Self::new) for audio that begins at stream frame `frame`.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
         clippy::cast_sign_loss
     )]
-    pub fn new(model: &'m SpeakerModel, sample_rate: f32) -> Result<Self> {
+    pub fn starting_at(model: &'m SpeakerModel, sample_rate: f32, frame: usize) -> Result<Self> {
         let (rate, want) = (
             sample_rate.round() as i64,
             model.mfcc.sample_rate.round() as i64,
@@ -319,9 +328,11 @@ impl<'m> SpeakerStream<'m> {
         Ok(SpeakerStream {
             model,
             resampler,
-            mfcc: OnlineMfcc::new(&model.mfcc),
+            start: frame,
+            mfcc: OnlineMfcc::starting_at(&model.mfcc, frame),
             cmn_sum: vec![0.0; model.mfcc.num_ceps],
             normalized: Vec::new(),
+            normalized_first: frame,
             finished: false,
             pending: Vec::new(),
             input_hop: ((f64::from(model.mfcc.frame_shift_ms) * 0.001 * f64::from(sample_rate))
@@ -332,7 +343,7 @@ impl<'m> SpeakerStream<'m> {
                 origin: 0,
                 next: None,
                 rows: VecDeque::new(),
-                rows_first: 0,
+                rows_first: frame,
             }),
             #[cfg(test)]
             eager: EAGER.with(std::cell::Cell::get),
@@ -399,43 +410,71 @@ impl<'m> SpeakerStream<'m> {
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn normalize(&mut self) {
-        while self.normalized.len() < self.mfcc.frames.len() {
-            let t = self.normalized.len();
-            for (s, v) in self.cmn_sum.iter_mut().zip(&self.mfcc.frames[t]) {
+        while self.normalized_end() < self.mfcc.num_frames_ready() {
+            let t = self.normalized_end();
+            for (s, v) in self.cmn_sum.iter_mut().zip(self.mfcc.frame(t)) {
                 *s += f64::from(*v);
             }
-            if t >= CMN_WINDOW {
-                for (s, v) in self
-                    .cmn_sum
-                    .iter_mut()
-                    .zip(&self.mfcc.frames[t - CMN_WINDOW])
-                {
+            if t >= self.start + CMN_WINDOW {
+                for (s, v) in self.cmn_sum.iter_mut().zip(self.mfcc.frame(t - CMN_WINDOW)) {
                     *s -= f64::from(*v);
                 }
             }
-            let count = (t + 1).min(CMN_WINDOW) as f64;
-            let row = self.mfcc.frames[t]
+            let count = (t + 1 - self.start).min(CMN_WINDOW) as f64;
+            let row = self
+                .mfcc
+                .frame(t)
                 .iter()
                 .zip(&self.cmn_sum)
                 .map(|(v, s)| (f64::from(*v) - s / count) as f32)
                 .collect();
             self.normalized.push(row);
         }
+        self.mfcc
+            .forget_before(self.normalized_end().saturating_sub(CMN_WINDOW));
+        self.forget_normalized();
         #[cfg(test)]
         if self.eager {
             self.compute(&[(0, usize::MAX)]);
         }
     }
 
-    /// The model's features so far, before and after mean normalisation.
-    pub fn features(&self) -> (&[Vec<f32>], &[Vec<f32>]) {
-        (&self.mfcc.frames, &self.normalized)
+    fn normalized_end(&self) -> usize {
+        self.normalized_first + self.normalized.len()
+    }
+
+    /// Drop the normalised frames no row can read again: those before the network's left
+    /// context of the first row kept, or of the row the streamer would go on from.
+    fn forget_normalized(&mut self) {
+        let net = self
+            .net
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut lo = net.rows_first.min(net.next.unwrap_or(usize::MAX));
+        if lo <= self.start + RESTART_GAP {
+            lo = self.start;
+        }
+        let first = lo.saturating_sub(self.model.net.context.0);
+        let n = first
+            .saturating_sub(self.normalized_first)
+            .min(self.normalized.len());
+        self.normalized.drain(..n);
+        self.normalized_first += n;
+    }
+
+    /// The model's features kept, before and after mean normalisation, each with the frame
+    /// the first of them is.
+    pub fn features(&self) -> ((&[Vec<f32>], usize), (&[Vec<f32>], usize)) {
+        (
+            self.mfcc.frames(),
+            (&self.normalized, self.normalized_first),
+        )
     }
 
     /// One past the last frame whose row the input allows: the network's right context behind
     /// the input, or the input's end once it has finished.
     pub fn rows_end(&self) -> usize {
-        let ready = self.normalized.len();
+        let ready = self.normalized_end();
         if self.finished || ready == 0 {
             ready
         } else {
@@ -451,6 +490,7 @@ impl<'m> SpeakerStream<'m> {
     /// Rows before `frame` will not be pooled again.
     pub fn forget_before(&mut self, frame: usize) {
         self.net().forget_before(frame);
+        self.forget_normalized();
     }
 
     /// Compute the rows of `spans`, stream frames ascending and apart, as far as the features
@@ -515,7 +555,7 @@ impl<'m> SpeakerStream<'m> {
         }
         let start = match net.next {
             Some(n) if a <= n + RESTART_GAP => n,
-            _ if a <= RESTART_GAP => 0,
+            _ if a <= self.start + RESTART_GAP => self.start,
             _ => a,
         };
         if net.next != Some(start) {
@@ -547,9 +587,11 @@ impl<'m> SpeakerStream<'m> {
         rows_first: usize,
     ) -> usize {
         let mut kept = 0;
-        let ready = self.normalized.len();
+        let ready = self.normalized_end();
         let view = InputView {
             frames: &self.normalized,
+            base: self.normalized_first,
+            start: self.start,
             ready,
             finished: self.finished,
             limit: (to + self.model.net.context.1) as i64,
@@ -660,8 +702,15 @@ pub(crate) mod tests {
         let Some(m) = spk_model() else { return };
         let audio = [clip("yes"), clip("seven"), clip("no")].concat();
         let (mut eager, mut asked) = (stream(&m, &audio, true), stream(&m, &audio, false));
-        // The front end run once over all the audio gives the features it gives block by block.
-        assert_eq!(eager.features(), asked.features());
+        // The front end run once over all the audio gives the features it gives block by block,
+        // over the frames both keep.
+        let ((ef, ef0), (en, en0)) = eager.features();
+        let ((af, af0), (an, an0)) = asked.features();
+        let (f0, n0) = (ef0.max(af0), en0.max(an0));
+        assert_eq!(ef0 + ef.len(), af0 + af.len());
+        assert_eq!(en0 + en.len(), an0 + an.len());
+        assert_eq!(ef[f0 - ef0..], af[f0 - af0..]);
+        assert_eq!(en[n0 - en0..], an[n0 - an0..]);
         let n = asked.rows_end();
         // A late span first, so the network starts past a gap; then spans reaching back into
         // the gap, across it, and to the end.

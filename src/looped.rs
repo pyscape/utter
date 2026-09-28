@@ -12,8 +12,12 @@ use crate::nnet3::{InputView, Streamer};
 pub struct LoopedNnet<'m> {
     model: &'m Model,
     streamer: Streamer<'m>,
-    /// Log-likelihoods per output frame, acoustic scale applied, since the pipeline began.
-    outputs: Vec<Vec<f32>>,
+    /// Log-likelihoods, acoustic scale applied, one row per output frame from `outputs_first`:
+    /// the rows the decoder has not yet read.
+    outputs: Vec<f32>,
+    outputs_first: usize,
+    /// The frame `frame` last served; rows before it retire at the next chunk.
+    read: usize,
     chunks_computed: usize,
     /// Output frames before this one belong to earlier utterances on the same pipeline.
     frame_offset: usize,
@@ -25,6 +29,8 @@ impl<'m> LoopedNnet<'m> {
             model,
             streamer: model.net.streamer(),
             outputs: Vec::new(),
+            outputs_first: 0,
+            read: 0,
             chunks_computed: 0,
             frame_offset: 0,
         }
@@ -60,13 +66,25 @@ impl<'m> LoopedNnet<'m> {
         total.saturating_sub(self.frame_offset)
     }
 
-    /// Log-likelihood row for utterance frame `frame`, computing chunks as needed.
+    fn outputs_end(&self) -> usize {
+        self.outputs_first + self.outputs.len() / self.output_dim()
+    }
+
+    /// Log-likelihood row for utterance frame `frame`, computing chunks as needed. Frames are
+    /// asked for in order: rows before the last one asked for are gone.
     pub fn frame(&mut self, pipe: &mut FeaturePipeline, frame: usize) -> &[f32] {
         let absolute = frame + self.frame_offset;
-        while self.outputs.len() <= absolute {
+        assert!(
+            absolute >= self.read,
+            "output frames asked for out of order"
+        );
+        self.read = absolute;
+        while self.outputs_end() <= absolute {
             self.advance_chunk(pipe);
         }
-        &self.outputs[absolute]
+        let dim = self.output_dim();
+        let at = (absolute - self.outputs_first) * dim;
+        &self.outputs[at..at + dim]
     }
 
     fn advance_chunk(&mut self, pipe: &mut FeaturePipeline) {
@@ -94,27 +112,41 @@ impl<'m> LoopedNnet<'m> {
         }
         // Kaldi's chunk sees input rows up to the chunk end plus the right context, no further,
         // even when more frames are ready.
+        let (frames, base) = pipe.mfcc.frames();
         let view = InputView {
-            frames: &pipe.mfcc.frames,
+            frames,
+            base,
+            start: 0,
             ready,
             finished,
             limit: (end + rctx) as i64,
             first: -(lctx as i64),
         };
+        let dim = self.output_dim();
+        let retire = self.read.min(self.outputs_end()) - self.outputs_first;
+        self.outputs.drain(..retire * dim);
+        self.outputs_first += retire;
         let scale = self.model.conf.acoustic_scale;
         let (first, rows, cols) = self.streamer.advance(&view, &ivector);
+        assert_eq!(cols, dim, "output rows are not the network's output width");
         for (i, row) in rows.chunks_exact(cols).enumerate() {
             let Ok(t) = usize::try_from(first + i as i64) else {
                 continue;
             };
             if t.is_multiple_of(sf) {
-                assert_eq!(t / sf, self.outputs.len(), "output rows out of order");
-                self.outputs.push(row.iter().map(|v| v * scale).collect());
+                assert_eq!(
+                    t / sf,
+                    self.outputs_first + self.outputs.len() / dim,
+                    "output rows out of order"
+                );
+                self.outputs.extend(row.iter().map(|v| v * scale));
             }
         }
         self.chunks_computed += 1;
+        pipe.mfcc
+            .forget_before((self.chunks_computed * chunk).saturating_sub(lctx));
         assert!(
-            self.outputs.len() >= end / sf,
+            self.outputs_end() >= end / sf,
             "chunk produced too few output rows"
         );
     }

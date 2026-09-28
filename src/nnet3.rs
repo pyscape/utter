@@ -915,10 +915,14 @@ fn desc_refs(d: &Desc, out: &mut Vec<String>) {
     }
 }
 
-/// The input rows available to a pass: frames `[0, ready)`, padded before the first and, when
-/// finished, after the last up to `limit`.
+/// The input rows available to a pass: frames `[start, ready)`, padded before the first and,
+/// when finished, after the last up to `limit`.
 pub struct InputView<'a> {
+    /// Frames from `base` on; a pass reads none before it.
     pub frames: &'a [Vec<f32>],
+    pub base: usize,
+    /// The stream's first frame, repeated for the rows before it.
+    pub start: usize,
     pub ready: usize,
     pub finished: bool,
     /// Rows at or beyond this frame index are not available yet (exclusive frontier).
@@ -1012,8 +1016,8 @@ impl Streamer<'_> {
                 let rows = (b - a) as usize;
                 let mut d = vec![0.0f32; rows * dim];
                 for (i, t) in (a..b).enumerate() {
-                    let src = t.clamp(0, input.ready as i64 - 1) as usize;
-                    d[i * dim..(i + 1) * dim].copy_from_slice(&input.frames[src]);
+                    let src = t.clamp(input.start as i64, input.ready as i64 - 1) as usize;
+                    d[i * dim..(i + 1) * dim].copy_from_slice(&input.frames[src - input.base]);
                 }
                 Rows::Own(d, dim)
             }

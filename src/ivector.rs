@@ -591,18 +591,23 @@ impl IvectorInfo {
 /// asked for, and the current estimate.
 pub struct IvectorStream<'a> {
     info: &'a IvectorInfo,
+    /// Frames from `frames_first` on.
     frames: Vec<Vec<f32>>,
-    /// Running sums of the raw frames, for the CMVN window.
+    frames_first: usize,
+    /// Running sums of the raw frames before each frame from `prefix_first` on, for the CMVN
+    /// window.
     prefix: Vec<Vec<f64>>,
+    prefix_first: usize,
     /// What the last `cmvn_frame` call left, smoothed: sums then count.
     cmvn_stats: Vec<f64>,
     stats: OnlineIvectorStats,
     num_frames_stats: usize,
     current: Vec<f64>,
     input_finished: bool,
-    /// Pending weight changes per input frame, lowest frame first.
-    delta_weights: std::collections::BinaryHeap<std::cmp::Reverse<(usize, u32)>>,
-    delta_values: Vec<f32>,
+    /// Pending weight changes per input frame, lowest frame first, then in the order given;
+    /// the last field is the change's bits.
+    delta_weights: std::collections::BinaryHeap<std::cmp::Reverse<(usize, u64, u32)>>,
+    deltas_given: u64,
     delta_weights_provided: bool,
     most_recent_frame_with_weight: i64,
 }
@@ -615,14 +620,16 @@ impl<'a> IvectorStream<'a> {
         IvectorStream {
             info,
             frames: Vec::new(),
+            frames_first: 0,
             prefix: vec![vec![0.0; info.global_mean_stats.len() - 1]],
+            prefix_first: 0,
             cmvn_stats: vec![0.0; info.global_mean_stats.len()],
             stats: OnlineIvectorStats::new(dim, info.extractor.prior_offset, info.opts.max_count),
             num_frames_stats: 0,
             current,
             input_finished: false,
             delta_weights: std::collections::BinaryHeap::new(),
-            delta_values: Vec::new(),
+            deltas_given: 0,
             delta_weights_provided: false,
             most_recent_frame_with_weight: -1,
         }
@@ -632,9 +639,9 @@ impl<'a> IvectorStream<'a> {
     /// are reached.
     pub fn update_frame_weights(&mut self, deltas: &[(usize, f32)]) {
         for &(frame, w) in deltas {
-            let idx = u32::try_from(self.delta_values.len()).expect("too many frame weights");
-            self.delta_values.push(w);
-            self.delta_weights.push(std::cmp::Reverse((frame, idx)));
+            self.delta_weights
+                .push(std::cmp::Reverse((frame, self.deltas_given, w.to_bits())));
+            self.deltas_given += 1;
             if frame as i64 > self.most_recent_frame_with_weight {
                 self.most_recent_frame_with_weight = frame as i64;
             }
@@ -703,12 +710,12 @@ impl<'a> IvectorStream<'a> {
         let mut frame_weights: Vec<(usize, f32)> = Vec::new();
         while self.num_frames_stats <= frame {
             let t = self.num_frames_stats;
-            while let Some(std::cmp::Reverse((f, idx))) = self.delta_weights.peek().copied() {
+            while let Some(std::cmp::Reverse((f, _, w))) = self.delta_weights.peek().copied() {
                 if f > t {
                     break;
                 }
                 self.delta_weights.pop();
-                frame_weights.push((f, self.delta_values[idx as usize]));
+                frame_weights.push((f, f32::from_bits(w)));
             }
             if t == frame {
                 self.update_stats_for_frames(&frame_weights);
@@ -721,6 +728,45 @@ impl<'a> IvectorStream<'a> {
             self.num_frames_stats += 1;
         }
         self.update_stats_for_frames(&frame_weights);
+    }
+
+    fn frames_end(&self) -> usize {
+        self.frames_first + self.frames.len()
+    }
+
+    fn frame(&self, t: usize) -> &[f32] {
+        &self.frames[t - self.frames_first]
+    }
+
+    fn prefix(&self, t: usize) -> &[f64] {
+        &self.prefix[t - self.prefix_first]
+    }
+
+    /// An utterance begins at `frame`: no weight change will reach before it. What a frame from
+    /// there on can still read is kept: its splice context and each of those frames' CMVN
+    /// window, from there or from the earliest frame a pending change or the statistics have
+    /// yet to reach, whichever is earlier.
+    pub fn forget_before(&mut self, frame: usize) {
+        let o = &self.info.opts;
+        let pending = self
+            .delta_weights
+            .peek()
+            .map_or(usize::MAX, |std::cmp::Reverse((f, _, _))| *f);
+        let first = frame
+            .min(self.num_frames_stats)
+            .min(pending)
+            .saturating_sub(o.left_context);
+        let n = first
+            .saturating_sub(self.frames_first)
+            .min(self.frames.len());
+        self.frames.drain(..n);
+        self.frames_first += n;
+        let lo = (first + 1).saturating_sub(o.cmn_window);
+        let n = lo
+            .saturating_sub(self.prefix_first)
+            .min(self.prefix.len() - 1);
+        self.prefix.drain(..n);
+        self.prefix_first += n;
     }
 
     pub fn push_frame(&mut self, frame: &[f32]) {
@@ -737,10 +783,9 @@ impl<'a> IvectorStream<'a> {
     /// Frames the i-vector branch can serve: the spliced view needs the right context.
     pub fn num_frames_ready(&self) -> usize {
         if self.input_finished {
-            self.frames.len()
+            self.frames_end()
         } else {
-            self.frames
-                .len()
+            self.frames_end()
                 .saturating_sub(self.info.opts.right_context)
         }
     }
@@ -756,10 +801,10 @@ impl<'a> IvectorStream<'a> {
         let info = self.info;
         let o = &info.opts;
         let dim = out.len();
-        if self.frames[t][0] > o.min_energy {
+        if self.frame(t)[0] > o.min_energy {
             let lo = (t + 1).saturating_sub(o.cmn_window);
             for d in 0..dim {
-                self.cmvn_stats[d] = self.prefix[t + 1][d] - self.prefix[lo][d];
+                self.cmvn_stats[d] = self.prefix(t + 1)[d] - self.prefix(lo)[d];
             }
             self.cmvn_stats[dim] = (t + 1 - lo) as f64;
         }
@@ -774,7 +819,7 @@ impl<'a> IvectorStream<'a> {
             }
         }
         let count = self.cmvn_stats[dim];
-        let src = &self.frames[t];
+        let src = self.frame(t);
         for d in 0..dim {
             out[d] = src[d] - (self.cmvn_stats[d] / count) as f32;
         }
@@ -785,7 +830,7 @@ impl<'a> IvectorStream<'a> {
         let info = self.info;
         let o = &info.opts;
         let dim = self.frames[0].len();
-        let total = self.frames.len();
+        let total = self.frames_end();
         let width = o.left_context + 1 + o.right_context;
         let mut spliced = vec![0.0f32; dim * width];
         let mut tmp = vec![0.0f32; dim];
@@ -797,7 +842,7 @@ impl<'a> IvectorStream<'a> {
                 self.cmvn_frame(t2, &mut tmp);
                 spliced[n * dim..(n + 1) * dim].copy_from_slice(&tmp);
             } else {
-                spliced[n * dim..(n + 1) * dim].copy_from_slice(&self.frames[t2]);
+                spliced[n * dim..(n + 1) * dim].copy_from_slice(self.frame(t2));
             }
         }
         let rows = info.lda_rows;

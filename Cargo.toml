@@ -45,6 +45,10 @@ cast_sign_loss = "warn"
 name = "kernels"
 harness = false
 
+[[bench]]
+name = "retained_heap"
+harness = false
+
 [profile.release]
 opt-level = 3
 debug = 1
