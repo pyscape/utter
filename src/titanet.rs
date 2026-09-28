@@ -32,12 +32,22 @@ const MAX_RANK: usize = 3;
 /// Sub-blocks per encoder block; the middle blocks carry a residual.
 const BLOCKS: [usize; 5] = [1, 3, 3, 3, 1];
 const STAT_FLOOR: f32 = 1e-10;
-/// The longest span embedded, in frames.
+/// The longest span [`TitaNet::embed`] takes, in frames.
+/// `[[rr:TD-15#Any span can be embedded from any thread]]`
 pub const MAX_FRAMES: usize = 3000;
-/// Frames the network runs over are rounded up to a multiple of this with zero frames the
-/// pooling and squeeze-excitation mask out, as the ONNX graph treats padding; 1 embeds the
-/// span at its exact length.
-const PAD_FRAMES_TO: usize = 1;
+/// The longest span a recognizer embeds, in frames; a longer one carries no evidence.
+/// `[[rr:TD-15#A span is embedded whole at its exact length]]`
+pub const RECOGNIZER_MAX_FRAMES: usize = 120;
+/// TitaNet-small's shape: each encoder block's kernel widths, the encoder's width before its
+/// last block and after it, and the attention's and the embedding's widths.
+/// `[[rr:TD-15#Only TitaNet-small is accepted]]`
+const SMALL: ([&[usize]; 5], usize, usize, usize, usize) = (
+    [&[3], &[7, 7, 7], &[11, 11, 11], &[15, 15, 15], &[1]],
+    256,
+    3072,
+    128,
+    192,
+);
 
 /// The front end `titanet.conf` must name, the one [`crate::fbank`] implements.
 const FRONT_END: [(&str, &str); 7] = [
@@ -255,8 +265,25 @@ impl TitaNet {
         Self::from_bytes(&conf, &weights).map_err(|e| err(&format!("{}: {e}", dir.display())))
     }
 
-    /// The model from the two files' contents.
+    /// The model from the two files' contents, refused unless it is TitaNet-small.
     pub fn from_bytes(conf: &str, weights: &[u8]) -> Result<TitaNet> {
+        let m = Self::parse(conf, weights)?;
+        let (kernels, width, last, att, dim) = SMALL;
+        let small = m.blocks.iter().zip(kernels).enumerate().all(|(i, (b, k))| {
+            let cout = if i + 1 == kernels.len() { last } else { width };
+            b.convs.iter().map(|c| c.k).eq(k.iter().copied()) && b.cout() == cout
+        }) && m.att_width == att
+            && m.dim == dim;
+        if !small {
+            return Err(err(&format!(
+                "not TitaNet-small (encoder width {}, embedding {}): only TitaNet-small is accepted",
+                m.blocks[0].convs[0].cout, m.dim
+            )));
+        }
+        Ok(m)
+    }
+
+    fn parse(conf: &str, weights: &[u8]) -> Result<TitaNet> {
         let keys: HashMap<&str, &str> = conf
             .lines()
             .filter_map(|l| l.split_once('='))
@@ -379,9 +406,7 @@ impl TitaNet {
         Ok(e.take())
     }
 
-    /// The embedding of samples at `rate` Hz, brought to 16 kHz first as sherpa-onnx does: a
-    /// fresh resampler over the span, cut off at 99% of 8 kHz, not flushed. Slower audio is
-    /// refused.
+    /// The embedding of samples at `rate` Hz, brought to 16 kHz first as sherpa-onnx does.
     pub fn embed_at_rate(&self, samples: &[f32], rate: f32) -> Result<Vec<f32>> {
         let mut e = Embedding::new();
         e.begin_at_rate(self, samples, rate)?;
@@ -423,8 +448,6 @@ const FEATURE_COST: u64 = 8_000;
 pub struct Embedding {
     stage: Stage,
     at: usize,
-    /// Frames of the span, and the frames the network runs over.
-    valid: usize,
     frames: usize,
     samples: Vec<f32>,
     fbank: Fbank,
@@ -456,7 +479,6 @@ impl Embedding {
         Embedding {
             stage: Stage::Done,
             at: 0,
-            valid: 0,
             frames: 0,
             samples: Vec::new(),
             fbank: Fbank::new(),
@@ -526,8 +548,7 @@ impl Embedding {
                 "TitaNet embeds 1 to {MAX_FRAMES} frames of 10 ms; the span has {t}"
             )));
         }
-        self.valid = t;
-        self.frames = t.div_ceil(PAD_FRAMES_TO) * PAD_FRAMES_TO;
+        self.frames = t;
         self.stage = Stage::Features;
         self.at = 0;
         self.input = 0;
@@ -562,26 +583,26 @@ impl Embedding {
         let c = m.channels as u64;
         let a = m.att_width as u64;
         match self.stage {
-            Stage::Features => (FEATURE_COST, self.valid),
+            Stage::Features => (FEATURE_COST, self.frames),
             Stage::BandMean | Stage::BandDeviation | Stage::BandNormalise => {
-                (NUM_BANDS as u64, self.valid)
+                (NUM_BANDS as u64, self.frames)
             }
             Stage::Conv(b, s) => {
                 let sc = &m.blocks[b].convs[s];
                 ((sc.k * sc.cin + sc.cin * sc.cout) as u64, self.frames)
             }
-            Stage::SeSum(b) => (m.blocks[b].cout() as u64, self.valid),
+            Stage::SeSum(b) => (m.blocks[b].cout() as u64, self.frames),
             Stage::SeGate(b) => (2 * (m.blocks[b].cout() * m.blocks[b].se_width) as u64, 1),
             Stage::SeApply(b) => {
                 let bl = &m.blocks[b];
                 let res = bl.residual.as_ref().map_or(0, |_| bl.cin() * bl.cout());
                 ((bl.cout() + res) as u64, self.frames)
             }
-            Stage::PoolMean | Stage::PoolDeviation | Stage::SoftmaxMax => (c, self.valid),
-            Stage::WeightedMean | Stage::WeightedDeviation => (c, self.valid),
-            Stage::SoftmaxExp => (8 * c, self.valid),
+            Stage::PoolMean | Stage::PoolDeviation | Stage::SoftmaxMax => (c, self.frames),
+            Stage::WeightedMean | Stage::WeightedDeviation => (c, self.frames),
+            Stage::SoftmaxExp => (8 * c, self.frames),
             Stage::PoolStats => (2 * c * a, 1),
-            Stage::Attention => (2 * c * a, self.valid),
+            Stage::Attention => (2 * c * a, self.frames),
             Stage::Embed => (2 * c * m.dim as u64, 1),
             Stage::Done => (1, 0),
         }
@@ -675,7 +696,7 @@ impl Embedding {
             Stage::Attention => {
                 let free = (self.input + 1) % 3;
                 self.bufs[free].clear();
-                self.bufs[free].resize(self.valid * c, 0.0);
+                self.bufs[free].resize(self.frames * c, 0.0);
             }
             Stage::SoftmaxMax => {
                 self.max.clear();
@@ -692,8 +713,8 @@ impl Embedding {
     /// Completes the stage once its last frame has run.
     fn finish(&mut self, m: &TitaNet) {
         match self.stage {
-            Stage::BandMean => self.bands.end_mean(self.valid),
-            Stage::BandDeviation => self.bands.end_deviation(self.valid),
+            Stage::BandMean => self.bands.end_mean(self.frames),
+            Stage::BandDeviation => self.bands.end_deviation(self.frames),
             Stage::SeApply(b) => self.input = self.block_out(m, b),
             _ => {}
         }
@@ -701,7 +722,7 @@ impl Embedding {
 
     fn run(&mut self, m: &TitaNet, f0: usize, f1: usize) {
         let c = m.channels;
-        let weight = 1.0 / self.valid as f32;
+        let weight = 1.0 / self.frames as f32;
         match self.stage {
             Stage::Features => {
                 let rows = &mut self.bufs[0][f0 * NUM_BANDS..f1 * NUM_BANDS];
@@ -854,7 +875,7 @@ impl Embedding {
     fn se_gate(&mut self, m: &TitaNet, b: usize) {
         let block = &m.blocks[b];
         let (w, r) = (block.cout(), block.se_width);
-        let count = self.valid as f32;
+        let count = self.frames as f32;
         self.squeeze.clear();
         self.squeeze.resize(r, 0.0);
         for (ch, s) in self.sum.iter().enumerate() {
@@ -900,10 +921,8 @@ impl Embedding {
         let out = self.block_out(m, b);
         let h = &mut self.bufs[out][f0 * w..f1 * w];
         for (i, row) in h.chunks_exact_mut(w).enumerate() {
-            let masked = f0 + i >= self.valid;
             for (j, (v, g)) in row.iter_mut().zip(&self.gate).enumerate() {
-                let x = if masked { 0.0 } else { *v };
-                let mut y = x * g;
+                let mut y = *v * g;
                 if block.residual.is_some() {
                     y += self.residual[i * w + j];
                 }
@@ -1114,7 +1133,15 @@ mod tests {
     }
 
     fn tiny_model() -> TitaNet {
-        TitaNet::from_bytes(&conf(3), &write(&tiny())).unwrap()
+        TitaNet::parse(&conf(3), &write(&tiny())).unwrap()
+    }
+
+    #[test]
+    fn only_titanet_small_opens() {
+        let e = TitaNet::from_bytes(&conf(3), &write(&tiny()))
+            .err()
+            .unwrap();
+        assert!(e.to_string().contains("only TitaNet-small"), "{e}");
     }
 
     #[test]
@@ -1188,23 +1215,20 @@ mod tests {
     fn malformed_weights_are_refused() {
         let good = write(&tiny());
         let c = conf(3);
-        assert!(TitaNet::from_bytes(&c, &good).is_ok());
+        assert!(TitaNet::parse(&c, &good).is_ok());
         for cut in [0, 8, 15, 16, 40, good.len() / 2, good.len() - 1] {
-            assert!(
-                TitaNet::from_bytes(&c, &good[..cut]).is_err(),
-                "cut at {cut}"
-            );
+            assert!(TitaNet::parse(&c, &good[..cut]).is_err(), "cut at {cut}");
         }
         let mut bad = good.clone();
         bad[0] = b'X';
-        assert!(TitaNet::from_bytes(&c, &bad).is_err());
+        assert!(TitaNet::parse(&c, &bad).is_err());
         let mut bad = good.clone();
         bad[8] = 2;
-        assert!(TitaNet::from_bytes(&c, &bad).is_err());
+        assert!(TitaNet::parse(&c, &bad).is_err());
         // A tensor count the file cannot hold is refused before anything is allocated.
         let mut bad = good.clone();
         bad[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(TitaNet::from_bytes(&c, &bad).is_err());
+        assert!(TitaNet::parse(&c, &bad).is_err());
         // The first tensor's offset: misaligned, inside the table, past the end, overflowing.
         let first = &tiny()[0];
         let slot = 16 + 4 + first.0.len() + 4 + 4 * first.1.len();
@@ -1212,39 +1236,39 @@ mod tests {
         for o in [off + 4, 0, good.len() as u64, u64::MAX - 63] {
             let mut bad = good.clone();
             bad[slot..slot + 8].copy_from_slice(&o.to_le_bytes());
-            assert!(TitaNet::from_bytes(&c, &bad).is_err(), "offset {o}");
+            assert!(TitaNet::parse(&c, &bad).is_err(), "offset {o}");
         }
         // Two tensors over the same bytes.
         let second = &tiny()[1];
         let slot2 = slot + 8 + 4 + second.0.len() + 4 + 4 * second.1.len();
         let mut bad = good.clone();
         bad.copy_within(slot..slot + 8, slot2);
-        assert!(TitaNet::from_bytes(&c, &bad).is_err());
+        assert!(TitaNet::parse(&c, &bad).is_err());
         // A zero dimension, a wrong shape, a tensor missing, one too many, one twice.
         let mut z = tiny();
         z[0].1[0] = 0;
         z[0].2.clear();
-        assert!(TitaNet::from_bytes(&c, &write(&z)).is_err());
+        assert!(TitaNet::parse(&c, &write(&z)).is_err());
         let mut w = tiny();
         w[1].1.reverse();
-        assert!(TitaNet::from_bytes(&c, &write(&w)).is_err());
+        assert!(TitaNet::parse(&c, &write(&w)).is_err());
         let mut gone = tiny();
         gone.remove(5);
-        assert!(TitaNet::from_bytes(&c, &write(&gone)).is_err());
+        assert!(TitaNet::parse(&c, &write(&gone)).is_err());
         let mut extra = tiny();
         extra.push(("classifier".into(), vec![1], vec![0.0]));
-        assert!(TitaNet::from_bytes(&c, &write(&extra)).is_err());
+        assert!(TitaNet::parse(&c, &write(&extra)).is_err());
         let mut twice = tiny();
         twice.push(twice[0].clone());
-        assert!(TitaNet::from_bytes(&c, &write(&twice)).is_err());
+        assert!(TitaNet::parse(&c, &write(&twice)).is_err());
     }
 
     #[test]
     fn another_front_end_or_dimension_is_refused() {
         let w = write(&tiny());
-        assert!(TitaNet::from_bytes(&conf(4), &w).is_err());
-        assert!(TitaNet::from_bytes(&conf(3).replace("hann", "povey"), &w).is_err());
-        assert!(TitaNet::from_bytes(&conf(3).replace("16000", "8000"), &w).is_err());
-        assert!(TitaNet::from_bytes("", &w).is_err());
+        assert!(TitaNet::parse(&conf(4), &w).is_err());
+        assert!(TitaNet::parse(&conf(3).replace("hann", "povey"), &w).is_err());
+        assert!(TitaNet::parse(&conf(3).replace("16000", "8000"), &w).is_err());
+        assert!(TitaNet::parse("", &w).is_err());
     }
 }

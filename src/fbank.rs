@@ -1,8 +1,5 @@
-//! The filterbank front end sherpa-onnx gives NeMo speaker models, computed as
-//! kaldi-native-fbank computes it: 16 kHz, 25 ms frames every 10 ms that fit wholly in the
-//! input, pre-emphasis 0.97 without DC removal, a periodic Hann window, the power spectrum of a
-//! 512-point FFT, 80 Slaney-normalised mel bands on the Slaney scale from 0 to 7,600 Hz, and the
-//! log floored at `f32::EPSILON`. Then each band is normalised over the span.
+//! The filterbank front end sherpa-onnx gives NeMo speaker models.
+// [[rr:TD-15#The front end is sherpa-onnx's for NeMo models]]
 
 // Frame and bin counts are small; the casts below are the reference's own int-to-float steps.
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
@@ -208,8 +205,6 @@ mod tests {
     #[test]
     fn bands_are_slaney_triangles_to_7600_hz() {
         let f = Fbank::new();
-        // The Slaney scale is linear below 1 kHz, so the first band starts at 0 Hz and the
-        // bands are unit-area triangles: each one's weights, times the bin width, sum near 1.
         assert_eq!(f.bands[0].0, 1);
         let last = &f.bands[NUM_BANDS - 1];
         assert!((last.0 + last.1.len() - 1) as f32 * 31.25 < 7600.0);
