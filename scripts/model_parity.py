@@ -137,10 +137,6 @@ def worker_init(model_dir: str, grammar: Sequence[str], corpus: str, cache: str,
         modules[name] = __import__(name)
     modules["vosk"].SetLogLevel(-1)
     engines = {n: Engine(n, m, model_dir, grammar) for n, m in modules.items()}
-    for eng in engines.values():
-        # Engine's json.dumps escapes non-ASCII, and the wheel looks up the escaped spelling and
-        # drops the word with a warning, while utterpy decodes it.
-        eng.grammar = json.dumps(grammar, ensure_ascii=False)
     STATE.update(
         engines=engines,
         corpus=Path(corpus),
