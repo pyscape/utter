@@ -24,8 +24,8 @@
   },
   "census_file": "docs/benchmarks/partial-trust.census.json",
   "args": {
-    "data": "/home/jared/Repos/utter-bench-data/speech_commands_v0.02",
-    "model": "/home/jared/Repos/ChessAmis/assets/voice/models/vosk-model-small-en-us-0.15",
+    "data": "speech_commands_v0.02",
+    "model": "vosk-model-small-en-us-0.15",
     "engine": "utterpy",
     "out": "docs/benchmarks/partial-trust.md",
     "clips": "docs/benchmarks/partial-trust.clips.jsonl",
