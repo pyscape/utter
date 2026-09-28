@@ -401,28 +401,17 @@ pub struct Recognizer<'m> {
     spk_best_speech: Option<usize>,
     /// With TitaNet set. `[[rr:TD-15#The recognizer embeds a word once its span has closed]]`
     spk_spans: Option<SpanEmbedder<'m>>,
-    /// `[[rr:TD-15#Readings and alternatives: decided by measurement]]`
-    spk_reading_jobs: bool,
-    /// `[[rr:TD-15#The floor margin: decided by measurement]]`
-    spk_trim_floor: bool,
     /// `[[rr:TD-15#Embedding runs in slices between advances]]`
     spk_slice_budget: u64,
-}
-
-/// A span to embed: as reported, the key its evidence is kept by, and the samples embedded, both
-/// on the stream's sample clock.
-#[derive(Clone, Copy)]
-struct SpanJob {
-    span: (u64, u64),
-    embed: (u64, u64),
 }
 
 /// TitaNet's embeddings of the spans of the current utterance.
 struct SpanEmbedder<'m> {
     model: &'m TitaNet,
     queued: HashSet<(u64, u64)>,
-    queue: VecDeque<SpanJob>,
-    running: Option<SpanJob>,
+    /// Spans on the stream's sample clock.
+    queue: VecDeque<(u64, u64)>,
+    running: Option<(u64, u64)>,
     job: Embedding,
     samples: Vec<f32>,
     done: HashMap<(u64, u64), Pooled>,
@@ -643,8 +632,6 @@ impl<'m> Recognizer<'m> {
             spk_cache: Mutex::new(HashMap::new()),
             spk_best_speech: None,
             spk_spans: None,
-            spk_reading_jobs: false,
-            spk_trim_floor: false,
             spk_slice_budget: SPK_SLICE_BUDGET,
         })
     }
@@ -805,23 +792,6 @@ impl<'m> Recognizer<'m> {
             self.spk_queue_closed_paths();
         }
         Ok(())
-    }
-
-    /// Which rule readings follow with TitaNet set: off, they carry only spans the best path
-    /// queued; on, their closed words are queued after the best path's. Final alternatives exist
-    /// only at a final, where no embedding runs, so under either rule they carry what is embedded.
-    #[doc(hidden)]
-    // [[rr:TD-15#Readings and alternatives: decided by measurement]]
-    pub fn set_spk_reading_jobs(&mut self, on: bool) {
-        self.spk_reading_jobs = on;
-    }
-
-    /// Which rule a floor margin follows with TitaNet set: off, a span is embedded as reported;
-    /// on, its frames within the margin of the floor at either edge are cut first.
-    #[doc(hidden)]
-    // [[rr:TD-15#The floor margin: decided by measurement]]
-    pub fn set_spk_trim_floor(&mut self, on: bool) {
-        self.spk_trim_floor = on;
     }
 
     /// Work units per slice, [`SPK_SLICE_BUDGET`] unless set; for tests that vary the slices.
@@ -1823,8 +1793,7 @@ impl<'m> Recognizer<'m> {
         }
     }
 
-    /// With TitaNet set, queue the words the best path, and with reading jobs on the readings,
-    /// show another entry after. A `[speech]` entry is always a path's last, so it is never
+    /// With TitaNet set, queue the words the best path shows another entry after. A `[speech]` entry is always a path's last, so it is never
     /// queued; it carries evidence only where a queued word had its span.
     // [[rr:TD-15#The recognizer embeds a word once its span has closed]]
     fn spk_queue_closed_paths(&mut self) {
@@ -1832,19 +1801,11 @@ impl<'m> Recognizer<'m> {
             return;
         }
         let mut closed: Vec<(usize, usize)> = Vec::new();
-        let mut close = |entries: Vec<Entry>| {
-            for pair in entries.windows(2) {
+        if let Some(path) = self.best_path.as_ref() {
+            for pair in self.entries(path).windows(2) {
                 if let EntryWord::Word(_) = pair[0].word {
                     closed.push((pair[0].start_frame, pair[0].end_frame));
                 }
-            }
-        };
-        if let Some(path) = self.best_path.as_ref() {
-            close(self.entries(path));
-        }
-        if self.spk_reading_jobs {
-            for path in self.readings.iter().flatten() {
-                close(self.entries(path));
             }
         }
         for (a, b) in closed {
@@ -1866,41 +1827,15 @@ impl<'m> Recognizer<'m> {
         {
             return;
         }
-        let embed = if self.spk_trim_floor {
-            self.spk_trimmed(span)
-        } else {
-            span
-        };
-        let at_16k = ((embed.1 - embed.0) as f64 * f64::from(crate::fbank::SAMPLE_RATE)
+        let at_16k = ((span.1 - span.0) as f64 * f64::from(crate::fbank::SAMPLE_RATE)
             / f64::from(self.sample_rate)) as usize;
         let frames = crate::fbank::num_frames(at_16k);
         let sp = self.spk_spans.as_mut().expect("checked above");
         sp.queued.insert(span);
         // At a faster rate the count is the resampler's, checked again when the job begins.
         if (crate::speaker::MIN_FRAMES - 1..=RECOGNIZER_MAX_FRAMES + 1).contains(&frames) {
-            sp.queue.push_back(SpanJob { span, embed });
+            sp.queue.push_back(span);
         }
-    }
-
-    /// A span less its frames within the floor margin of the floor at either edge, frames of
-    /// 25 ms every 10 ms as TitaNet's.
-    // [[rr:TD-15#The floor margin: decided by measurement]]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn spk_trimmed(&self, (mut lo, mut hi): (u64, u64)) -> (u64, u64) {
-        let (Some(margin), Some(floor)) = (self.endpoint_floor_margin_db, self.floor.dbfs()) else {
-            return (lo, hi);
-        };
-        let threshold = floor + f64::from(margin);
-        let rate = f64::from(self.sample_rate);
-        let (hop, window) = ((rate * 0.010).round() as u64, (rate * 0.025).round() as u64);
-        let quiet = |a: u64, b: u64| self.energy_dbfs(a, b).is_none_or(|e| e <= threshold);
-        while lo + window <= hi && quiet(lo, lo + window) {
-            lo += hop;
-        }
-        while hi >= lo + window && quiet(hi - window, hi) {
-            hi -= hop;
-        }
-        (lo, hi)
     }
 
     /// Run the queued embeddings for one budget of work. `[[rr:TD-15#Embedding runs in slices between advances]]`
@@ -1916,9 +1851,7 @@ impl<'m> Recognizer<'m> {
                     break;
                 };
                 let base = self.samples_round_start + self.pcm_first as u64;
-                let (Some(lo), Some(hi)) =
-                    (j.embed.0.checked_sub(base), j.embed.1.checked_sub(base))
-                else {
+                let (Some(lo), Some(hi)) = (j.0.checked_sub(base), j.1.checked_sub(base)) else {
                     continue;
                 };
                 if hi as usize > self.pcm.len() {
@@ -1942,8 +1875,7 @@ impl<'m> Recognizer<'m> {
                 let j = sp.running.take().expect("a job was running");
                 let frames = sp.job.frames();
                 let vector = sp.job.take();
-                sp.done
-                    .insert(j.span, self.titanet_pooled(j.embed.0, frames, &vector));
+                sp.done.insert(j, self.titanet_pooled(j.0, frames, &vector));
             }
         }
         self.spk_spans = Some(sp);
@@ -2784,8 +2716,6 @@ mod tests {
         set_at: Option<usize>,
         readings: usize,
         margin: Option<f32>,
-        reading_jobs: bool,
-        trim: bool,
         /// A seed for a budget drawn afresh before every block, or the default budget.
         budgets: Option<u64>,
     }
@@ -2797,8 +2727,6 @@ mod tests {
                 set_at: Some(0),
                 readings: 0,
                 margin: None,
-                reading_jobs: false,
-                trim: false,
                 budgets: None,
             }
         }
@@ -2816,8 +2744,6 @@ mod tests {
         rec.set_alternatives(run.readings);
         rec.set_max_alternatives(run.readings);
         rec.set_endpoint_floor_margin(run.margin);
-        rec.set_spk_reading_jobs(run.reading_jobs);
-        rec.set_spk_trim_floor(run.trim);
         let mut seed = run.budgets.unwrap_or(0);
         let (mut out, mut at, mut i) = (Vec::new(), 0, 0);
         while at < audio.len() {
@@ -2933,10 +2859,9 @@ mod tests {
         let mut carried = 0;
         for blocks in TN_BLOCKS {
             for budgets in [None, Some(0x2545_f491), Some(7)] {
-                for (readings, reading_jobs) in [(0, false), (3, false), (3, true)] {
+                for readings in [0, 3] {
                     let run = TnRun {
                         readings,
-                        reading_jobs,
                         budgets,
                         ..TnRun::plain(blocks)
                     };
@@ -2963,16 +2888,10 @@ mod tests {
         };
         let audio = tn_audio();
         for blocks in [TN_BLOCKS[2], TN_BLOCKS[4]] {
-            for (readings, margin, reading_jobs, trim) in [
-                (0, None, false, false),
-                (3, Some(8.0), true, false),
-                (3, Some(8.0), false, true),
-            ] {
+            for (readings, margin) in [(0, None), (3, Some(8.0))] {
                 let run = TnRun {
                     readings,
                     margin,
-                    reading_jobs,
-                    trim,
                     ..TnRun::plain(blocks)
                 };
                 let with = tn_results(&m, &spk, &audio, &run);
@@ -2991,34 +2910,6 @@ mod tests {
                 check_evidence(&spk, &audio, &with);
             }
         }
-    }
-
-    /// Trimming cuts only floor-level frames at a span's edges, so what it embeds lies inside the
-    /// span reported. `[[rr:TD-15#The floor margin: decided by measurement]]`
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn trimmed_evidence_lies_inside_its_span() {
-        let Some((m, spk)) = titanet_models() else {
-            return;
-        };
-        let audio = tn_audio();
-        let run = TnRun {
-            margin: Some(20.0),
-            trim: true,
-            ..TnRun::plain(TN_BLOCKS[2])
-        };
-        let got = tn_results(&m, &spk, &audio, &run);
-        let mut inside = 0;
-        for r in &got {
-            for e in r.split("}, {").filter(|e| e.contains("\"spk_start\"")) {
-                let (s, t) = (key(e, "start_sample"), key(e, "end_sample"));
-                let (a, b) = (key(e, "spk_start"), key(e, "spk_end"));
-                assert!(s <= a && b <= t, "{e}");
-                inside += usize::from(s < a || b + 160 < t);
-            }
-        }
-        assert!(inside > 0, "no span was trimmed");
-        check_evidence(&spk, &audio, &got);
     }
 
     /// A model set mid-stream queues the words the partial has closed, so every span's evidence
