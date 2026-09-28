@@ -26,7 +26,8 @@ fn main() {
     let wav = read_wav(std::path::Path::new(&args[1])).expect("wav");
     let prefix = &args[2];
     let mut stream = SpeakerStream::new(&model, wav.sample_rate as f32).expect("stream");
-    for block in wav.samples.chunks(640) {
+    let samples: Vec<f32> = wav.samples.iter().map(|&s| f32::from(s)).collect();
+    for block in samples.chunks(640) {
         stream.accept(block);
     }
     stream.finish();
