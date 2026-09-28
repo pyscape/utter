@@ -317,31 +317,6 @@ pub unsafe extern "C" fn utter_recognizer_set_endpoint_floor_margin(
     }
 }
 
-/// With TitaNet set, nonzero queues the closed words of readings after the best path's; zero
-/// leaves them only spans the best path queued.
-/// `[[rr:TD-15#Readings and alternatives: decided by measurement]]`
-#[no_mangle]
-pub unsafe extern "C" fn utter_recognizer_set_spk_reading_jobs(
-    rec: *mut UtterRecognizer,
-    on: c_int,
-) {
-    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
-    if let Some(r) = unsafe { rec.as_mut() } {
-        r.inner.set_spk_reading_jobs(on != 0);
-    }
-}
-
-/// With TitaNet and a floor margin set, nonzero cuts a span's frames within the margin of the
-/// floor at either edge before it is embedded; zero embeds it as reported.
-/// `[[rr:TD-15#The floor margin: decided by measurement]]`
-#[no_mangle]
-pub unsafe extern "C" fn utter_recognizer_set_spk_trim_floor(rec: *mut UtterRecognizer, on: c_int) {
-    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
-    if let Some(r) = unsafe { rec.as_mut() } {
-        r.inner.set_spk_trim_floor(on != 0);
-    }
-}
-
 /// Partial alternatives to report, 0 for none.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_set_alternatives(rec: *mut UtterRecognizer, n: c_int) {

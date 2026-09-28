@@ -228,14 +228,14 @@ same four, with these differences, all from `[[rr:TD-15]]`:
   finished carries none.
 - A `[speech]` entry is always a path's last, so it is never queued; it
   carries evidence only where a word queued before had the same span.
-  By default readings and final alternatives carry the evidence of
-  spans already embedded.
+  Readings and final alternatives carry only the evidence of spans
+  already embedded.
 - No partial or final carries evidence at its top level.
 - `spk` is the network's raw 192 values, not scaled; compare by cosine.
   `spk_frames` counts 25 ms frames every 10 ms, and `spk_start` and
   `spk_end` are the first one's start and the last one's end.
 - A span under 25 frames or over 120, 1.2 s, carries none.
-- By default the floor margin does not leave frames out.
+- The floor margin does not leave frames out.
 
 To embed enrolment recordings, or any audio, without a recognizer, call
 `SpeakerModel::embed` in Rust or `utter_spk_model_embed` in C.

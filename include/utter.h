@@ -52,12 +52,6 @@ void utter_recognizer_set_endpoint_floor_margin(UtterRecognizer *rec, float marg
 /* Speaker evidence on every result and word entry; NULL removes it. 0 on success, -1 on a null
    recognizer or a speaker model this audio cannot feed. */
 int utter_recognizer_set_spk_model(UtterRecognizer *rec, const UtterSpkModel *spk);
-/* Two rules for TitaNet evidence, off by default, that the speaker page decides between. Reading
-   jobs: nonzero also queues the closed words of readings, where zero leaves them the spans the
-   best path queued. Trim floor: with a floor margin set, nonzero cuts a span's
-   frames within the margin of the floor at either edge before embedding it. */
-void utter_recognizer_set_spk_reading_jobs(UtterRecognizer *rec, int on);
-void utter_recognizer_set_spk_trim_floor(UtterRecognizer *rec, int on);
 void utter_recognizer_set_alternatives(UtterRecognizer *rec, int n);
 void utter_recognizer_set_max_alternatives(UtterRecognizer *rec, int n);
 

@@ -91,4 +91,9 @@ words as jobs of their own gives evidence to 21.3% of the spans
 readings and alternatives put forward and passes 15.1% of them, for a
 real-time factor of 0.0201 against 0.0168 with three readings, and
 changes nothing on the best path. `[[rr:TD-15#Decision outcome]]` keeps
-the span as reported and spans already embedded.
+the span as reported and spans already embedded, and removes the other
+two rules with their switches. The script no longer produces the
+trimmed rows, the readings table or the own-jobs latency row, and it
+names the remaining readings row "utter, TitaNet-small, 3 readings";
+the figures here stand as this run recorded them. Without the trimmed
+engine, its next run keeps the speakers with a profile under the rest.

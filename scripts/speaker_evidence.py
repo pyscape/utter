@@ -33,8 +33,7 @@ clips, one vector per clip (per final for utter), normalised and averaged into a
 The same figures by the word's length, then over each speaker's probe words joined into one
 stream and cut at a growing length of speech, which is how evidence accumulates as a command goes
 on; utter's figure there is its own partial's evidence at the moment it has pooled that much.
-How long after a word's end its evidence shows. Under TitaNet, both rules for readings and both
-rules for the floor margin, which the page decides between. Last, the game streams are decoded again by both engines with and without their speaker models,
+How long after a word's end its evidence shows. Last, the game streams are decoded again by both engines with and without their speaker models,
 for per-block compute, result size, the host's parse, and whether the evidence moves any result.
 
 Writes `<out>.md` and `<out>.json`; what a run means goes in `<out>.reading.md`, which the page
@@ -75,10 +74,9 @@ VOSK, KALDI, UTTER, TITANET, CAMPP = "vosk", "x-vector (Kaldi)", "utter", "TitaN
 UTTER_MARGIN, UTTER_COLD = "utter, 8 dB floor margin", "utter, new recognizer per word"
 UTTER_TN = "utter, TitaNet-small"
 UTTER_TN_MARGIN = "utter, TitaNet-small, 8 dB floor margin, span as reported"
-UTTER_TN_TRIM = "utter, TitaNet-small, 8 dB floor margin, floor-level edges trimmed"
 UTTER_TN_EMBED = "utter's embed(), TitaNet-small"
 MARGIN_DB = 8.0
-# The readings and final alternatives the reading-rule streams carry.
+# The readings and final alternatives the latency pass's readings rows carry.
 READINGS = 3
 AFTER_END_MS = (0, 100, 200, 300, 400, 500, 600, 800, 1000)
 TITANET_DIR = "titanet-small"
@@ -294,8 +292,6 @@ class UtterLib:
             ("utter_recognizer_free", None, [vp]),
             ("utter_spk_model_dim", ci, [vp]),
             ("utter_spk_model_embed", ci, [vp, ctypes.POINTER(cf), ci, cf, ctypes.POINTER(cf), ci]),
-            ("utter_recognizer_set_spk_reading_jobs", None, [vp, ci]),
-            ("utter_recognizer_set_spk_trim_floor", None, [vp, ci]),
         ]:
             fn = getattr(lib, name)
             fn.restype = res
@@ -332,14 +328,12 @@ class UtterLib:
 
 @dataclass(frozen=True)
 class Setup:
-    """How a stream's recognizer is set: which speaker model, a floor margin, TitaNet's two rules,
-    and readings with final alternatives."""
+    """How a stream's recognizer is set: which speaker model, a floor margin, and readings with
+    final alternatives."""
 
     speaker: str | None = "x-vector"
     margin: float | None = None
-    trim: bool = False
     readings: int = 0
-    reading_jobs: bool = False
 
 
 PLAIN, BARE = Setup(), Setup(speaker=None)
@@ -348,11 +342,7 @@ SETUPS = {
     UTTER_MARGIN: Setup(margin=MARGIN_DB),
     UTTER_TN: Setup(speaker="titanet"),
     UTTER_TN_MARGIN: Setup(speaker="titanet", margin=MARGIN_DB),
-    UTTER_TN_TRIM: Setup(speaker="titanet", margin=MARGIN_DB, trim=True),
 }
-SPANS_ONLY = Setup(speaker="titanet", readings=READINGS)
-OWN_JOBS = Setup(speaker="titanet", readings=READINGS, reading_jobs=True)
-READING_RULES = {"spans already embedded": SPANS_ONLY, "own jobs": OWN_JOBS}
 
 
 class UtterRec:
@@ -393,8 +383,6 @@ def new_recognizer(u: UtterLib, grammar: Sequence[str], setup: Setup) -> int:
     if setup.readings:
         lib.utter_recognizer_set_alternatives(h, setup.readings)
         lib.utter_recognizer_set_max_alternatives(h, setup.readings)
-    lib.utter_recognizer_set_spk_trim_floor(h, int(setup.trim))
-    lib.utter_recognizer_set_spk_reading_jobs(h, int(setup.reading_jobs))
     spk = {None: None, "x-vector": u.spk, "titanet": u.tn}[setup.speaker]
     if spk and lib.utter_recognizer_set_spk_model(h, spk) != 0:
         raise SystemExit("utter refused the speaker model")
@@ -458,12 +446,10 @@ def spoken(e: Mapping[str, Any]) -> bool:
 
 def utter_game(
     u: UtterLib, grammar: Sequence[str], order: Sequence[Clip], block_ms: int, setup: Setup = PLAIN
-) -> tuple[dict[str, Json], dict[tuple[int, int], Json]]:
+) -> dict[str, Json]:
     """A game's stream, clips back to back. For each clip: the final word entry with evidence
     inside its range that pooled most frames, and the first best-path entry with evidence inside
-    it on a partial and on any result, with the samples fed when it appeared. Beside that, the
-    word spans readings and alternatives put forward that no best path showed: each one's clip,
-    its first evidence, and how many of the entries showing it carried evidence."""
+    it on a partial and on any result, with the samples fed when it appeared."""
     starts, at = [], 0
     for c in order:
         starts.append(at)
@@ -478,29 +464,14 @@ def utter_game(
     seen: dict[str, Json] = {}
     seen_any: dict[str, Json] = {}
     finals: list[Json] = []
-    best_spans: set[tuple[int, int]] = set()
-    offered: dict[tuple[int, int], Json] = {}
 
     def look(res: Json, closed: bool) -> None:
-        best, others = word_entries(res, closed)
-        for e in best:
-            best_spans.add((int(e["start_sample"]), int(e["end_sample"])))
+        for e in word_entries(res, closed)[0]:
             k, v = clip_of(e), evidence(e)
             if k is None or v is None or not spoken(e):
                 continue
             for got in (seen_any,) if closed else (seen, seen_any):
                 got.setdefault(k, dict(fed=rec.fed, vector=v, end_sample=int(e["end_sample"])))
-        for e in others:
-            if not spoken(e):
-                continue
-            span = (int(e["start_sample"]), int(e["end_sample"]))
-            o = offered.setdefault(span, dict(clip=clip_of(e), entries=0, carried=0, vector=None))
-            o["entries"] += 1
-            v = evidence(e)
-            if v is not None:
-                o["carried"] += 1
-                if o["vector"] is None:
-                    o["vector"] = v
 
     for c in order:
         for b in blocks(c.pcm, block_ms):
@@ -523,7 +494,7 @@ def utter_game(
     out = {k: dict(final=b, first=seen.get(k), first_any=seen_any.get(k)) for k, b in best.items()}
     for k, s in seen_any.items():
         out.setdefault(k, dict(final=None, first=seen.get(k), first_any=s))
-    return out, {s: o for s, o in offered.items() if s not in best_spans}
+    return out
 
 
 def utter_cold(u: UtterLib, grammar: Sequence[str], clip: Clip, block_ms: int) -> Vec | None:
@@ -611,11 +582,10 @@ def latency_pass(u: UtterLib, wheel: "Wheel", grammar: Sequence[str], streams: S
         UTTER_TN: (UTTER, SETUPS[UTTER_TN]),
         f"{UTTER}, {READINGS} readings": (UTTER, Setup(speaker=None, readings=READINGS)),
         f"{UTTER}, {READINGS} readings, x-vector set": (UTTER, Setup(readings=READINGS)),
-        **{f"{UTTER_TN}, {READINGS} readings, {k}": (UTTER, s) for k, s in READING_RULES.items()},
+        f"{UTTER_TN}, {READINGS} readings": (UTTER, Setup(speaker="titanet", readings=READINGS)),
         f"{UTTER}, 8 dB floor margin": (UTTER, Setup(speaker=None, margin=MARGIN_DB)),
         f"{UTTER}, 8 dB floor margin, x-vector set": (UTTER, SETUPS[UTTER_MARGIN]),
         UTTER_TN_MARGIN: (UTTER, SETUPS[UTTER_TN_MARGIN]),
-        UTTER_TN_TRIM: (UTTER, SETUPS[UTTER_TN_TRIM]),
         VOSK: (VOSK, BARE),
         f"{VOSK}, speaker model set": (VOSK, PLAIN),
     }
@@ -815,7 +785,7 @@ def run(a: argparse.Namespace) -> Json:
     sc.note(f"{len(names)} speakers, {a.enroll} enrollment and up to {a.probes} probe clips each")
 
     engines = (
-        [UTTER, UTTER_MARGIN, UTTER_COLD, UTTER_TN, UTTER_TN_MARGIN, UTTER_TN_TRIM, UTTER_TN_EMBED, VOSK]
+        [UTTER, UTTER_MARGIN, UTTER_COLD, UTTER_TN, UTTER_TN_MARGIN, UTTER_TN_EMBED, VOSK]
         + ([KALDI] if a.kaldi else [])
         + [TITANET, CAMPP]
     )
@@ -882,17 +852,13 @@ def run(a: argparse.Namespace) -> Json:
     games = [order[i : i + 2] for i in range(0, len(order) - 1, 2)]
     if len(order) % 2 and games:
         games[-1].append(order[-1])
-    game_words: dict[str, dict[str, Json]] = {e: {} for e in [*SETUPS, *READING_RULES]}
-    offered: dict[str, list[Json]] = {k: [] for k in READING_RULES}
+    game_words: dict[str, dict[str, Json]] = {e: {} for e in SETUPS}
     streams: list[bytes] = []
     for g in games:
         lists = [probe_clips[s] for s in g]
         turns = [x[i] for i in range(max(len(x) for x in lists)) for x in lists if i < len(x)]
-        for e, setup in [*SETUPS.items(), *READING_RULES.items()]:
-            got, unshown = utter_game(u, grammar, turns, a.block_ms, setup)
-            game_words[e].update(got)
-            if e in offered:
-                offered[e] += [dict(o, span=sp) for sp, o in sorted(unshown.items())]
+        for e, setup in SETUPS.items():
+            game_words[e].update(utter_game(u, grammar, turns, a.block_ms, setup))
         streams.append(b"".join(c.pcm for c in turns))
     utter_words = game_words[UTTER]
     sc.note(f"{len(games)} games through utter")
@@ -920,34 +886,8 @@ def run(a: argparse.Namespace) -> Json:
     word = {e: score(probes, e, profiles[e], tables, WORD_BINS) for e in engines}
     after = {
         e: after_end(probes, e, game_words[e], profiles[e], word[e]["threshold"])
-        for e in (UTTER, UTTER_TN, UTTER_TN_MARGIN, UTTER_TN_TRIM)
+        for e in (UTTER, UTTER_TN, UTTER_TN_MARGIN)
     }
-
-    # The reading rules: the best path's words under each, and the words readings and final
-    # alternatives put forward that no best path showed, scored on the best path's gate.
-    by_key = {p.key: p for p in probes}
-    readings: dict[str, Json] = {}
-    for rule, spans_put in offered.items():
-        best_probes = [Probe(p.key, p.speaker, b"", p.length_ms) for p in probes]
-        for bp in best_probes:
-            w = game_words[rule].get(bp.key, {}).get("final")
-            bp.vectors[UTTER_TN] = w["vector"] if w else None
-        mine = [o for o in spans_put if o["clip"] in by_key]
-        items = []
-        for i, o in enumerate(mine):
-            q = Probe(f"{o['clip']}/{i}", by_key[o["clip"]].speaker, b"", (o["span"][1] - o["span"][0]) * 1000.0 / RATE)
-            q.vectors[UTTER_TN] = o["vector"]
-            items.append(q)
-        thr = word[UTTER_TN]["threshold"]
-        readings[rule] = dict(
-            best_path=score(best_probes, UTTER_TN, profiles[UTTER_TN], tables, WORD_BINS),
-            after_end=after_end(best_probes, UTTER_TN, game_words[rule], profiles[UTTER_TN], thr),
-            spans=len(mine),
-            spans_with=sum(o["carried"] > 0 for o in mine),
-            entries=sum(o["entries"] for o in mine),
-            entries_with=sum(o["carried"] for o in mine),
-            put_forward=score(items, UTTER_TN, profiles[UTTER_TN], draw_tables(items, kept, (2,), rng), WORD_BINS, thr),
-        )
 
     # Utter's partials: when a probe word's evidence first appears, and whether it names the
     # speaker then as the final does.
@@ -973,7 +913,7 @@ def run(a: argparse.Namespace) -> Json:
     )
 
     # Evidence as speech accumulates: each speaker's probe words joined, cut at each length.
-    curve_engines = [e for e in engines if e not in (UTTER_COLD, UTTER_TN, UTTER_TN_MARGIN, UTTER_TN_TRIM)]
+    curve_engines = [e for e in engines if e not in (UTTER_COLD, UTTER_TN, UTTER_TN_MARGIN)]
     curve: dict[str, dict[str, Json]] = {e: {} for e in curve_engines}
     joined: dict[int, list[Probe]] = {n: [] for n in LENGTHS_MS}
     for s in kept:
@@ -1033,7 +973,6 @@ def run(a: argparse.Namespace) -> Json:
         engines=engines,
         word=word,
         after_end=after,
-        readings=readings,
         partials=partials,
         curve=curve,
         agreement=dict(
@@ -1097,8 +1036,6 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         "between decoder advances | 16 kHz | each word entry's own span, 25 to 120 frames |",
         f"| {UTTER_TN_MARGIN} | the same with a floor margin of {MARGIN_DB:g} dB set, enrollment included "
         "| 16 kHz | the span as reported |",
-        f"| {UTTER_TN_TRIM} | the same with the span's frames within the margin of the floor at either "
-        "edge cut before it is embedded | 16 kHz | the span less its floor-level edges |",
         f"| {UTTER_TN_EMBED} | utter's stateless embed() through its C ABI, no recognizer | 16 kHz | "
         "the wheel's word span |",
         f"| {VOSK} | the vosk wheel with {SPK_DIR} set, one clip per recognizer | 8 kHz | the frames "
@@ -1183,32 +1120,6 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
     for e, x in r["after_end"].items():
         cells = [f"{pct(x['shown'][t])}, {pct(x['accepted'][t])}" for t in ends]
         L.append(f"| {e} | {x['lag_ms']['median']:.0f}, {x['lag_ms']['p90']:.0f} ms | " + " | ".join(cells) + " |")
-    L += [
-        "",
-        "## Readings and alternatives under TitaNet",
-        "",
-        f"The game streams with {READINGS} readings on every partial and {READINGS} alternatives on "
-        "every final, under each of TitaNet's two rules: readings carry only spans the best path "
-        "queued and embedded, or their closed words are queued as jobs of their own after the best "
-        "path's. The words put forward are the word spans a reading or an alternative showed that no "
-        "best path showed, inside a probe clip. Acceptance is at the gate of the TitaNet row above, "
-        "and a span with no evidence is not accepted.",
-        "",
-        "| rule | spans put forward | carrying evidence | of their entries | accepted at 1% false accept | "
-        + " | ".join(labels)
-        + " | best-path words accepted | best-path evidence after the end, median / 90th |",
-        "|---|---|---|---|---|" + "---|" * len(labels) + "---|---|",
-    ]
-    for rule, x in r["readings"].items():
-        pf = x["put_forward"]
-        cells = [pct(pf["bins"][label]["accepted"]) for label in labels]
-        lag = x["after_end"]["lag_ms"]
-        L.append(
-            f"| {rule} | {x['spans']} | {pct(x['spans_with'] / x['spans'] if x['spans'] else float('nan'))} "
-            f"| {pct(x['entries_with'] / x['entries'] if x['entries'] else float('nan'))} | {pct(pf['accepted'])} | "
-            + " | ".join(cells)
-            + f" | {pct(x['best_path']['accepted'])} | {lag['median']:.0f} / {lag['p90']:.0f} ms |"
-        )
     pa = r["partials"]
     ag = r["agreement"]
     co = r["cost"]
