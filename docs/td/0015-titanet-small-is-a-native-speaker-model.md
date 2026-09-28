@@ -206,12 +206,17 @@ hold. Two rules are built behind a switch:
 - **Own jobs.** A reading's or an alternative's closed word is queued
   like a best-path word, after them.
 
-The speaker page's run on the recognizer's pull request decides: the
-share of reading and alternative words that carry evidence, the
-acceptance at 1% false accept of the words a reading puts forward, and
-the 99th percentile and worst block and real-time factor of each rule
-against the baseline below. The rule the figures favour is kept and the
-switch removed.
+Already embedded is kept. On the speaker page, over 7,394 word spans
+that readings and final alternatives put forward and no best path
+showed, own jobs gives evidence to 21.3% of them and passes 15.1% at
+the TitaNet row's 1% false accept gate, against none under already
+embedded. It leaves the best path's words where they were, 74.1%
+accepted against 73.9%, evidence a median 430 ms after the word's end
+under both. It costs a real-time factor of 0.0201 against 0.0168 with
+three readings, over the 0.0197 a block may cost below, for a 99th
+percentile block of 3.06 ms against 3.08 and a worst of 5.7 ms against
+6.2. The compute gate on the same switch, pinned to one core, reads
+0.0159 against 0.0137.
 
 ### The floor margin: decided by measurement
 
@@ -225,8 +230,13 @@ rules are built behind a switch:
   at either edge of the span are cut before it is embedded; a span that
   falls under 25 frames carries no evidence.
 
-The speaker page decides, by acceptance at 1% false accept per word
-length bin with and without the margin set.
+The span as reported is kept. On the speaker page with an 8 dB margin
+it passes 73.9% of words at 1% false accept, the same as with no
+margin, and trimming passes 68.8%; trimming is behind in every length
+bin, 48.2% against 55.3% under 400 ms, 73.2% against 77.7% from 400 to
+600 ms and 76.7% against 81.1% from 600 ms, and leaves 8.1% of words
+without evidence against 6.4%. Their costs are within a real-time
+factor of 0.0003 of each other.
 
 ### What a block may cost
 

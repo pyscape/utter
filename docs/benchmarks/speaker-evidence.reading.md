@@ -68,3 +68,27 @@ it on the block that closes an utterance: a median 15.5 ms there and
 42.9 ms at worst, against utter's 2.55 and 7.0. The results grow from
 0.54 to 3.99 KiB a block, and parsing one in Python from 3 to 21 µs at
 the median.
+
+TitaNet-small in the crate passes 73.9% of words at 1% false accept on
+the game streams, against 40.1% for the x-vector in the same
+recognizer, and 55.3% of words under 400 ms against 29.2%. It stays
+behind the same network on the wheel's span, 85.8% through utter's
+embed() and 85.7% through sherpa-onnx: the recognizer embeds its own
+word spans, and 6.4% of words carry none. embed() and
+sherpa-onnx agree on every figure to a tenth of a point.
+
+Its evidence comes after the word, not during it: a median 430 ms after
+the word's end and 540 ms at the 90th percentile, against the
+x-vector's 40 and 220 ms. By 600 ms after the end, 92.1% of words carry
+it and 72.8% have passed the gate. It costs a real-time factor of
+0.0164 against the x-vector's 0.0196, and a 99th percentile block of
+2.99 ms against 3.28.
+
+Of TitaNet's two rules for a floor margin, embedding the span as
+reported passes 73.9% and trimming its floor-level edges 68.8%, behind
+in every length bin. Of its two rules for readings, queueing their
+words as jobs of their own gives evidence to 21.3% of the spans
+readings and alternatives put forward and passes 15.1% of them, for a
+real-time factor of 0.0201 against 0.0168 with three readings, and
+changes nothing on the best path. `[[rr:TD-15#Decision outcome]]` keeps
+the span as reported and spans already embedded.
