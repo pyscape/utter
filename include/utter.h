@@ -21,10 +21,18 @@ UtterModel *utter_model_new(const char *path);
 void utter_model_free(UtterModel *model);
 int utter_model_find_word(const UtterModel *model, const char *word);
 
-/* A speaker model directory as libvosk's vosk_spk_model_new reads it. A recognizer it is set on
+/* A speaker model directory as libvosk's vosk_spk_model_new reads it, or TitaNet-small as
+   scripts/titanet_convert.py writes it. A recognizer it is set on
    keeps it alive until the recognizer is freed or the model is replaced. */
 UtterSpkModel *utter_spk_model_new(const char *path);
 void utter_spk_model_free(UtterSpkModel *model);
+/* Length of the model's speaker vector: 128 for vosk-model-spk-0.4, 192 for TitaNet-small; -1 on
+   a null handle. */
+int utter_spk_model_dim(const UtterSpkModel *model);
+/* TitaNet's embedding of n samples in [-1, 1] at sample_rate Hz (16 kHz or faster), without a
+   recognizer, from any thread: the dimension written to out, or -1 for an x-vector model, cap
+   under the dimension, or a span under 25 ms or over 30 s. */
+int utter_spk_model_embed(const UtterSpkModel *model, const float *samples, int n, float sample_rate, float *out, int cap);
 
 /* grammar: a JSON array of strings, as libvosk takes it */
 UtterRecognizer *utter_recognizer_new_grm(const UtterModel *model, float sample_rate, const char *grammar);
@@ -44,6 +52,12 @@ void utter_recognizer_set_endpoint_floor_margin(UtterRecognizer *rec, float marg
 /* Speaker evidence on every result and word entry; NULL removes it. 0 on success, -1 on a null
    recognizer or a speaker model this audio cannot feed. */
 int utter_recognizer_set_spk_model(UtterRecognizer *rec, const UtterSpkModel *spk);
+/* Two rules for TitaNet evidence, off by default, that the speaker page decides between. Reading
+   jobs: nonzero also queues the closed words of readings, where zero leaves them the spans the
+   best path queued. Trim floor: with a floor margin set, nonzero cuts a span's
+   frames within the margin of the floor at either edge before embedding it. */
+void utter_recognizer_set_spk_reading_jobs(UtterRecognizer *rec, int on);
+void utter_recognizer_set_spk_trim_floor(UtterRecognizer *rec, int on);
 void utter_recognizer_set_alternatives(UtterRecognizer *rec, int n);
 void utter_recognizer_set_max_alternatives(UtterRecognizer *rec, int n);
 

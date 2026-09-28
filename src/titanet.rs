@@ -283,6 +283,13 @@ impl TitaNet {
         Ok(m)
     }
 
+    /// [`from_bytes`](Self::from_bytes) without the check for TitaNet-small's shape, so the
+    /// fuzz target's seed models, a few channels wide, reach [`embed`](Self::embed).
+    #[doc(hidden)]
+    pub fn from_bytes_any_shape(conf: &str, weights: &[u8]) -> Result<TitaNet> {
+        Self::parse(conf, weights)
+    }
+
     fn parse(conf: &str, weights: &[u8]) -> Result<TitaNet> {
         let keys: HashMap<&str, &str> = conf
             .lines()
@@ -562,6 +569,11 @@ impl Embedding {
         self.var.clear();
         self.var.resize(c, 0.0);
         Ok(())
+    }
+
+    /// Frames of the span begun last.
+    pub fn frames(&self) -> usize {
+        self.frames
     }
 
     pub fn is_done(&self) -> bool {

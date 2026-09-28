@@ -56,7 +56,7 @@ frame, after every `AcceptWaveform` that did not end the utterance.
 | `partial_alternatives` | array of [readings](#a-reading) | `SetPartialAlternatives(n)` with n above 0 | added | The distinct word sequences still alive in the search, best first, at most n of them. |
 | `partial_result` | array of [word entries](#a-word-entry) | `SetPartialWords(True)` | Vosk | The best path as word entries, including its `[sil]` and `[speech]` entries. Each entry carries the added evidence keys. |
 | `floor_dbfs` | number | once enough audio has been fed to measure it | added | The room's noise floor over the last ten seconds, in dBFS. Absent while the quietest windows of those seconds are digital silence, which has no level: a gate relative to the floor has nothing to compare against. |
-| `spk`, `spk_frames`, `spk_start`, `spk_end` | see [speaker evidence](#speaker-evidence) | `SetSpkModel`, and enough speech on the path | added | The speaker evidence over the best path's words and `[speech]`. |
+| `spk`, `spk_frames`, `spk_start`, `spk_end` | see [speaker evidence](#speaker-evidence) | `SetSpkModel` with an x-vector model, and enough speech on the path | added | The speaker evidence over the best path's words and `[speech]`. |
 
 Turning on partial words in stock Vosk switches it to a lattice-based
 partial that trails the audio. utter's partial is the same either way.
@@ -128,7 +128,7 @@ The plain shape, with `SetWords(True)`:
 | `result` | array of [word entries](#a-word-entry) | `SetWords(True)` | Vosk | The words with their spans and evidence. `[sil]` and `[speech]` never appear here. |
 | `endpoint` | string | always | added | What closed the utterance. See [the endpoint value](#the-endpoint-value). |
 | `floor_dbfs` | number | once enough audio has been fed to measure it | added | As on the partial. |
-| `spk`, `spk_frames` | see [speaker evidence](#speaker-evidence) | `SetSpkModel`, and enough speech in the words | Vosk | The speaker evidence over the utterance's words, before `text` as in Vosk. Vosk's comes from its own frame selection and normalisation and differs in value. |
+| `spk`, `spk_frames` | see [speaker evidence](#speaker-evidence) | `SetSpkModel` with an x-vector model, and enough speech in the words | Vosk | The speaker evidence over the utterance's words, before `text` as in Vosk. Vosk's comes from its own frame selection and normalisation and differs in value. |
 | `spk_start`, `spk_end` | integer | with `spk` | added | The span `spk` pools, after the other keys. |
 
 The alternatives shape, with `SetMaxAlternatives(n)` and n above 1,
@@ -152,8 +152,9 @@ replaces `text` and `result` with a list, as Vosk does:
 | `alternatives[].result` | array of [word entries](#a-word-entry) | `SetWords(True)` | Vosk | The reading's words, with the same keys as the plain shape's `result`. |
 | `alternatives[].text` | string | always | Vosk | The reading's words. |
 
-With `SetSpkModel` the alternatives shape also carries the four
-speaker keys after `floor_dbfs`, over the first alternative's words.
+With `SetSpkModel` and an x-vector model the alternatives shape also
+carries the four speaker keys after `floor_dbfs`, over the first
+alternative's words.
 Vosk carries none in this shape.
 
 ## The endpoint value
@@ -210,6 +211,34 @@ network runs only on frames a span pools or is likely to, so its
 compute follows the speech, not the audio; what it costs per block and
 over a stream is the
 [speaker page's latency section](../benchmarks/speaker-evidence.md#latency-and-compute).
+
+### TitaNet-small
+
+The same call takes TitaNet-small, converted once by
+scripts/titanet_convert.py; `SpkModel(path)`, `SpeakerModel::open` and
+`utter_spk_model_new` tell the two directories apart. The keys are the
+same four, with these differences, all from `[[rr:TD-15]]`:
+
+- A word carries evidence once its span has closed and been embedded:
+  the recognizer queues a word when the best path first shows another
+  entry after it, and embeds it in slices on the blocks that do not
+  advance the decoder. Its evidence appears on the first result after
+  that, and from then on on every entry with the same span. Until then
+  its keys are absent, and a final word whose embedding has not
+  finished carries none.
+- A `[speech]` entry is always a path's last, so it is never queued; it
+  carries evidence only where a word queued before had the same span.
+  By default readings and final alternatives carry the evidence of
+  spans already embedded.
+- No partial or final carries evidence at its top level.
+- `spk` is the network's raw 192 values, not scaled; compare by cosine.
+  `spk_frames` counts 25 ms frames every 10 ms, and `spk_start` and
+  `spk_end` are the first one's start and the last one's end.
+- A span under 25 frames or over 120, 1.2 s, carries none.
+- By default the floor margin does not leave frames out.
+
+To embed enrolment recordings, or any audio, without a recognizer, call
+`SpeakerModel::embed` in Rust or `utter_spk_model_embed` in C.
 
 ## Clocks and units
 

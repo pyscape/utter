@@ -14,8 +14,9 @@ use crate::json::write_string;
 use crate::looped::LoopedNnet;
 use crate::model::{Model, WordBoundary};
 use crate::silence_weighting::SilenceWeighting;
-use crate::speaker::{Evidence, SpeakerModel, SpeakerStream};
-use std::collections::{HashMap, VecDeque};
+use crate::speaker::{SpeakerModel, SpeakerStream};
+use crate::titanet::{Embedding, TitaNet, RECOGNIZER_MAX_FRAMES};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -311,6 +312,15 @@ impl History {
         }
     }
 
+    /// Samples `lo..hi` in [-1, 1], into `out`.
+    fn normalized(&self, lo: usize, hi: usize, out: &mut Vec<f32>) {
+        out.clear();
+        match self {
+            History::Int(v) => out.extend(v[lo..hi].iter().map(|&s| f32::from(s) / FULL_SCALE)),
+            History::Float(v) => out.extend(v[lo..hi].iter().map(|&s| s / FULL_SCALE)),
+        }
+    }
+
     /// The samples from `from` on, in pieces.
     fn replay(&self, from: usize, mut f: impl FnMut(&[f32])) {
         match self {
@@ -389,7 +399,59 @@ pub struct Recognizer<'m> {
     spk_cache: Mutex<HashMap<Vec<u64>, Option<Arc<Pooled>>>>,
     /// The stream frame the speech the best path is in at the frontier began at, if it is.
     spk_best_speech: Option<usize>,
+    /// With TitaNet set. `[[rr:TD-15#The recognizer embeds a word once its span has closed]]`
+    spk_spans: Option<SpanEmbedder<'m>>,
+    /// `[[rr:TD-15#Readings and alternatives: decided by measurement]]`
+    spk_reading_jobs: bool,
+    /// `[[rr:TD-15#The floor margin: decided by measurement]]`
+    spk_trim_floor: bool,
+    /// `[[rr:TD-15#Embedding runs in slices between advances]]`
+    spk_slice_budget: u64,
 }
+
+/// A span to embed: as reported, the key its evidence is kept by, and the samples embedded, both
+/// on the stream's sample clock.
+#[derive(Clone, Copy)]
+struct SpanJob {
+    span: (u64, u64),
+    embed: (u64, u64),
+}
+
+/// TitaNet's embeddings of the spans of the current utterance.
+struct SpanEmbedder<'m> {
+    model: &'m TitaNet,
+    queued: HashSet<(u64, u64)>,
+    queue: VecDeque<SpanJob>,
+    running: Option<SpanJob>,
+    job: Embedding,
+    samples: Vec<f32>,
+    done: HashMap<(u64, u64), Pooled>,
+}
+
+impl<'m> SpanEmbedder<'m> {
+    fn new(model: &'m TitaNet) -> Self {
+        SpanEmbedder {
+            model,
+            queued: HashSet::new(),
+            queue: VecDeque::new(),
+            running: None,
+            job: Embedding::new(),
+            samples: Vec::new(),
+            done: HashMap::new(),
+        }
+    }
+
+    fn forget(&mut self) {
+        self.queued.clear();
+        self.queue.clear();
+        self.running = None;
+        self.done.clear();
+    }
+}
+
+/// Work units a call that does not advance the decoder spends embedding.
+/// `[[rr:TD-15#What a block may cost]]`
+pub const SPK_SLICE_BUDGET: u64 = 50_000_000;
 
 /// Evidence as pooled once, written as JSON once for every result that carries it.
 struct Pooled {
@@ -580,6 +642,10 @@ impl<'m> Recognizer<'m> {
             spk_stream: None,
             spk_cache: Mutex::new(HashMap::new()),
             spk_best_speech: None,
+            spk_spans: None,
+            spk_reading_jobs: false,
+            spk_trim_floor: false,
+            spk_slice_budget: SPK_SLICE_BUDGET,
         })
     }
 
@@ -679,16 +745,24 @@ impl<'m> Recognizer<'m> {
     /// libvosk's `SetSpkModel`: speaker evidence on every partial and final, and on every entry
     /// of their word lists. The current utterance's audio already fed is included. Fails when the
     /// audio's rate is below the speaker model's, or its frames are not the decoder's 10 ms.
-    /// `None` removes it. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#speaker-evidence>.
+    /// `None` removes it. With TitaNet, only word entries carry evidence, once their closed span is
+    /// embedded, and the audio must be 16 kHz or faster. Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#speaker-evidence>.
     // [[rr:TD-14#Decision outcome]]
+    // [[rr:TD-15#Decision outcome]]
     pub fn set_spk_model(&mut self, spk: Option<&'m SpeakerModel>) -> std::io::Result<()> {
         self.spk_cache().clear();
         let Some(model) = spk else {
             self.spk = None;
             self.spk_stream = None;
+            self.spk_spans = None;
             return Ok(());
         };
-        if model.frame_shift_ms() != self.model.mfcc_opts.frame_shift_ms {
+        if let Some(net) = model.titanet() {
+            return self.set_titanet(model, net);
+        }
+        self.spk_spans = None;
+        let xvector = model.xvector().expect("TitaNet returned above");
+        if xvector.frame_shift_ms() != self.model.mfcc_opts.frame_shift_ms {
             return Err(crate::kaldi_io::err(
                 "the speaker model's frames are not the decoder's",
             ));
@@ -708,6 +782,52 @@ impl<'m> Recognizer<'m> {
         self.spk = Some(model);
         self.spk_stream = self.pipeline.is_some().then_some(stream);
         Ok(())
+    }
+
+    // [[rr:TD-15#The recognizer embeds a word once its span has closed]]
+    fn set_titanet(&mut self, model: &'m SpeakerModel, net: &'m TitaNet) -> std::io::Result<()> {
+        let want = 16_000.0;
+        if !(self.sample_rate == want
+            || (self.sample_rate > want && self.sample_rate.fract() == 0.0))
+        {
+            return Err(crate::kaldi_io::err(&format!(
+                "TitaNet needs audio at {want} Hz or faster, in whole hertz"
+            )));
+        }
+        self.spk_stream = None;
+        let same = self.spk.is_some_and(|m| std::ptr::eq(m, model)) && self.spk_spans.is_some();
+        self.spk = Some(model);
+        if !same {
+            self.spk_spans = Some(SpanEmbedder::new(net));
+        }
+        if self.state == State::Running {
+            self.refresh_best_path();
+            self.spk_queue_closed_paths();
+        }
+        Ok(())
+    }
+
+    /// Which rule readings follow with TitaNet set: off, they carry only spans the best path
+    /// queued; on, their closed words are queued after the best path's. Final alternatives exist
+    /// only at a final, where no embedding runs, so under either rule they carry what is embedded.
+    #[doc(hidden)]
+    // [[rr:TD-15#Readings and alternatives: decided by measurement]]
+    pub fn set_spk_reading_jobs(&mut self, on: bool) {
+        self.spk_reading_jobs = on;
+    }
+
+    /// Which rule a floor margin follows with TitaNet set: off, a span is embedded as reported;
+    /// on, its frames within the margin of the floor at either edge are cut first.
+    #[doc(hidden)]
+    // [[rr:TD-15#The floor margin: decided by measurement]]
+    pub fn set_spk_trim_floor(&mut self, on: bool) {
+        self.spk_trim_floor = on;
+    }
+
+    /// Work units per slice, [`SPK_SLICE_BUDGET`] unless set; for tests that vary the slices.
+    #[doc(hidden)]
+    pub fn set_spk_slice_budget(&mut self, units: u64) {
+        self.spk_slice_budget = units.max(1);
     }
 
     fn decoder_config(&self) -> DecoderConfig {
@@ -760,8 +880,12 @@ impl<'m> Recognizer<'m> {
         self.stable.clear();
         self.spk_stream = self
             .spk
+            .filter(|m| m.xvector().is_some())
             .and_then(|m| SpeakerStream::new(m, self.sample_rate).ok());
         self.spk_cache().clear();
+        if let Some(sp) = self.spk_spans.as_mut() {
+            sp.forget();
+        }
     }
 
     /// libvosk's `CleanUp`: a new utterance on the same pipeline, or a new pipeline after a
@@ -792,6 +916,9 @@ impl<'m> Recognizer<'m> {
                 }
                 self.forget_pcm();
                 self.spk_cache().clear();
+                if let Some(sp) = self.spk_spans.as_mut() {
+                    sp.forget();
+                }
             }
             _ => self.rebuild(),
         }
@@ -1063,6 +1190,7 @@ impl<'m> Recognizer<'m> {
         self.update_stable();
         if !advanced {
             self.spk_look_ahead(samples.len());
+            self.spk_slices();
         }
         let reason = self.endpoint_reason();
         let endpoint = reason.is_some();
@@ -1238,7 +1366,7 @@ impl<'m> Recognizer<'m> {
             self.write_word(out, &span, true, true, now);
             out.pop();
             out.push_str(&format!(", \"stable_ms\": {hold}"));
-            self.push_spk(out, &[(span.start_frame, span.end_frame)]);
+            self.push_entry_spk(out, &span);
             out.push('}');
         }
     }
@@ -1264,6 +1392,7 @@ impl<'m> Recognizer<'m> {
         let Some(entries) = entries else {
             return;
         };
+        self.spk_queue_closed_paths();
         // [[rr:TD-14#Mean normalisation looks back only]]
         if let Some(stream) = self.spk_stream.as_ref() {
             let speech: Vec<(usize, usize)> = entries
@@ -1484,7 +1613,7 @@ impl<'m> Recognizer<'m> {
         let keep = |k: usize| threshold.is_none_or(|t| self.frame_dbfs(k).is_some_and(|e| e > t));
         let ev = stream.pool(&frames, keep).map(|ev| {
             let mut vector_json = String::new();
-            Self::write_spk_vector_json(&mut vector_json, &ev);
+            Self::write_spk_vector_json(&mut vector_json, &ev.vector, ev.frames);
             let hop = self.spk_hop_and_window().0 as u64;
             let span_json = format!(
                 "\"spk_start\": {}, \"spk_end\": {}",
@@ -1635,15 +1764,15 @@ impl<'m> Recognizer<'m> {
         out.push_str(&p.vector_json);
     }
 
-    fn write_spk_vector_json(out: &mut String, ev: &Evidence) {
+    fn write_spk_vector_json(out: &mut String, vector: &[f32], frames: usize) {
         out.push_str("\"spk\": [");
-        for (i, v) in ev.vector.iter().enumerate() {
+        for (i, v) in vector.iter().enumerate() {
             if i > 0 {
                 out.push_str(", ");
             }
             out.push_str(&escape_json_number(f64::from(*v)));
         }
-        out.push_str(&format!("], \"spk_frames\": {}", ev.frames));
+        out.push_str(&format!("], \"spk_frames\": {frames}"));
     }
 
     /// The cache is cleared whenever the sample clock of `spk_start` restarts.
@@ -1675,10 +1804,167 @@ impl<'m> Recognizer<'m> {
             .collect()
     }
 
-    /// `push_spk` for one entry of a word list; `[sil]` carries none.
+    /// `push_spk` for one entry of a word list, or with TitaNet its span's evidence if embedded;
+    /// `[sil]` carries none.
     fn push_entry_spk(&self, out: &mut String, e: &Entry) {
-        if self.spk.is_some() && e.word != EntryWord::Silence {
+        if self.spk.is_none() || e.word == EntryWord::Silence {
+            return;
+        }
+        let Some(sp) = self.spk_spans.as_ref() else {
             self.push_spk(out, &[(e.start_frame, e.end_frame)]);
+            return;
+        };
+        let span = (self.sample_of(e.start_frame), self.sample_of(e.end_frame));
+        if let Some(p) = sp.done.get(&span) {
+            out.push_str(", ");
+            Self::write_spk_vector(out, p);
+            out.push_str(", ");
+            Self::write_spk_span(out, p);
+        }
+    }
+
+    /// With TitaNet set, queue the words the best path, and with reading jobs on the readings,
+    /// show another entry after. A `[speech]` entry is always a path's last, so it is never
+    /// queued; it carries evidence only where a queued word had its span.
+    // [[rr:TD-15#The recognizer embeds a word once its span has closed]]
+    fn spk_queue_closed_paths(&mut self) {
+        if self.spk_spans.is_none() {
+            return;
+        }
+        let mut closed: Vec<(usize, usize)> = Vec::new();
+        let mut close = |entries: Vec<Entry>| {
+            for pair in entries.windows(2) {
+                if let EntryWord::Word(_) = pair[0].word {
+                    closed.push((pair[0].start_frame, pair[0].end_frame));
+                }
+            }
+        };
+        if let Some(path) = self.best_path.as_ref() {
+            close(self.entries(path));
+        }
+        if self.spk_reading_jobs {
+            for path in self.readings.iter().flatten() {
+                close(self.entries(path));
+            }
+        }
+        for (a, b) in closed {
+            self.spk_queue_span(a, b);
+        }
+    }
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+    fn spk_queue_span(&mut self, a: usize, b: usize) {
+        let span = (self.sample_of(a), self.sample_of(b));
+        if self
+            .spk_spans
+            .as_ref()
+            .is_none_or(|sp| sp.queued.contains(&span))
+        {
+            return;
+        }
+        let embed = if self.spk_trim_floor {
+            self.spk_trimmed(span)
+        } else {
+            span
+        };
+        let at_16k = ((embed.1 - embed.0) as f64 * f64::from(crate::fbank::SAMPLE_RATE)
+            / f64::from(self.sample_rate)) as usize;
+        let frames = crate::fbank::num_frames(at_16k);
+        let sp = self.spk_spans.as_mut().expect("checked above");
+        sp.queued.insert(span);
+        // At a faster rate the count is the resampler's, checked again when the job begins.
+        if (crate::speaker::MIN_FRAMES - 1..=RECOGNIZER_MAX_FRAMES + 1).contains(&frames) {
+            sp.queue.push_back(SpanJob { span, embed });
+        }
+    }
+
+    /// A span less its frames within the floor margin of the floor at either edge, frames of
+    /// 25 ms every 10 ms as TitaNet's.
+    // [[rr:TD-15#The floor margin: decided by measurement]]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn spk_trimmed(&self, (mut lo, mut hi): (u64, u64)) -> (u64, u64) {
+        let (Some(margin), Some(floor)) = (self.endpoint_floor_margin_db, self.floor.dbfs()) else {
+            return (lo, hi);
+        };
+        let threshold = floor + f64::from(margin);
+        let rate = f64::from(self.sample_rate);
+        let (hop, window) = ((rate * 0.010).round() as u64, (rate * 0.025).round() as u64);
+        let quiet = |a: u64, b: u64| self.energy_dbfs(a, b).is_none_or(|e| e <= threshold);
+        while lo + window <= hi && quiet(lo, lo + window) {
+            lo += hop;
+        }
+        while hi >= lo + window && quiet(hi - window, hi) {
+            hi -= hop;
+        }
+        (lo, hi)
+    }
+
+    /// Run the queued embeddings for one budget of work. `[[rr:TD-15#Embedding runs in slices between advances]]`
+    #[allow(clippy::cast_possible_truncation)]
+    fn spk_slices(&mut self) {
+        let Some(mut sp) = self.spk_spans.take() else {
+            return;
+        };
+        let mut left = self.spk_slice_budget;
+        while left > 0 {
+            if sp.running.is_none() {
+                let Some(j) = sp.queue.pop_front() else {
+                    break;
+                };
+                let base = self.samples_round_start + self.pcm_first as u64;
+                let (Some(lo), Some(hi)) =
+                    (j.embed.0.checked_sub(base), j.embed.1.checked_sub(base))
+                else {
+                    continue;
+                };
+                if hi as usize > self.pcm.len() {
+                    continue;
+                }
+                self.pcm
+                    .normalized(lo as usize, hi as usize, &mut sp.samples);
+                let begun = sp
+                    .job
+                    .begin_at_rate(sp.model, &sp.samples, self.sample_rate);
+                let frames = sp.job.frames();
+                if begun.is_err()
+                    || !(crate::speaker::MIN_FRAMES..=RECOGNIZER_MAX_FRAMES).contains(&frames)
+                {
+                    continue;
+                }
+                sp.running = Some(j);
+            }
+            left = left.saturating_sub(sp.job.advance(sp.model, left));
+            if sp.job.is_done() {
+                let j = sp.running.take().expect("a job was running");
+                let frames = sp.job.frames();
+                let vector = sp.job.take();
+                sp.done
+                    .insert(j.span, self.titanet_pooled(j.embed.0, frames, &vector));
+            }
+        }
+        self.spk_spans = Some(sp);
+    }
+
+    /// `[[rr:TD-15#What carries evidence]]`
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+    fn titanet_pooled(&self, start: u64, frames: usize, vector: &[f32]) -> Pooled {
+        let mut vector_json = String::new();
+        Self::write_spk_vector_json(&mut vector_json, vector, frames);
+        let reach = (frames - 1) * crate::fbank::FRAME_SHIFT + crate::fbank::FRAME_LENGTH;
+        let reach = (reach as f64 * f64::from(self.sample_rate)
+            / f64::from(crate::fbank::SAMPLE_RATE))
+        .round() as u64;
+        Pooled {
+            vector_json,
+            span_json: format!("\"spk_start\": {start}, \"spk_end\": {}", start + reach),
         }
     }
 
@@ -2481,5 +2767,296 @@ mod tests {
         // The evidence reaches the kept rows' 30 s and no further.
         let longest = got.iter().filter_map(reach).max().unwrap();
         assert!((29 * 16000..=30 * 16000).contains(&longest), "{longest}");
+    }
+
+    /// The stock small English model and TitaNet-small, named by `UTTER_TEST_MODEL` and
+    /// `UTTER_TEST_TITANET_MODEL`.
+    fn titanet_models() -> Option<(Model, SpeakerModel)> {
+        let dir = std::path::PathBuf::from(std::env::var_os("UTTER_TEST_MODEL")?);
+        let tn = std::path::PathBuf::from(std::env::var_os("UTTER_TEST_TITANET_MODEL")?);
+        Some((Model::open(&dir).ok()?, SpeakerModel::open(&tn).ok()?))
+    }
+
+    struct TnRun<'a> {
+        /// Block sizes in samples, taken in turn.
+        blocks: &'a [usize],
+        /// Where the model is set, in samples; `None` sets none.
+        set_at: Option<usize>,
+        readings: usize,
+        margin: Option<f32>,
+        reading_jobs: bool,
+        trim: bool,
+        /// A seed for a budget drawn afresh before every block, or the default budget.
+        budgets: Option<u64>,
+    }
+
+    impl TnRun<'_> {
+        fn plain(blocks: &[usize]) -> TnRun<'_> {
+            TnRun {
+                blocks,
+                set_at: Some(0),
+                readings: 0,
+                margin: None,
+                reading_jobs: false,
+                trim: false,
+                budgets: None,
+            }
+        }
+    }
+
+    /// Every result a host reading after each block would see, the final on each endpoint.
+    fn tn_results(m: &Model, spk: &SpeakerModel, audio: &[i16], run: &TnRun) -> Vec<String> {
+        let grammar: Vec<String> = ["yes", "no", "seven", "stop", "go"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut rec = Recognizer::new(m, RATE, &grammar).unwrap();
+        rec.set_words(true);
+        rec.set_partial_words(true);
+        rec.set_alternatives(run.readings);
+        rec.set_max_alternatives(run.readings);
+        rec.set_endpoint_floor_margin(run.margin);
+        rec.set_spk_reading_jobs(run.reading_jobs);
+        rec.set_spk_trim_floor(run.trim);
+        let mut seed = run.budgets.unwrap_or(0);
+        let (mut out, mut at, mut i) = (Vec::new(), 0, 0);
+        while at < audio.len() {
+            let b = &audio[at..(at + run.blocks[i % run.blocks.len()]).min(audio.len())];
+            if run.set_at == Some(at) || run.set_at.is_some_and(|s| s > at && s < at + b.len()) {
+                rec.set_spk_model(Some(spk)).unwrap();
+            }
+            if run.budgets.is_some() {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                rec.set_spk_slice_budget(1 + seed % (2 * SPK_SLICE_BUDGET));
+            }
+            if rec.accept(b).endpoint {
+                out.push(rec.result().to_string());
+            } else {
+                out.push(rec.partial().to_string());
+            }
+            at += b.len();
+            i += 1;
+        }
+        out.push(rec.final_result().to_string());
+        out
+    }
+
+    /// A result less its speaker keys.
+    fn without_spk(r: &str) -> String {
+        let mut out = String::new();
+        let mut rest = r;
+        while let Some(i) = rest.find(", \"spk\": [") {
+            out.push_str(&rest[..i]);
+            let end = rest[i..].find("\"spk_end\": ").unwrap() + i + "\"spk_end\": ".len();
+            let digits = rest[end..].find(|c: char| !c.is_ascii_digit()).unwrap();
+            rest = &rest[end + digits..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    fn key(r: &str, name: &str) -> u64 {
+        let at = r.find(&format!("\"{name}\": ")).unwrap() + name.len() + 4;
+        let n = r[at..]
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(r.len() - at);
+        r[at..at + n].parse().unwrap()
+    }
+
+    /// Every entry's evidence is the stateless call's over the samples it names, written the
+    /// same way; the spans that carry it.
+    fn check_evidence(
+        spk: &SpeakerModel,
+        audio: &[i16],
+        results: &[String],
+    ) -> HashSet<(u64, u64)> {
+        let mut want: HashMap<(u64, u64), String> = HashMap::new();
+        let mut spans = HashSet::new();
+        for r in results {
+            let mut rest = r.as_str();
+            while let Some(i) = rest.find("\"spk\": [") {
+                let tail = &rest[i..];
+                let (a, b) = (key(tail, "spk_start"), key(tail, "spk_end"));
+                let got = &tail[..tail.find(", \"spk_start\"").unwrap()];
+                let w = want.entry((a, b)).or_insert_with(|| {
+                    let x: Vec<f32> = audio[a as usize..b as usize]
+                        .iter()
+                        .map(|&s| f32::from(s) / 32768.0)
+                        .collect();
+                    let v = spk.embed(&x).unwrap();
+                    let json: Vec<String> = v
+                        .iter()
+                        .map(|&v| escape_json_number(f64::from(v)))
+                        .collect();
+                    format!(
+                        "\"spk\": [{}], \"spk_frames\": {}",
+                        json.join(", "),
+                        crate::fbank::num_frames((b - a) as usize)
+                    )
+                });
+                assert_eq!(got, w.as_str());
+                spans.insert((a, b));
+                rest = &tail[1..];
+            }
+        }
+        spans
+    }
+
+    fn tn_audio() -> Vec<i16> {
+        use crate::speaker::tests::clip;
+        [
+            clip("yes"),
+            clip("seven"),
+            noise(60, 1.0),
+            clip("no"),
+            clip("yes"),
+            noise(60, 0.8),
+            clip("seven"),
+        ]
+        .concat()
+    }
+
+    /// 10, 20, 40 and 200 ms, and sizes that change from block to block.
+    const TN_BLOCKS: &[&[usize]] = &[&[160], &[320], &[640], &[3200], &[480, 112, 1600, 640]];
+
+    /// `[[rr:TD-15#Embedding runs in slices between advances]]`
+    #[test]
+    // Miri perturbs float intrinsics by a few ULP, so the exact-bytes compare only holds natively.
+    #[cfg_attr(miri, ignore)]
+    fn titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices() {
+        let Some((m, spk)) = titanet_models() else {
+            return;
+        };
+        let audio = tn_audio();
+        let mut carried = 0;
+        for blocks in TN_BLOCKS {
+            for budgets in [None, Some(0x2545_f491), Some(7)] {
+                for (readings, reading_jobs) in [(0, false), (3, false), (3, true)] {
+                    let run = TnRun {
+                        readings,
+                        reading_jobs,
+                        budgets,
+                        ..TnRun::plain(blocks)
+                    };
+                    let got = tn_results(&m, &spk, &audio, &run);
+                    carried += check_evidence(&spk, &audio, &got).len();
+                    // No partial and no final carries evidence at its top level.
+                    for r in &got {
+                        let last = r.rfind('}').unwrap();
+                        let top = r[..last].rfind(']').map_or(r.as_str(), |i| &r[i..]);
+                        assert!(!top.contains("\"spk"), "{r}");
+                    }
+                }
+            }
+        }
+        assert!(carried > 0);
+    }
+
+    /// `[[rr:TD-15#What carries evidence]]`
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_results_less_the_four_keys_are_the_results_without_a_model() {
+        let Some((m, spk)) = titanet_models() else {
+            return;
+        };
+        let audio = tn_audio();
+        for blocks in [TN_BLOCKS[2], TN_BLOCKS[4]] {
+            for (readings, margin, reading_jobs, trim) in [
+                (0, None, false, false),
+                (3, Some(8.0), true, false),
+                (3, Some(8.0), false, true),
+            ] {
+                let run = TnRun {
+                    readings,
+                    margin,
+                    reading_jobs,
+                    trim,
+                    ..TnRun::plain(blocks)
+                };
+                let with = tn_results(&m, &spk, &audio, &run);
+                let without = tn_results(
+                    &m,
+                    &spk,
+                    &audio,
+                    &TnRun {
+                        set_at: None,
+                        ..run
+                    },
+                );
+                assert!(with.iter().any(|r| r.contains("\"spk\": [")));
+                let stripped: Vec<String> = with.iter().map(|r| without_spk(r)).collect();
+                assert_eq!(stripped, without);
+                check_evidence(&spk, &audio, &with);
+            }
+        }
+    }
+
+    /// Trimming cuts only floor-level frames at a span's edges, so what it embeds lies inside the
+    /// span reported. `[[rr:TD-15#The floor margin: decided by measurement]]`
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn trimmed_evidence_lies_inside_its_span() {
+        let Some((m, spk)) = titanet_models() else {
+            return;
+        };
+        let audio = tn_audio();
+        let run = TnRun {
+            margin: Some(20.0),
+            trim: true,
+            ..TnRun::plain(TN_BLOCKS[2])
+        };
+        let got = tn_results(&m, &spk, &audio, &run);
+        let mut inside = 0;
+        for r in &got {
+            for e in r.split("}, {").filter(|e| e.contains("\"spk_start\"")) {
+                let (s, t) = (key(e, "start_sample"), key(e, "end_sample"));
+                let (a, b) = (key(e, "spk_start"), key(e, "spk_end"));
+                assert!(s <= a && b <= t, "{e}");
+                inside += usize::from(s < a || b + 160 < t);
+            }
+        }
+        assert!(inside > 0, "no span was trimmed");
+        check_evidence(&spk, &audio, &got);
+    }
+
+    /// A model set mid-stream queues the words the partial has closed, so every span's evidence
+    /// is the one a model set at the start gives.
+    /// `[[rr:TD-15#The recognizer embeds a word once its span has closed]]`
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_set_mid_stream_gives_the_same_evidence() {
+        let Some((m, spk)) = titanet_models() else {
+            return;
+        };
+        let audio = tn_audio();
+        let start = tn_results(&m, &spk, &audio, &TnRun::plain(TN_BLOCKS[2]));
+        let from_start = check_evidence(&spk, &audio, &start);
+        let without = tn_results(
+            &m,
+            &spk,
+            &audio,
+            &TnRun {
+                set_at: None,
+                ..TnRun::plain(TN_BLOCKS[2])
+            },
+        );
+        for set_at in [8000, 24000] {
+            let late = tn_results(
+                &m,
+                &spk,
+                &audio,
+                &TnRun {
+                    set_at: Some(set_at),
+                    ..TnRun::plain(TN_BLOCKS[2])
+                },
+            );
+            let spans = check_evidence(&spk, &audio, &late);
+            assert!(!spans.is_empty());
+            assert!(spans.is_subset(&from_start));
+            let stripped: Vec<String> = late.iter().map(|r| without_spk(r)).collect();
+            assert_eq!(stripped, without);
+        }
     }
 }

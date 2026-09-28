@@ -1,6 +1,8 @@
 //! Speaker evidence: a Kaldi x-vector network run frame by frame beside the decoder, whose
-//! frame-level rows are pooled over any span of the utterance into a speaker vector.
+//! frame-level rows are pooled over any span of the utterance into a speaker vector, or
+//! TitaNet-small, which embeds a span whole.
 // [[rr:TD-14#Decision outcome]]
+// [[rr:TD-15#Decision outcome]]
 
 use crate::frontend::OnlineMfcc;
 use crate::gemm::gemm_abt;
@@ -8,6 +10,7 @@ use crate::kaldi_io::{err, find, parse_text_matrix, KaldiReader};
 use crate::mfcc::MfccOptions;
 use crate::nnet3::{InputView, Nnet3, Streamer};
 use crate::resample::LinearResample;
+use crate::titanet::TitaNet;
 use std::collections::VecDeque;
 use std::io::Result;
 use std::path::Path;
@@ -21,10 +24,21 @@ const CMN_WINDOW: usize = 300;
 /// `[[rr:TD-14#Pooling reads the frames it keeps]]`
 pub(crate) const MAX_ROWS: usize = 3000;
 
-/// A speaker model directory as vosk's `SpkModel` reads it: `mfcc.conf`, the x-vector network
-/// `final.ext.raw` ending in an affine over pooled statistics, and the centring vector
-/// `mean.vec` and whitening matrix `transform.mat` applied to its output.
+/// A speaker model directory: either the layout vosk's `SpkModel` reads, `mfcc.conf`, the
+/// x-vector network `final.ext.raw` ending in an affine over pooled statistics, and the centring
+/// vector `mean.vec` and whitening matrix `transform.mat` applied to its output; or TitaNet-small
+/// as `scripts/titanet_convert.py` writes it, `titanet.conf` and `weights.bin`.
 pub struct SpeakerModel {
+    kind: Kind,
+}
+
+enum Kind {
+    XVector(XVector),
+    TitaNet(TitaNet),
+}
+
+#[doc(hidden)]
+pub struct XVector {
     net: Nnet3,
     mfcc: MfccOptions,
     /// The embedding affine, `[embed_rows, 2 * frame_dim]` row-major, and its bias.
@@ -87,10 +101,64 @@ fn read_kaldi_matrix(path: &Path) -> Result<(usize, usize, Vec<f32>)> {
 }
 
 impl SpeakerModel {
-    /// Open a speaker model directory. Fails on a missing file, a network that is not an affine
-    /// over mean and standard-deviation pooling of one frame-level node, or a component before
-    /// the pooling this crate does not implement.
+    /// Open a speaker model directory of either layout, told apart by `titanet.conf`. Fails on a
+    /// missing file; for an x-vector, on a network that is not an affine over mean and
+    /// standard-deviation pooling of one frame-level node, or a component before the pooling
+    /// this crate does not implement; for TitaNet, on weights that are not TitaNet-small's.
     pub fn open(dir: &Path) -> Result<SpeakerModel> {
+        let kind = if dir.join("titanet.conf").exists() {
+            Kind::TitaNet(TitaNet::open(dir)?)
+        } else {
+            Kind::XVector(XVector::open(dir)?)
+        };
+        Ok(SpeakerModel { kind })
+    }
+
+    /// Length of the speaker vector.
+    pub fn dim(&self) -> usize {
+        match &self.kind {
+            Kind::XVector(x) => x.dim,
+            Kind::TitaNet(t) => t.dim(),
+        }
+    }
+
+    /// The TitaNet embedding of any span of 16 kHz samples in [-1, 1], without a recognizer.
+    /// Fails for an x-vector model, and on a span under one 25 ms frame or over 30 s.
+    /// `[[rr:TD-15#Any span can be embedded from any thread]]`
+    pub fn embed(&self, samples: &[f32]) -> Result<Vec<f32>> {
+        self.embed_at_rate(samples, 16_000.0)
+    }
+
+    /// [`embed`](Self::embed) for samples at `rate` Hz, 16 kHz or faster.
+    #[doc(hidden)]
+    pub fn embed_at_rate(&self, samples: &[f32], rate: f32) -> Result<Vec<f32>> {
+        match &self.kind {
+            Kind::TitaNet(t) => t.embed_at_rate(samples, rate),
+            Kind::XVector(_) => Err(err(
+                "an x-vector model has no stateless embedding; it pools a recognizer's frames",
+            )),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn xvector(&self) -> Option<&XVector> {
+        match &self.kind {
+            Kind::XVector(x) => Some(x),
+            Kind::TitaNet(_) => None,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn titanet(&self) -> Option<&TitaNet> {
+        match &self.kind {
+            Kind::TitaNet(t) => Some(t),
+            Kind::XVector(_) => None,
+        }
+    }
+}
+
+impl XVector {
+    fn open(dir: &Path) -> Result<XVector> {
         let mut mfcc = MfccOptions::from_conf(&std::fs::read_to_string(dir.join("mfcc.conf"))?);
         // [[rr:TD-14#The front end is the model's own]]
         mfcc.dither = 0.0;
@@ -151,7 +219,7 @@ impl SpeakerModel {
                 "mean.vec and transform.mat do not match the embedding",
             ));
         }
-        Ok(SpeakerModel {
+        Ok(XVector {
             net,
             mfcc,
             embed: w.d,
@@ -163,11 +231,6 @@ impl SpeakerModel {
             frame_dim,
             variance_floor,
         })
-    }
-
-    /// Length of the speaker vector.
-    pub fn dim(&self) -> usize {
-        self.dim
     }
 
     /// Milliseconds between frames of the model's features.
@@ -278,7 +341,7 @@ impl Net<'_> {
 /// mean that looks back only, and the frame-level rows the pooling reads.
 #[doc(hidden)]
 pub struct SpeakerStream<'m> {
-    model: &'m SpeakerModel,
+    model: &'m XVector,
     resampler: Option<LinearResample>,
     /// The stream frame the audio begins at.
     start: usize,
@@ -302,7 +365,8 @@ pub struct SpeakerStream<'m> {
 
 impl<'m> SpeakerStream<'m> {
     /// Audio at `sample_rate` is resampled to the model's rate, as Kaldi's online features do
-    /// when the audio is faster. Slower audio is refused, as Kaldi refuses it by default.
+    /// when the audio is faster. Slower audio is refused, as Kaldi refuses it by default, and so
+    /// is a TitaNet model, which has no stream.
     pub fn new(model: &'m SpeakerModel, sample_rate: f32) -> Result<Self> {
         Self::starting_at(model, sample_rate, 0)
     }
@@ -314,6 +378,9 @@ impl<'m> SpeakerStream<'m> {
         clippy::cast_sign_loss
     )]
     pub fn starting_at(model: &'m SpeakerModel, sample_rate: f32, frame: usize) -> Result<Self> {
+        let model = model
+            .xvector()
+            .ok_or_else(|| err("a TitaNet model has no frame-level stream"))?;
         let (rate, want) = (
             sample_rate.round() as i64,
             model.mfcc.sample_rate.round() as i64,

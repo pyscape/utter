@@ -161,3 +161,75 @@ fn spans_it_cannot_embed_are_refused() {
     assert!(m.embed(&long).is_err());
     assert!(m.embed(&long[160..]).is_ok());
 }
+
+/// A speaker model directory of either layout opens as one; TitaNet's embeds any span in Rust
+/// and in C. `[[rr:TD-15#Any span can be embedded from any thread]]`
+#[test]
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+fn a_speaker_model_opens_titanet_and_embeds_through_the_c_abi() {
+    let Some(m) = model() else {
+        return;
+    };
+    let dir = std::env::var_os("UTTER_TEST_TITANET_MODEL")
+        .map(PathBuf::from)
+        .unwrap();
+    let spk = utter::SpeakerModel::open(&dir).unwrap();
+    assert_eq!(spk.dim(), 192);
+    let x = clip("seven");
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    assert_eq!(bits(&spk.embed(&x).unwrap()), bits(&m.embed(&x).unwrap()));
+    use std::ffi::CString;
+    use utter::capi::*;
+    let path = CString::new(dir.to_str().unwrap()).unwrap();
+    unsafe {
+        let h = utter_spk_model_new(path.as_ptr());
+        assert!(!h.is_null());
+        assert_eq!(utter_spk_model_dim(h), 192);
+        assert_eq!(utter_spk_model_dim(std::ptr::null()), -1);
+        let mut out = vec![0.0f32; 200];
+        let n = x.len() as i32;
+        assert_eq!(
+            utter_spk_model_embed(h, x.as_ptr(), n, 16_000.0, out.as_mut_ptr(), 200),
+            192
+        );
+        assert_eq!(bits(&out[..192]), bits(&m.embed(&x).unwrap()));
+        let held: Vec<f32> = x.iter().flat_map(|&s| [s; 3]).collect();
+        let n3 = held.len() as i32;
+        assert_eq!(
+            utter_spk_model_embed(h, held.as_ptr(), n3, 48_000.0, out.as_mut_ptr(), 192),
+            192
+        );
+        assert_eq!(
+            bits(&out[..192]),
+            bits(&m.embed_at_rate(&held, 48_000.0).unwrap())
+        );
+        // Too little room, too few samples, audio too slow.
+        assert_eq!(
+            utter_spk_model_embed(h, x.as_ptr(), n, 16_000.0, out.as_mut_ptr(), 191),
+            -1
+        );
+        assert_eq!(
+            utter_spk_model_embed(h, x.as_ptr(), 399, 16_000.0, out.as_mut_ptr(), 192),
+            -1
+        );
+        assert_eq!(
+            utter_spk_model_embed(h, x.as_ptr(), n, 8_000.0, out.as_mut_ptr(), 192),
+            -1
+        );
+        utter_spk_model_free(h);
+    }
+    if let Some(xdir) = std::env::var_os("UTTER_TEST_SPK_MODEL") {
+        let xpath = CString::new(xdir.to_str().unwrap()).unwrap();
+        unsafe {
+            let h = utter_spk_model_new(xpath.as_ptr());
+            assert_eq!(utter_spk_model_dim(h), 128);
+            let mut out = vec![0.0f32; 200];
+            let n = x.len() as i32;
+            assert_eq!(
+                utter_spk_model_embed(h, x.as_ptr(), n, 16_000.0, out.as_mut_ptr(), 200),
+                -1
+            );
+            utter_spk_model_free(h);
+        }
+    }
+}
