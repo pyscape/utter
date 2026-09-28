@@ -20,7 +20,7 @@ the x-vector, and with TitaNet-small as --titanet holds it converted, both as a 
 speaker model and through the stateless embed() on the wheel's span.
 
 Speakers of the test split with at least --min-clips clips take part. Each enrolls from --enroll
-clips, one vector per clip (per final for utter), normalised and averaged into a profile. Up to
+clips, one vector per clip (per spoken word for utter), normalised and averaged into a profile. Up to
 --probes other clips per speaker are probes, scored by cosine against every profile:
 
 - top-1 of K: among K enrolled speakers drawn at random, the probe's own profile scores highest;
@@ -410,8 +410,9 @@ def speakers_of(data: Path, min_clips: int) -> dict[str, list[str]]:
 
 
 def utter_enroll(u: UtterLib, grammar: Sequence[str], clips: Sequence[Clip], block_ms: int, setup: Setup) -> list[Vec]:
-    """One stream of a speaker's enrollment clips: the evidence of every final that has one, the
-    final's top level for the x-vector, its word that embedded most frames for TitaNet."""
+    """One stream of a speaker's enrollment clips: the evidence of every spoken final word that has
+    one. The clips run together into a few finals, so one vector per final would leave a profile
+    resting on about four."""
     rec = UtterRec(u, grammar, setup)
     finals: list[Json] = []
     for c in clips:
@@ -419,14 +420,7 @@ def utter_enroll(u: UtterLib, grammar: Sequence[str], clips: Sequence[Clip], blo
             if rec.accept(b):
                 finals.append(rec.closed())
     finals.append(rec.final())
-    if setup.speaker == "x-vector":
-        return [v for f in finals if (v := evidence(f)) is not None]
-    out = []
-    for f in finals:
-        words = [e for e in f.get("result", []) if e.get("spk")]
-        if words:
-            out.append(np.asarray(max(words, key=lambda e: int(e["spk_frames"]))["spk"], dtype=np.float64))
-    return out
+    return [v for f in finals for e in f.get("result", []) if spoken(e) and (v := evidence(e)) is not None]
 
 
 def word_entries(res: Mapping[str, Any], closed: bool) -> tuple[list[Json], list[Json]]:
@@ -821,7 +815,7 @@ def run(a: argparse.Namespace) -> Json:
         centre[CAMPP] = np.mean(np.stack(enrolled), axis=0)
         clip_vecs[CAMPP] = {k: None if v is None else v - centre[CAMPP] for k, v in clip_vecs[CAMPP].items()}
 
-    # Profiles: one vector per enrollment clip, per utter final.
+    # Profiles: one vector per enrollment clip, per utter word.
     profiles: dict[str, dict[str, Vec]] = {e: {} for e in engines}
     for s in names:
         for e in engines:
