@@ -44,13 +44,14 @@ import argparse
 import bisect
 import ctypes
 import json
+import os
 import random
 import subprocess
 import sys
 import tempfile
 import time
 import wave
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -72,8 +73,11 @@ FALSE_ACCEPT = 0.01
 STREAMS_PER_SPEAKER = 3
 VOSK, KALDI, UTTER, TITANET, CAMPP = "vosk", "x-vector (Kaldi)", "utter", "TitaNet-small", "CAM++"
 UTTER_MARGIN, UTTER_COLD = "utter, 8 dB floor margin", "utter, new recognizer per word"
-UTTER_TN = "utter, TitaNet-small"
-UTTER_TN_MARGIN = "utter, TitaNet-small, 8 dB floor margin, span as reported"
+UTTER_TN = "utter, TitaNet-small, single-threaded"
+UTTER_TN_MT = "utter, TitaNet-small, multi-threaded"
+UTTER_TN_MARGIN = "utter, TitaNet-small, single-threaded, 8 dB floor margin, span as reported"
+UTTER_TN_MARGIN_MT = "utter, TitaNet-small, multi-threaded, 8 dB floor margin, span as reported"
+UTTER_TNS = (UTTER_TN, UTTER_TN_MT, UTTER_TN_MARGIN, UTTER_TN_MARGIN_MT)
 UTTER_TN_EMBED = "utter's embed(), TitaNet-small"
 MARGIN_DB = 8.0
 # The readings and final alternatives the latency pass's readings rows carry.
@@ -284,6 +288,7 @@ class UtterLib:
             ("utter_recognizer_set_alternatives", None, [vp, ci]),
             ("utter_recognizer_set_max_alternatives", None, [vp, ci]),
             ("utter_recognizer_set_spk_model", ci, [vp, vp]),
+            ("utter_recognizer_set_spk_threads", None, [vp, ci]),
             ("utter_recognizer_set_endpoint_floor_margin", None, [vp, cf]),
             ("utter_recognizer_accept_waveform_s", ci, [vp, cp, ci]),
             ("utter_recognizer_partial_result", cp, [vp]),
@@ -328,20 +333,27 @@ class UtterLib:
 
 @dataclass(frozen=True)
 class Setup:
-    """How a stream's recognizer is set: which speaker model, a floor margin, and readings with
-    final alternatives."""
+    """How a stream's recognizer is set: which speaker model, a floor margin, readings with
+    final alternatives, and for TitaNet whether it embeds on a thread of its own."""
 
     speaker: str | None = "x-vector"
     margin: float | None = None
     readings: int = 0
+    threads: bool = True
+
+    @property
+    def multi_threaded(self) -> bool:
+        return self.speaker == "titanet" and self.threads
 
 
 PLAIN, BARE = Setup(), Setup(speaker=None)
 SETUPS = {
     UTTER: PLAIN,
     UTTER_MARGIN: Setup(margin=MARGIN_DB),
-    UTTER_TN: Setup(speaker="titanet"),
-    UTTER_TN_MARGIN: Setup(speaker="titanet", margin=MARGIN_DB),
+    UTTER_TN: Setup(speaker="titanet", threads=False),
+    UTTER_TN_MT: Setup(speaker="titanet"),
+    UTTER_TN_MARGIN: Setup(speaker="titanet", margin=MARGIN_DB, threads=False),
+    UTTER_TN_MARGIN_MT: Setup(speaker="titanet", margin=MARGIN_DB),
 }
 
 
@@ -383,6 +395,8 @@ def new_recognizer(u: UtterLib, grammar: Sequence[str], setup: Setup) -> int:
     if setup.readings:
         lib.utter_recognizer_set_alternatives(h, setup.readings)
         lib.utter_recognizer_set_max_alternatives(h, setup.readings)
+    if setup.speaker == "titanet":
+        lib.utter_recognizer_set_spk_threads(h, int(setup.threads))
     spk = {None: None, "x-vector": u.spk, "titanet": u.tn}[setup.speaker]
     if spk and lib.utter_recognizer_set_spk_model(h, spk) != 0:
         raise SystemExit("utter refused the speaker model")
@@ -546,13 +560,33 @@ SPK_KEYS = frozenset(("spk", "spk_frames", "spk_start", "spk_end"))
 type Timed = list[tuple[float, bool, bytes]]
 
 
-def utter_timed(u: UtterLib, grammar: Sequence[str], pcm: bytes, block_ms: int, setup: Setup) -> Timed:
+def threads_of_process() -> set[int]:
+    return {int(t) for t in os.listdir("/proc/self/task")}
+
+
+def thread_cpu_seconds(tids: Iterable[int]) -> float:
+    """On-CPU time of this process's threads, from the kernel's schedstat."""
+    return sum(int(Path(f"/proc/self/task/{t}/schedstat").read_text().split()[0]) for t in tids) / 1e9
+
+
+def utter_timed(
+    u: UtterLib, grammar: Sequence[str], pcm: bytes, block_ms: int, setup: Setup, spk_cpu: list[float] | None = None
+) -> Timed:
     """A stream through utter's C ABI, each block timed from the call that takes its audio to the
-    return of the result read after it."""
+    return of the result read after it. Multi-threaded, each block is fed when its audio would have
+    arrived in real time, since a deadline counted in audio arrives early in a faster feed and the
+    accept waits, and the TitaNet thread's own compute is added to spk_cpu."""
     lib = u.lib
+    before = threads_of_process()
     h = new_recognizer(u, grammar, setup)
+    spk_threads = sorted(threads_of_process() - before) if setup.multi_threaded else []
+    cpu0 = thread_cpu_seconds(spk_threads)
     out: Timed = []
-    for b in blocks(pcm, block_ms):
+    t0 = time.perf_counter()
+    for i, b in enumerate(blocks(pcm, block_ms)):
+        if setup.multi_threaded:
+            while (left := t0 + (i + 1) * block_ms / 1000 - time.perf_counter()) > 0:
+                time.sleep(left)
         t = time.perf_counter()
         closed = lib.utter_recognizer_accept_waveform_s(h, b, len(b) // 2) == 1
         text = lib.utter_recognizer_result(h) if closed else lib.utter_recognizer_partial_result(h)
@@ -560,6 +594,8 @@ def utter_timed(u: UtterLib, grammar: Sequence[str], pcm: bytes, block_ms: int, 
     t = time.perf_counter()
     text = lib.utter_recognizer_final_result(h)
     out.append((time.perf_counter() - t, True, bytes(text)))
+    if spk_cpu is not None:
+        spk_cpu.append(thread_cpu_seconds(spk_threads) - cpu0)
     lib.utter_recognizer_free(h)
     return out
 
@@ -580,17 +616,22 @@ def latency_pass(u: UtterLib, wheel: "Wheel", grammar: Sequence[str], streams: S
         UTTER: (UTTER, BARE),
         f"{UTTER}, x-vector set": (UTTER, PLAIN),
         UTTER_TN: (UTTER, SETUPS[UTTER_TN]),
+        UTTER_TN_MT: (UTTER, SETUPS[UTTER_TN_MT]),
         f"{UTTER}, {READINGS} readings": (UTTER, Setup(speaker=None, readings=READINGS)),
         f"{UTTER}, {READINGS} readings, x-vector set": (UTTER, Setup(readings=READINGS)),
-        f"{UTTER_TN}, {READINGS} readings": (UTTER, Setup(speaker="titanet", readings=READINGS)),
+        f"{UTTER_TN}, {READINGS} readings": (UTTER, Setup(speaker="titanet", readings=READINGS, threads=False)),
+        f"{UTTER_TN_MT}, {READINGS} readings": (UTTER, Setup(speaker="titanet", readings=READINGS)),
         f"{UTTER}, 8 dB floor margin": (UTTER, Setup(speaker=None, margin=MARGIN_DB)),
         f"{UTTER}, 8 dB floor margin, x-vector set": (UTTER, SETUPS[UTTER_MARGIN]),
         UTTER_TN_MARGIN: (UTTER, SETUPS[UTTER_TN_MARGIN]),
+        UTTER_TN_MARGIN_MT: (UTTER, SETUPS[UTTER_TN_MARGIN_MT]),
         VOSK: (VOSK, BARE),
         f"{VOSK}, speaker model set": (VOSK, PLAIN),
     }
     bare_of = {s: k for k, (e, s) in variants.items() if e == UTTER and s.speaker is None}
-    acc: dict[str, dict[str, list[float]]] = {k: dict(t=[], closing=[], size=[], parse=[]) for k in variants}
+    acc: dict[str, dict[str, list[float]]] = {
+        k: dict(t=[], closing=[], size=[], parse=[], spk_cpu=[]) for k in variants
+    }
     documents = differ = 0
     names = list(variants)
     for i, pcm in enumerate(streams):
@@ -599,7 +640,7 @@ def latency_pass(u: UtterLib, wheel: "Wheel", grammar: Sequence[str], streams: S
         for k in names[r0:] + names[:r0]:
             e, s = variants[k]
             runs[k] = (
-                utter_timed(u, grammar, pcm, block_ms, s)
+                utter_timed(u, grammar, pcm, block_ms, s, acc[k]["spk_cpu"])
                 if e == UTTER
                 else wheel.timed(pcm, block_ms, s.speaker is not None)
             )
@@ -638,6 +679,7 @@ def latency_pass(u: UtterLib, wheel: "Wheel", grammar: Sequence[str], streams: S
             kib_per_block=float(np.mean(a["size"])) / 1024,
             parse_p50=ms(a["parse"], 50),
             parse_p99=ms(a["parse"], 99),
+            spk_thread_rtf=sum(a["spk_cpu"]) / audio if variants[k][1].multi_threaded else None,
         )
         for k, a in acc.items()
     }
@@ -785,7 +827,7 @@ def run(a: argparse.Namespace) -> Json:
     sc.note(f"{len(names)} speakers, {a.enroll} enrollment and up to {a.probes} probe clips each")
 
     engines = (
-        [UTTER, UTTER_MARGIN, UTTER_COLD, UTTER_TN, UTTER_TN_MARGIN, UTTER_TN_EMBED, VOSK]
+        [UTTER, UTTER_MARGIN, UTTER_COLD, *UTTER_TNS, UTTER_TN_EMBED, VOSK]
         + ([KALDI] if a.kaldi else [])
         + [TITANET, CAMPP]
     )
@@ -884,10 +926,7 @@ def run(a: argparse.Namespace) -> Json:
             probes.append(p)
     tables = draw_tables(probes, kept, TABLE_SIZES, rng)
     word = {e: score(probes, e, profiles[e], tables, WORD_BINS) for e in engines}
-    after = {
-        e: after_end(probes, e, game_words[e], profiles[e], word[e]["threshold"])
-        for e in (UTTER, UTTER_TN, UTTER_TN_MARGIN)
-    }
+    after = {e: after_end(probes, e, game_words[e], profiles[e], word[e]["threshold"]) for e in (UTTER, *UTTER_TNS)}
 
     # Utter's partials: when a probe word's evidence first appears, and whether it names the
     # speaker then as the final does.
@@ -913,7 +952,7 @@ def run(a: argparse.Namespace) -> Json:
     )
 
     # Evidence as speech accumulates: each speaker's probe words joined, cut at each length.
-    curve_engines = [e for e in engines if e not in (UTTER_COLD, UTTER_TN, UTTER_TN_MARGIN)]
+    curve_engines = [e for e in engines if e not in (UTTER_COLD, *UTTER_TNS)]
     curve: dict[str, dict[str, Json]] = {e: {} for e in curve_engines}
     joined: dict[int, list[Probe]] = {n: [] for n in LENGTHS_MS}
     for s in kept:
@@ -1032,10 +1071,15 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         f"| {UTTER_COLD} | the same, each probe clip through a recognizer built for it, as a host "
         "that builds one at every grammar change does; enrolled as the first utter row | 8 kHz | "
         "the word's span, its normalisation seeing only the clip |",
-        f"| {UTTER_TN} | utter's TitaNet-small through the same recognizer, embedding each closed word "
-        "between decoder advances | 16 kHz | each word entry's own span, 25 to 120 frames |",
-        f"| {UTTER_TN_MARGIN} | the same with a floor margin of {MARGIN_DB:g} dB set, enrollment included "
-        "| 16 kHz | the span as reported |",
+        f"| {UTTER_TN} | utter's TitaNet-small through the same recognizer, set single-threaded: "
+        "each closed word embedded in slices between decoder advances | 16 kHz | each word entry's "
+        "own span, 25 to 120 frames |",
+        f"| {UTTER_TN_MT} | the same, multi-threaded, the default: each closed word embedded on the "
+        "recognizer's TitaNet thread and published 40 ms of audio after it was queued | 16 kHz | "
+        "each word entry's own span, 25 to 120 frames |",
+        f"| {UTTER_TN_MARGIN} | the single-threaded row with a floor margin of {MARGIN_DB:g} dB set, "
+        "enrollment included | 16 kHz | the span as reported |",
+        f"| {UTTER_TN_MARGIN_MT} | the multi-threaded row with the same margin | 16 kHz | the span as reported |",
         f"| {UTTER_TN_EMBED} | utter's stateless embed() through its C ABI, no recognizer | 16 kHz | "
         "the wheel's word span |",
         f"| {VOSK} | the vosk wheel with {SPK_DIR} set, one clip per recognizer | 8 kHz | the frames "
@@ -1155,17 +1199,23 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         f"in rotating order from one stream to the next, blocks of {a.block_ms} ms with words on "
         "partials. A block's compute runs from the call that takes its audio to the return "
         "of the partial or final read after it; a closing block is one that returned a final. "
-        "Parsing is the host's json.loads of that result in Python.",
+        "Parsing is the host's json.loads of that result in Python. A multi-threaded TitaNet row "
+        "is fed in real time, each block when its audio would have arrived, and its block times are "
+        "the recognizer's thread, waits for the TitaNet thread included; the TitaNet thread's own "
+        "compute, its on-CPU time over the audio, is the next column. Every other row is fed as "
+        "fast as it decodes and runs on the caller's thread alone.",
         "",
-        "| engine | real-time factor | per block, ms p50 / p95 / p99 / max | closing blocks, ms p50 / "
-        "max | result text per block | parsing, ms p50 / p99 |",
-        "|---|---|---|---|---|---|",
+        "| engine | recognizer's thread, real-time factor | per block, ms p50 / p95 / p99 / max | "
+        "closing blocks, ms p50 / max | TitaNet thread, real-time factor | result text per block | "
+        "parsing, ms p50 / p99 |",
+        "|---|---|---|---|---|---|---|",
     ]
     for k, x in la["rows"].items():
+        own = x.get("spk_thread_rtf")
         L.append(
             f"| {k} | {x['rtf']:.4f} | {x['p50']:.3f} / {x['p95']:.2f} / {x['p99']:.2f} / {x['max']:.1f} "
-            f"| {x['closing_p50']:.2f} / {x['closing_max']:.1f} | {x['kib_per_block']:.2f} KiB "
-            f"| {x['parse_p50']:.3f} / {x['parse_p99']:.3f} |"
+            f"| {x['closing_p50']:.2f} / {x['closing_max']:.1f} | {'' if own is None else f'{own:.4f}'} "
+            f"| {x['kib_per_block']:.2f} KiB | {x['parse_p50']:.3f} / {x['parse_p99']:.3f} |"
         )
     moved = ": the evidence moves no word, partial or final to a later block." if la["differ"] == 0 else "."
     L += [
