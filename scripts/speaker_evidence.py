@@ -1213,7 +1213,7 @@ def main() -> None:
     result = run(a)
     report: Json = dict(
         provenance=sc.provenance(a, ["vosk", "sherpa-onnx", "numpy"]),
-        args=vars(a),
+        args=sc.recorded_args(vars(a)),
         seconds=time.monotonic() - t,
         result=result,
     )

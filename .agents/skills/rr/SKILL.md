@@ -8,7 +8,7 @@ description: Cite code and prose by stable anchor with rr (ripref) - mint a mark
 A `file:line` breaks on the next insert; a rule restated in prose forks
 silently. A marker names WHAT is cited and `rr verify` reports when it
 stops resolving. Conventions per repo: ripref `README.md` + `doc/ad/`;
-ChessAmis `docs/dev/references.md`; elsewhere `.rr.toml` and the defaults.
+elsewhere `.rr.toml` and the defaults.
 
 ## Anchors
 
@@ -39,8 +39,8 @@ outermost first.
 Cite BARE when the name is unique tree-wide, `path#name` when it is
 not. `rr at` prints the shortest form that resolves, so paste what it
 gave you rather than choosing: `[[rr:VoiceController]]` and
-`[[rr:HeapEntry]]` are bare, while ChessAmis has `create_chapter` in
-both Rust and Python, so the Rust one only ever resolves as
+`[[rr:HeapEntry]]` are bare, while a repo with `create_chapter` in
+both Rust and Python only ever resolves the Rust one as
 `[[rr:rust/src/store/chapter.rs#create_chapter]]`.
 
 NOTHING AT MODULE LEVEL IS AN ANCHOR, which is the commonest surprise:

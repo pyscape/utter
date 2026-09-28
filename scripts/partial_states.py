@@ -2159,7 +2159,7 @@ def main() -> None:
     report = dict(
         provenance=sc.provenance(a, ["utterpy", "vosk"] if a.with_vosk else ["utterpy"]),
         # The stream set is built from the seed and these: a page cannot be reproduced without them.
-        args=vars(a),
+        args=sc.recorded_args(vars(a)),
         wheel=utterpy.__file__,
         grammar_size=len(grammar),
         seed=a.seed,

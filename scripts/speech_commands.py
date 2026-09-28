@@ -94,6 +94,11 @@ class GateRow(TypedDict):
     floor: float
 
 
+def recorded_args(args: dict[str, object]) -> dict[str, object]:
+    """A run's arguments as a page records them: an absolute path by its name alone."""
+    return {k: Path(v).name if isinstance(v, str) and Path(v).is_absolute() else v for k, v in args.items()}
+
+
 def note(msg: str) -> None:
     """Progress to stderr, so a twenty-minute run is distinguishable from a hung one. The
     report itself goes to stdout and the files, and is not disturbed by this."""

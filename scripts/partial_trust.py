@@ -1942,7 +1942,7 @@ def main() -> None:
         fit_clips=len(fit_feats),
         provenance=diag.get("provenance"),
         census_file=a.census,
-        args=vars(a),
+        args=sc.recorded_args(vars(a)),
     )
     lines = build_page(feats, diag, fit_feats, fit_name, a.split, a.block_ms, a.alternatives, fig)
     sc.write_page(a.out, lines)

@@ -200,7 +200,7 @@ def main() -> None:
     engines = {n: sc.Engine(n, utterpy, a.model, grammar) for n in names}
     report: Json = dict(
         provenance=sc.provenance(a, ["utterpy"]),
-        args=vars(a),
+        args=sc.recorded_args(vars(a)),
         grammar_size=len(grammar),
         sweep=sweep(engines, data, gaps_paths, a),
     )
