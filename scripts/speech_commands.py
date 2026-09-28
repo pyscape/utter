@@ -539,7 +539,9 @@ class Engine:
             self.floor_margin = float(parts[2]) if len(parts) > 2 else None
         self.mod = module
         self.model = module.Model(str(model_dir))
-        self.grammar = json.dumps(grammar)
+        # ensure_ascii=False: the wheel looks up the raw spelling and drops \u-escaped
+        # non-ASCII words with a warning, while utterpy decodes either form.
+        self.grammar = json.dumps(grammar, ensure_ascii=False)
         self.unknown_cost = unknown_cost
         # The wheel and the binding spell the vocabulary lookup differently.
         self.find = getattr(self.model, "FindWord", None) or getattr(self.model, "vosk_model_find_word", None)
