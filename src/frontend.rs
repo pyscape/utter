@@ -15,6 +15,11 @@ pub struct OnlineMfcc {
     /// Frames from `frames_first` on; those before it are gone.
     frames: Vec<Vec<f32>>,
     frames_first: usize,
+    /// Each frame's log mel energies from `logmel_first` on, until the recognizer takes them;
+    /// kept only in the recognizer's pipeline.
+    keep_logmel: bool,
+    logmel: Vec<f32>,
+    logmel_first: usize,
     input_finished: bool,
 }
 
@@ -26,6 +31,9 @@ impl OnlineMfcc {
             remainder_offset: 0,
             frames: Vec::new(),
             frames_first: 0,
+            keep_logmel: false,
+            logmel: Vec::new(),
+            logmel_first: 0,
             input_finished: false,
         }
     }
@@ -34,6 +42,7 @@ impl OnlineMfcc {
     pub fn starting_at(opts: &MfccOptions, frame: usize) -> Self {
         let mut m = OnlineMfcc::new(opts);
         m.frames_first = frame;
+        m.logmel_first = frame;
         m.remainder_offset = frame * m.mfcc.frame_shift;
         m
     }
@@ -59,6 +68,9 @@ impl OnlineMfcc {
             self.mfcc
                 .compute_frame(&self.remainder[local..local + len], &mut row);
             self.frames.push(row.clone());
+            if self.keep_logmel {
+                self.logmel.extend_from_slice(self.mfcc.last_logmel());
+            }
         }
         // Drop samples no future frame will read.
         let next_start = self.num_frames_ready() * shift;
@@ -90,6 +102,26 @@ impl OnlineMfcc {
         (&self.frames, self.frames_first)
     }
 
+    /// Mel bands per frame.
+    pub fn num_bins(&self) -> usize {
+        self.mfcc.num_bins()
+    }
+
+    /// Hand each frame's log mel energies from `from` up to `to` to `f` in order, and forget
+    /// those before `to`. Frames before `from` are forgotten unread.
+    pub fn take_logmel(&mut self, from: usize, to: usize, mut f: impl FnMut(&[f32])) {
+        let bins = self.mfcc.num_bins();
+        let end = to.min(self.logmel_first + self.logmel.len() / bins);
+        let from = from.max(self.logmel_first);
+        for t in from..end {
+            let at = (t - self.logmel_first) * bins;
+            f(&self.logmel[at..at + bins]);
+        }
+        let n = end.saturating_sub(self.logmel_first);
+        self.logmel.drain(..n * bins);
+        self.logmel_first += n;
+    }
+
     /// Frames before `frame` will not be read again.
     pub fn forget_before(&mut self, frame: usize) {
         let n = frame
@@ -109,8 +141,10 @@ pub struct FeaturePipeline<'a> {
 
 impl<'a> FeaturePipeline<'a> {
     pub fn new(opts: &MfccOptions, ivector: Option<&'a IvectorInfo>) -> Self {
+        let mut mfcc = OnlineMfcc::new(opts);
+        mfcc.keep_logmel = true;
         FeaturePipeline {
-            mfcc: OnlineMfcc::new(opts),
+            mfcc,
             ivector: ivector.map(IvectorStream::new),
             ivector_pushed: 0,
         }

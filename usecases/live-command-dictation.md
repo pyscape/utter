@@ -234,6 +234,19 @@ Per 40 ms block, after `accept`:
    and the gate pool the same frames under the same block size and
    floor margin. The computation never delays the partial it rides on,
    and replays exactly.
+10. **How well the acoustic model hears the audio**: every partial and
+    final rates the frames decoded since the previous result from the
+    acoustic model's own output, on a fixed scale that does not move
+    with the grammar, the reading, the input level or the microphone,
+    once for the frames the path spends in words and once for the frames
+    it spends outside them. The raw path score keeps its meaning.
+11. **What the sound outside words is like**: over the frames the path
+    spends in silence or in speech that closes with no word, evidence
+    that tells steady broadband noise from a narrow low-frequency tone
+    and from a short impulse: the level of each band against its floor,
+    how steady those levels are, and the onset and length of the
+    loudest rise. The library names none of these sounds; the
+    application does.
 
 The final result is read for two things only: enrolment, one speaker
 vector per final, and a word the chooser takes from a final

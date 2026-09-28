@@ -53,11 +53,30 @@ fn decode(rec: &mut Recognizer, samples: &[i16]) -> (Vec<String>, Vec<String>) {
     (partials, finals)
 }
 
-/// The result without the floor, which is appended last.
+/// The result without the window's rating, which ends every object that carries it.
+// [[rr:TD-17#Where the keys appear]]
+fn without_window(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    let mut rest = json;
+    while let Some(i) = rest.find(", \"certainty_words\": ") {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let rise = tail
+            .find("\"rise_db\": ")
+            .expect("the rating ends with rise_db");
+        let end = tail[rise..].find(['}', ']']).expect("the object ends");
+        rest = &tail[rise + end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The result without the floor and the window's rating, which are appended last.
 fn without_floor(json: &str) -> String {
+    let json = without_window(json);
     match json.rfind(", \"floor_dbfs\": ") {
         Some(i) => format!("{}}}", &json[..i]),
-        None => json.to_string(),
+        None => json,
     }
 }
 
@@ -683,7 +702,7 @@ fn the_readings_are_sampled_once_per_chunk_whatever_is_asked_of_them() {
     assert_eq!(alts.len(), 1);
     assert_ne!(value_of_key(&alts[0], "\"lead_delta\": "), "null", "{one}");
     // [[rr:TD-7#Decision outcome]]
-    assert_eq!(rec.partial(), one);
+    assert_eq!(without_window(rec.partial()), without_window(&one));
 
     // n moves with no new audio
     // [[rr:TD-9#Readings are read once per decoding advance]]
@@ -691,7 +710,7 @@ fn the_readings_are_sampled_once_per_chunk_whatever_is_asked_of_them() {
     let three = rec.partial().to_string();
     let alts3 = alternatives_of(&three);
     assert_eq!(alts3.len(), 3);
-    assert_eq!(alts3[0], alts[0]);
+    assert_eq!(without_window(&alts3[0]), without_window(&alts[0]));
 
     // Disabled then enabled: the history starts at the next chunk, so nothing has a delta yet.
     let mut late = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
@@ -1077,4 +1096,219 @@ fn c_abi_speaker_round_trip() {
         assert!(utter_spk_model_new(std::ptr::null()).is_null());
         utter_model_free(model);
     }
+}
+
+/// The value of the last `key` in `json`: a result's own top-level key, after its readings'.
+fn last_value_of_key(json: &str, key: &str) -> String {
+    value_of_key(
+        &json[json.rfind(key).unwrap_or_else(|| panic!("{key} in {json}"))..],
+        key,
+    )
+}
+
+/// The mean certainty over a result's whole window, from its words and outside-words parts, and
+/// the window's frames.
+#[allow(clippy::cast_precision_loss)]
+fn window_certainty(json: &str) -> (f64, usize) {
+    let part = |c: &str, n: &str| {
+        let n: usize = last_value_of_key(json, n).parse().unwrap();
+        let c = last_value_of_key(json, c);
+        (
+            if n == 0 {
+                0.0
+            } else {
+                c.parse::<f64>().unwrap() * n as f64
+            },
+            n,
+        )
+    };
+    let (w, nw) = part("\"certainty_words\": ", "\"words_frames\": ");
+    let (o, no) = part("\"certainty_outside\": ", "\"outside_frames\": ");
+    ((w + o) / (nw + no) as f64, nw + no)
+}
+
+/// The final of `samples` read once, at the end, so its window is every frame decoded.
+fn one_final(rec: &mut Recognizer, samples: &[i16]) -> String {
+    for block in samples.chunks(640) {
+        assert!(!rec.accept(block).endpoint, "one utterance");
+    }
+    rec.final_result().to_string()
+}
+
+/// Each `"certainty": ` of a result's word entries, in order.
+fn entry_certainties(json: &str) -> Vec<String> {
+    json.match_indices("\"certainty\": ")
+        .map(|(i, k)| value_of_key(&json[i..], k))
+        .collect()
+}
+
+// [[rr:TD-17#The window is since the previous result]]
+#[test]
+fn every_decoded_frame_is_rated_by_one_result() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let mut audio = clip("yes");
+    audio.extend(vec![0i16; 16000]);
+    audio.extend(clip("seven"));
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    rec.set_words(true);
+    rec.set_partial_words(true);
+    rec.set_alternatives(3);
+    let mut rated = 0;
+    let mut finals = 0;
+    for block in audio.chunks(640) {
+        if rec.accept(block).endpoint {
+            let decoded = rec.num_frames_decoded();
+            rated += window_certainty(rec.result()).1;
+            assert_eq!(rated, decoded, "the utterance's frames, each rated once");
+            rated = 0;
+            finals += 1;
+        } else {
+            let p = rec.partial().to_string();
+            rated += window_certainty(&p).1;
+            let again = rec.partial();
+            assert_eq!(last_value_of_key(again, "\"words_frames\": "), "0");
+            assert_eq!(last_value_of_key(again, "\"outside_frames\": "), "0");
+            assert_eq!(last_value_of_key(again, "\"certainty_words\": "), "null");
+            assert_eq!(last_value_of_key(again, "\"band_db\": "), "null");
+        }
+    }
+    assert!(finals > 0, "a rule closes the pause");
+}
+
+// [[rr:TD-17#What a word entry carries]]
+#[test]
+fn a_word_entrys_certainty_does_not_depend_on_when_results_are_read() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let samples = clip("seven");
+    let mut every = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    every.set_words(true);
+    every.set_partial_words(true);
+    let (_, finals) = decode(&mut every, &samples);
+    let mut once = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    once.set_words(true);
+    let last = one_final(&mut once, &samples);
+    let words = entry_certainties(&last);
+    assert!(
+        !words.is_empty() && words.iter().all(|c| c != "null"),
+        "{last}"
+    );
+    assert_eq!(entry_certainties(finals.last().unwrap()), words);
+}
+
+/// The certainty of one clip over its whole decode at `gain`, under `grammar`.
+fn clip_certainty(
+    m: &Model,
+    word: &str,
+    gain: f32,
+    grammar: &[String],
+    silence_weight: Option<f32>,
+) -> f64 {
+    #[allow(clippy::cast_possible_truncation)]
+    let samples: Vec<i16> = clip(word)
+        .iter()
+        .map(|&s| (f32::from(s) * gain).round() as i16)
+        .collect();
+    let mut opts = utter::recognizer::RecognizerOptions::default();
+    if let Some(w) = silence_weight {
+        opts.silence_weight = w;
+    }
+    let mut rec = Recognizer::with_options(m, 16000.0, grammar, &opts).unwrap();
+    window_certainty(&one_final(&mut rec, &samples)).0
+}
+
+// [[rr:TD-17#The rating is the acoustic model's certainty]]
+#[test]
+fn the_certainty_holds_across_input_levels() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    for word in ["yes", "no", "seven"] {
+        let full = clip_certainty(&m, word, 1.0, &grammar(), None);
+        let quiet = clip_certainty(&m, word, 0.1, &grammar(), None);
+        eprintln!("{word}: 0 dB {full:.4}, -20 dB {quiet:.4}");
+        assert!(full > 0.0 && full < 1.0);
+        assert!(
+            (full - quiet).abs() <= LEVEL_TOLERANCE * full,
+            "{word}: {full} at 0 dB, {quiet} at -20 dB"
+        );
+    }
+}
+
+/// How far the certainty of a clip may move, as a share of itself, when the clip is 20 dB
+/// quieter: the network's input moves with the level, the scale does not. The test clips move
+/// 9 to 15%.
+const LEVEL_TOLERANCE: f64 = 0.2;
+
+// [[rr:TD-17#The rating is the acoustic model's certainty]]
+#[test]
+fn the_certainty_does_not_depend_on_the_grammar() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let other: Vec<String> = ["seven", "eleven", "heaven", "kevin"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    for word in ["yes", "seven"] {
+        // The i-vector weights frames by the decode's silence unless that is turned off; off, the
+        // network's input is the audio's alone and the two agree up to the keys' three decimals.
+        let a = clip_certainty(&m, word, 1.0, &grammar(), Some(1.0));
+        let b = clip_certainty(&m, word, 1.0, &other, Some(1.0));
+        assert!((a - b).abs() <= 0.001, "{word}: {a} and {b}");
+        let a = clip_certainty(&m, word, 1.0, &grammar(), None);
+        let b = clip_certainty(&m, word, 1.0, &other, None);
+        eprintln!("{word}: grammars {a:.4} and {b:.4} with silence weighting");
+        assert!((a - b).abs() <= GRAMMAR_TOLERANCE, "{word}: {a} and {b}");
+    }
+}
+
+/// How far the certainty of a clip may move between grammars through the i-vector's silence
+/// weighting, beyond the keys' three decimals: the test clips move 0.0001.
+const GRAMMAR_TOLERANCE: f64 = 0.002;
+
+// [[rr:TD-17#Words and outside words]]
+#[test]
+fn noise_held_as_an_open_speech_entry_carries_the_sound() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    // Three seconds of steady noise, which under this grammar the decoder comes to hold as
+    // [speech], then a word.
+    let mut s = 11u64;
+    let mut audio: Vec<i16> = (0..48000)
+        .map(|_| {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            i16::try_from((s >> 55) as i64 - 256).unwrap()
+        })
+        .collect();
+    audio.extend(clip("seven"));
+    // The Speech Commands page's grammar: the dataset's words, the letters, the NATO alphabet and
+    // five colours.
+    let mut words: Vec<String> = "yes no up down left right on off stop go zero one two three \
+        four five six seven eight nine backward forward follow learn visual bed bird cat dog happy \
+        house marvin sheila tree wow alpha bravo charlie delta echo foxtrot golf hotel india juliet \
+        kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey yankee \
+        zulu red yellow blue black white"
+        .split_whitespace()
+        .map(String::from)
+        .collect();
+    words.push("x ray".into());
+    words.extend(('a'..='z').map(String::from));
+    let mut rec = Recognizer::new(&m, 16000.0, &words).unwrap();
+    let mut held = 0;
+    for block in audio.chunks(640) {
+        if rec.accept(block).endpoint {
+            rec.result();
+            continue;
+        }
+        let p = rec.partial().to_string();
+        let words: usize = last_value_of_key(&p, "\"words_frames\": ").parse().unwrap();
+        let outside = last_value_of_key(&p, "\"outside_frames\": ");
+        if p.starts_with("{\"partial\": \"[speech]\"") && words > 0 && outside == "0" {
+            held += 1;
+            assert_ne!(last_value_of_key(&p, "\"band_sd_db\": "), "null", "{p}");
+        }
+    }
+    assert!(held > 0, "a partial stood on an open [speech] alone");
 }

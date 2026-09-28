@@ -57,3 +57,4 @@ reaches for the rejected option. Implemented by is optional, because
 | TD-14 | Every word carries the speaker evidence of its own span |
 | TD-15 | TitaNet-small is a native speaker model that embeds each word's span whole |
 | TD-16 | Speaker spans are embedded on a thread of their own, published at a deadline counted in audio |
+| TD-17 | Every result rates what the acoustic model hears and describes the sound outside words |

@@ -20,6 +20,7 @@ Contents:
 - [The final result](#the-final-result)
 - [The endpoint value](#the-endpoint-value)
 - [Speaker evidence](#speaker-evidence)
+- [Certainty and the sound outside words](#certainty-and-the-sound-outside-words)
 - [Clocks and units](#clocks-and-units)
 - [The empty results](#the-empty-results)
 
@@ -40,13 +41,20 @@ frame, after every `AcceptWaveform` that did not end the utterance.
   ],
   "partial_result": [
     {"end": 12.63, "start": 12.30, "word": "alpha",
-     "start_sample": 196800, "end_sample": 202080, "energy_dbfs": -23.2, "stable_ms": 960},
+     "start_sample": 196800, "end_sample": 202080, "energy_dbfs": -23.2, "stable_ms": 960,
+     "certainty": 0.041},
     {"end": 12.98, "start": 12.63, "word": "seven",
-     "start_sample": 202080, "end_sample": 207680, "energy_dbfs": -22.8, "stable_ms": 240},
+     "start_sample": 202080, "end_sample": 207680, "energy_dbfs": -22.8, "stable_ms": 240,
+     "certainty": 0.037},
     {"end": 13.02, "start": 12.98, "word": "[sil]",
-     "start_sample": 207680, "end_sample": 208320, "energy_dbfs": -48.6, "stable_ms": 0}
+     "start_sample": 207680, "end_sample": 208320, "energy_dbfs": -48.6, "stable_ms": 0,
+     "certainty": 0.013, "band_db": [ ... ], "band_sd_db": [ ... ],
+     "rise_start_sample": 207840, "rise_ms": 20, "rise_db": 3.1}
   ],
-  "floor_dbfs": -51.7
+  "floor_dbfs": -51.7,
+  "certainty_words": 0.036, "words_frames": 6, "certainty_outside": 0.013, "outside_frames": 2,
+  "band_db": [ ... ], "band_sd_db": [ ... ],
+  "rise_start_sample": 207840, "rise_ms": 20, "rise_db": 3.1
 }
 ```
 
@@ -57,6 +65,7 @@ frame, after every `AcceptWaveform` that did not end the utterance.
 | `partial_result` | array of [word entries](#a-word-entry) | `SetPartialWords(True)` | Vosk | The best path as word entries, including its `[sil]` and `[speech]` entries. Each entry carries the added evidence keys. |
 | `floor_dbfs` | number | once enough audio has been fed to measure it | added | The room's noise floor over the last ten seconds, in dBFS. Absent while the quietest windows of those seconds are digital silence, which has no level: a gate relative to the floor has nothing to compare against. |
 | `spk`, `spk_frames`, `spk_start`, `spk_end` | see [speaker evidence](#speaker-evidence) | `SetSpkModel` with an x-vector model, and enough speech on the path | added | The speaker evidence over the best path's words and `[speech]`. |
+| `certainty_words` to `rise_db` | see [certainty and the sound outside words](#certainty-and-the-sound-outside-words) | always | added | The acoustic model's certainty over the frames decoded since the previous result, in words and outside them by the best path, and the sound of the frames outside words. |
 
 Turning on partial words in stock Vosk switches it to a lattice-based
 partial that trails the audio. utter's partial is the same either way.
@@ -69,9 +78,10 @@ One entry of `partial_alternatives`.
 |---|---|---|---|---|
 | `text` | string | always | added | The reading's words, or `[sil]` or `[speech]` as for `partial`. |
 | `confidence` | number | always | added | The reading's path score in nats: a raw log-likelihood, not a probability. Compare readings to each other; never read one alone. |
-| `result` | array of [word entries](#a-word-entry) | `SetPartialWords(True)` | added | The reading's words with their spans. These entries carry the span keys and the speaker evidence, not the energy or the hold. |
+| `result` | array of [word entries](#a-word-entry) | `SetPartialWords(True)` | added | The reading's words with their spans. These entries carry the span keys, the speaker evidence and the certainty, not the energy or the hold. |
 | `relation` | string | always | added | How the reading relates to `partial` as a word sequence: `same`, `prefix` when it lacks the partial's tail, `extends` when it has more words, `differs` otherwise. |
 | `lead_delta` | number or null | always | added | How much the reading's lead over the field moved since the last decoding advance, in nats. `null` when the reading has no history yet. Treat `null` as unknown, not as zero. |
+| `certainty_words` to `rise_db` | see [certainty and the sound outside words](#certainty-and-the-sound-outside-words) | always | added | As on the partial, with the frames split by this reading's path. |
 
 The readings are current to the last decoded frame, not to a lattice
 that trails the audio. A competitor absent from the list is unknown,
@@ -91,6 +101,8 @@ final's `result`. Which keys an entry carries depends on where it sits.
 | `energy_dbfs` | number or null | `partial_result` and finals | added | The loudness of the audio under the word, in dBFS. Tells a spoken word from one the decoder read into a quiet room. `null` when there is no signal under the word at all, digital silence or no samples: nothing was said there. |
 | `stable_ms` | integer | `partial_result` and finals | added | How long the word has held its place in the partial. On a final, how long it had held when the final was cut; zero means no partial ever showed it. |
 | `spk`, `spk_frames`, `spk_start`, `spk_end` | see [speaker evidence](#speaker-evidence) | every list, words and `[speech]`, with `SetSpkModel` and enough speech in the span | added | The speaker evidence over this entry's own span. `[sil]` entries carry none. |
+| `certainty` | number or null | every list | added | The acoustic model's mean certainty over the entry's own span; see [certainty](#certainty-and-the-sound-outside-words). |
+| `band_db`, `band_sd_db`, `rise_start_sample`, `rise_ms`, `rise_db` | see [the sound outside words](#certainty-and-the-sound-outside-words) | `[sil]` and `[speech]` entries of `partial_result` | added | The sound over the entry's own span. |
 
 The trailing `[sil]` entry ends at the last frame the decoder has
 processed, not at the last sample you fed, so it runs one chunk behind
@@ -118,7 +130,10 @@ The plain shape, with `SetWords(True)`:
   ],
   "text": "alpha seven",
   "endpoint": "rule2",
-  "floor_dbfs": -51.7
+  "floor_dbfs": -51.7,
+  "certainty_words": 0.035, "words_frames": 5, "certainty_outside": 0.012, "outside_frames": 3,
+  "band_db": [ ... ], "band_sd_db": [ ... ],
+  "rise_start_sample": 208320, "rise_ms": 30, "rise_db": 2.4
 }
 ```
 
@@ -130,6 +145,7 @@ The plain shape, with `SetWords(True)`:
 | `floor_dbfs` | number | once enough audio has been fed to measure it | added | As on the partial. |
 | `spk`, `spk_frames` | see [speaker evidence](#speaker-evidence) | `SetSpkModel` with an x-vector model, and enough speech in the words | Vosk | The speaker evidence over the utterance's words, before `text` as in Vosk. Vosk's comes from its own frame selection and normalisation and differs in value. |
 | `spk_start`, `spk_end` | integer | with `spk` | added | The span `spk` pools, after the other keys. |
+| `certainty_words` to `rise_db` | see [certainty and the sound outside words](#certainty-and-the-sound-outside-words) | always | added | As on the partial, with the frames split by the final's path. |
 
 The alternatives shape, with `SetMaxAlternatives(n)` and n above 1,
 replaces `text` and `result` with a list, as Vosk does:
@@ -141,7 +157,8 @@ replaces `text` and `result` with a list, as Vosk does:
     {"confidence": -3.32, "result": [ ... ], "text": "alpha eleven"}
   ],
   "endpoint": "rule2",
-  "floor_dbfs": -51.7
+  "floor_dbfs": -51.7,
+  "certainty_words": 0.035, ...
 }
 ```
 
@@ -151,11 +168,13 @@ replaces `text` and `result` with a list, as Vosk does:
 | `alternatives[].confidence` | number | always | Vosk | The path score in nats. Vosk's figure comes from a lattice; utter's from the beam. |
 | `alternatives[].result` | array of [word entries](#a-word-entry) | `SetWords(True)` | Vosk | The reading's words, with the same keys as the plain shape's `result`. |
 | `alternatives[].text` | string | always | Vosk | The reading's words. |
+| `alternatives[].certainty_words` to `rise_db` | see [certainty and the sound outside words](#certainty-and-the-sound-outside-words) | always | added | As on the partial, with the frames split by this alternative's path. |
 
 With `SetSpkModel` and an x-vector model the alternatives shape also
 carries the four speaker keys after `floor_dbfs`, over the first
 alternative's words.
-Vosk carries none in this shape.
+Vosk carries none in this shape. The certainty and sound keys follow,
+split by the first alternative's path.
 
 ## The endpoint value
 
@@ -240,6 +259,53 @@ same four, with these differences, all from `[[rr:TD-15]]`:
 To embed enrolment recordings, or any audio, without a recognizer, call
 `SpeakerModel::embed` in Rust or `utter_spk_model_embed` in C.
 
+## Certainty and the sound outside words
+
+Every partial, reading, final and final alternative rates the frames
+decoded since the previous result was read, partial or final, and
+describes the sound of those frames that lie in no named word. Why it is
+built this way is `[[rr:TD-17]]`.
+
+A frame is in words when the path puts it inside a word, or inside a
+`[speech]` entry on a partial or a reading, where the word is still
+open. Every other frame is outside words: silence, and on a final a
+`[speech]` entry, which closed with no word. Each object splits the
+frames by its own path. The sound keys cover every frame in no named
+word, an open `[speech]` included, because the decoder often holds
+steady noise as `[speech]` for seconds on end.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `certainty_words`, `certainty_outside` | number or null | The acoustic model's mean certainty over the frames in words and outside them, 0 to 1. `null` with no such frame. |
+| `words_frames`, `outside_frames` | integer | How many 30 ms frames each covers. |
+| `band_db` | array of numbers, or null | One per mel band of the model's front end, lowest first: the band's mean level over the frames in no named word, in dB over that band's own floor. `null` with no such frame, or while the band floors are unknown. |
+| `band_sd_db` | array of numbers, or null | Each band's standard deviation in dB across those frames: small for a steady sound, large for one that comes and goes. |
+| `rise_start_sample`, `rise_ms` | integer, or null | Where the loudest rise starts, on the clock of `start_sample`, and how long it lasts: the loudest 10 ms frame and the frames next to it within 6 dB of it. |
+| `rise_db` | number or null | The loudest frame's level over the broadband floor. |
+
+A frame's certainty is one minus the entropy of the acoustic model's
+output for it, divided by the entropy of a flat output: 0 when the
+model cannot tell its sounds apart, 1 when it is sure of one. It does
+not depend on the grammar, the path or the readings, and the input
+level moves it only as far as it moves the model. The stock small
+models' outputs are flat, so values sit well under 0.1: compare frames and
+results under one model, and do not carry a threshold to another.
+`confidence` and `lead_delta` keep their meaning beside it.
+
+Each band's floor is the quiet end of that band over the last ten
+seconds, ranked as `floor_dbfs` is, and like it runs on across
+finals. A steady broadband noise raises every band a little with small
+deviations; a hum or a tone raises one or two low bands; a knock or a
+click is a short rise far over the floor with large deviations. utter
+reports the measures and never names the sound.
+
+A word entry's `certainty` is over its own span, whatever the window;
+a `[sil]` or `[speech]` entry of `partial_result` also carries the
+sound keys over its own span. The keys are always on and have no
+setting. Because each result's top-level keys cover what was decoded
+since the previous one, a host that reads results less often sees
+longer windows.
+
 ## Clocks and units
 
 - `start` and `end` are seconds since the recognizer was built,
@@ -252,7 +318,11 @@ To embed enrolment recordings, or any audio, without a recognizer, call
   of 16-bit audio, so both are negative and a louder sound is nearer
   zero. Set thresholds on their difference, which travels between
   microphones.
-- `stable_ms` is milliseconds of audio fed, not wall-clock time.
+- `stable_ms` and `rise_ms` are milliseconds of audio fed, not
+  wall-clock time.
+- `certainty` and its top-level forms have no unit: 0 to 1, on a scale
+  fixed per model. `band_db`, `band_sd_db` and `rise_db` are decibels
+  relative to their own floors, not to full scale.
 - `AcceptWaveform` in Python and C returns true when an endpoint rule
   fired. Rust's `accept` returns a `Step` whose `endpoint` field is
   that flag and whose `sample` field is the sample position of the
@@ -262,7 +332,9 @@ To embed enrolment recordings, or any audio, without a recognizer, call
 ## The empty results
 
 Before the first frame has been decoded the partial is
-`{"partial": "[sil]"}`, with `floor_dbfs` once it is known. A final
+`{"partial": "[sil]"}`, with `floor_dbfs` once it is known, and the
+certainty and sound keys with zero counts and every other value
+`null`. A final
 with nothing decoded, a second call to `Result` or `FinalResult` with
 no audio between them, and the result after `Reset` are all
 `{"text": ""}`, as in Vosk.
