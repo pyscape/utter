@@ -69,6 +69,8 @@ pub mod decode;
 #[doc(hidden)]
 pub mod decoder;
 #[doc(hidden)]
+pub mod fbank;
+#[doc(hidden)]
 pub mod fft;
 #[doc(hidden)]
 pub mod frontend;
@@ -97,6 +99,8 @@ pub mod resample;
 #[doc(hidden)]
 pub mod silence_weighting;
 pub mod speaker;
+#[doc(hidden)]
+pub mod titanet;
 #[doc(hidden)]
 pub mod transition_model;
 #[doc(hidden)]

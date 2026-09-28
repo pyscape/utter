@@ -46,6 +46,10 @@ name = "kernels"
 harness = false
 
 [[bench]]
+name = "titanet"
+harness = false
+
+[[bench]]
 name = "retained_heap"
 harness = false
 
