@@ -400,12 +400,11 @@ def needed_passes(page: Page, patterns: list[list[str]] | None) -> frozenset[str
     """The passes a page must run for the figures asked for; None when every pass is needed."""
     if patterns is None or not page.passes:
         return None
-    needed = set()
+    needed: set[str] = set()
     for path in patterns:
-        if not path or any(ch in path[0] for ch in "*?["):
+        if not path or not literal(path[0]):
             return None
-        if path[0] in page.passes:
-            needed.add(page.passes[path[0]])
+        needed.update(page.passes[o] for o in options(path[0]) if o in page.passes)
     return frozenset(needed)
 
 
@@ -471,10 +470,12 @@ def parse_rules(cfg: Mapping[str, Any]) -> tuple[list[Rule], dict[str, Any], dic
     return rules, {"default": default}, baseline
 
 
+def options(seg: str) -> list[str]:
+    return seg[1:-1].split(",") if seg.startswith("{") and seg.endswith("}") else [seg]
+
+
 def segment(name: str, pattern: str) -> bool:
-    if pattern.startswith("{") and pattern.endswith("}"):
-        return any(fnmatch.fnmatchcase(name, p) for p in pattern[1:-1].split(","))
-    return fnmatch.fnmatchcase(name, pattern)
+    return any(fnmatch.fnmatchcase(name, p) for p in options(pattern))
 
 
 def match(pattern: Sequence[str], path: Sequence[str]) -> bool:
@@ -736,8 +737,7 @@ def section_of(path: Sequence[str]) -> str:
 
 
 def literal(seg: str) -> bool:
-    options = seg[1:-1].split(",") if seg.startswith("{") and seg.endswith("}") else [seg]
-    return not any(ch in o for o in options for ch in "*?[")
+    return not any(ch in o for o in options(seg) for ch in "*?[")
 
 
 def anchored(rule: Rule) -> bool:
