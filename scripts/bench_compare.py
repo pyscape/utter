@@ -783,7 +783,7 @@ def cmd_run(a: argparse.Namespace) -> None:
             ctx = Ctx(run_dir / "candidate-1" / page.name, run_dir / "candidate-1", placeholder, a.quick,
                       run_dir / "candidate-1", passes)  # fmt: skip
             shown = "every pass" if passes is None else "passes " + (", ".join(sorted(passes)) or "that always run")
-            print(f"{page.name}: baseline {rev}, binding {page.binding}, {shown}")
+            print(f"{page.name}: baseline {rev or 'none yet'}, binding {page.binding}, {shown}")
             for step in page.steps(ctx):
                 print(f"  {step.script} {' '.join(step.argv)}")
         return
