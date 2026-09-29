@@ -749,7 +749,7 @@ def cmd_run(a: argparse.Namespace) -> None:
         if only:
             raise SystemExit("--publish takes whole pages, not --only")
 
-    plan: list[tuple[Page, str]] = []
+    plan: list[tuple[Page, str | None]] = []
     missing: list[str] = []
     for p in pages:
         if only and not only_for(only, p.name):
@@ -759,7 +759,11 @@ def cmd_run(a: argparse.Namespace) -> None:
         try:
             git("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}")
         except SystemExit:
-            missing.append(f"{p.name} (baseline {rev} does not exist yet; --baseline names another)")
+            if a.publish:
+                print(f"{p.name}: baseline {rev} does not exist yet; published without a comparison")
+                plan.append((p, None))
+            else:
+                missing.append(f"{p.name} (baseline {rev} does not exist yet; --baseline names another)")
             continue
         plan.append((p, rev))
     for m in missing:
@@ -807,14 +811,21 @@ def cmd_run(a: argparse.Namespace) -> None:
     digest = scripts_digest()
     results: list[PageResult] = []
     mode = "quick" if a.quick else "full"
-    for page, rev in plan:
-        print(f"{page.name}: baseline {rev}, {mode}", flush=True)
-        base = side_for(rev, page.binding)
+    for page, maybe_rev in plan:
         ensure_candidate(page.binding)
-        res = PageResult(page.name, f"{rev} ({short(base.revision)})")
-        results.append(res)
         patterns = only_for(only, page.name)
         passes = needed_passes(page, patterns)
+        if maybe_rev is None:
+            print(f"{page.name}: no baseline yet, {mode}", flush=True)
+            res = PageResult(page.name, "no baseline yet")
+            results.append(res)
+            _, res.error = run_side(page, candidate, 1, run_dir, a.quick, a.publish, passes)
+            continue
+        rev = maybe_rev
+        print(f"{page.name}: baseline {rev}, {mode}", flush=True)
+        base = side_for(rev, page.binding)
+        res = PageResult(page.name, f"{rev} ({short(base.revision)})")
+        results.append(res)
         ran = "all" if passes is None else ",".join(sorted(passes))
         key = hashlib.sha256(f"{page.name}|{mode}|{ran}|{base.revision}|{digest}".encode()).hexdigest()[:16]
         cache = work / "cache" / key
