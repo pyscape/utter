@@ -214,6 +214,8 @@ pub struct SoundTrack {
     /// broadband, each band's a ring written at `hops_taken % FLOOR_HOPS`; a hop of digital
     /// silence has no level and sorts below every hop that has one.
     hops: Vec<f32>,
+    /// The same levels, each band's in ascending order, as many in use as the ring holds.
+    sorted: Vec<f32>,
     /// Hops taken since the track began, the floor was last computed at, and the floor.
     hops_taken: u64,
     floor_at: Option<u64>,
@@ -233,6 +235,7 @@ impl SoundTrack {
             open_n: 0,
             open_silent: true,
             hops: vec![0.0; (bands + 1) * FLOOR_HOPS],
+            sorted: vec![0.0; (bands + 1) * FLOOR_HOPS],
             hops_taken: 0,
             floor_at: None,
             floor: Vec::new(),
@@ -281,12 +284,21 @@ impl SoundTrack {
         if self.open_n == FLOOR_HOP_FRAMES {
             let n = self.open_n as f64;
             let at = (self.hops_taken % FLOOR_HOPS as u64) as usize;
+            let held = self.hops_taken.min(FLOOR_HOPS as u64) as usize;
             for (b, s) in self.open.iter().enumerate() {
-                self.hops[b * FLOOR_HOPS + at] = if self.open_silent {
+                let v = if self.open_silent {
                     f32::NEG_INFINITY
                 } else {
                     (s / n) as f32
                 };
+                let ring = b * FLOOR_HOPS;
+                let run = &mut self.sorted[ring..ring + FLOOR_HOPS];
+                if held == FLOOR_HOPS {
+                    replace_sorted(run, self.hops[ring + at], v);
+                } else {
+                    insert_sorted(&mut run[..=held], v);
+                }
+                self.hops[ring + at] = v;
             }
             self.open.fill(0.0);
             self.open_n = 0;
@@ -309,20 +321,9 @@ impl SoundTrack {
         #[allow(clippy::cast_possible_truncation)]
         let n = self.hops_taken.min(FLOOR_HOPS as u64) as usize;
         let rank = n * 5 / 100;
-        // The rank-th smallest of each band by a sorted run of the rank + 1 smallest seen, far
-        // cheaper at this rank than a selection over a copy of the band.
-        let mut lowest: Vec<f32> = Vec::with_capacity(rank + 2);
         self.floor.clear();
         for b in 0..=self.bands {
-            lowest.clear();
-            for &v in &self.hops[b * FLOOR_HOPS..b * FLOOR_HOPS + n] {
-                if lowest.len() <= rank || v < lowest[rank] {
-                    let at = lowest.partition_point(|&x| x <= v);
-                    lowest.insert(at, v);
-                    lowest.truncate(rank + 1);
-                }
-            }
-            let v = lowest[rank];
+            let v = self.sorted[b * FLOOR_HOPS + rank];
             if v == f32::NEG_INFINITY {
                 self.floor.clear();
                 break;
@@ -410,6 +411,28 @@ impl SoundTrack {
     pub fn pipeline_frame(&self, t: usize) -> usize {
         self.first + t
     }
+}
+
+/// Put `new` in place of `old`, which `run` holds, keeping `run` ascending.
+fn replace_sorted(run: &mut [f32], old: f32, new: f32) {
+    let i = run.partition_point(|x| x.total_cmp(&old).is_lt());
+    let j = run.partition_point(|x| x.total_cmp(&new).is_lt());
+    debug_assert_eq!(run[i].to_bits(), old.to_bits());
+    if j <= i {
+        run.copy_within(j..i, j + 1);
+        run[j] = new;
+    } else {
+        run.copy_within(i + 1..j, i);
+        run[j - 1] = new;
+    }
+}
+
+/// Add `new` to the ascending `run[..run.len() - 1]`, keeping it ascending.
+fn insert_sorted(run: &mut [f32], new: f32) {
+    let held = run.len() - 1;
+    let j = run[..held].partition_point(|x| x.total_cmp(&new).is_lt());
+    run.copy_within(j..held, j + 1);
+    run[j] = new;
 }
 
 /// What the sound over a set of frames is like.
@@ -750,18 +773,25 @@ mod tests {
         let bands = 3;
         let mut track = SoundTrack::new(bands);
         let mut s = 5u64;
+        let mut next = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let silent = f32::EPSILON.ln();
         let mut hops: Vec<Vec<f32>> = Vec::new();
-        for hop in 0..(FLOOR_HOPS + 37) {
+        for hop in 0..(3 * FLOOR_HOPS + 37) {
+            // Single hops of digital silence, fewer than the rank, and a run of more.
+            let quiet = hop % 29 == 0 || (250..263).contains(&hop);
             let mut sum = vec![0.0f64; bands + 1];
             for _ in 0..FLOOR_HOP_FRAMES {
-                let l: Vec<f32> = (0..bands)
-                    .map(|_| {
-                        s ^= s << 13;
-                        s ^= s >> 7;
-                        s ^= s << 17;
-                        (s >> 40) as f32 / (1u64 << 24) as f32 * 8.0 + 2.0
-                    })
-                    .collect();
+                // A band at any level, a band at eight levels, and a band at one.
+                let l = if quiet {
+                    vec![silent; bands]
+                } else {
+                    vec![next() * 8.0 + 2.0, (next() * 8.0).floor() * 0.5 + 2.0, 3.0]
+                };
                 track.push(&l);
                 let mut power = 0.0f64;
                 for (b, &x) in l.iter().enumerate() {
@@ -770,11 +800,13 @@ mod tests {
                 }
                 sum[bands] += power.ln() * DB_PER_NEPER;
             }
-            hops.push(
+            hops.push(if quiet {
+                vec![f32::NEG_INFINITY; bands + 1]
+            } else {
                 sum.iter()
                     .map(|v| (v / FLOOR_HOP_FRAMES as f64) as f32)
-                    .collect(),
-            );
+                    .collect()
+            });
             track.refresh_floor();
             let kept = &hops[hops.len().saturating_sub(FLOOR_HOPS)..];
             let want: Vec<f32> = (0..=bands)
@@ -784,7 +816,8 @@ mod tests {
                     col[col.len() * 5 / 100]
                 })
                 .collect();
-            assert_eq!(track.floor().unwrap(), want.as_slice(), "after hop {hop}");
+            let want = (!want.contains(&f32::NEG_INFINITY)).then_some(want);
+            assert_eq!(track.floor(), want.as_deref(), "after hop {hop}");
         }
     }
 
