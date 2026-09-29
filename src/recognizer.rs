@@ -406,8 +406,6 @@ pub struct Recognizer<'m> {
     spk_threads: bool,
     /// `[[rr:TD-16#Evidence is published at a deadline counted in audio]]`, in samples.
     spk_deadline: u64,
-    spk_final_waits: bool,
-    spk_open_word: bool,
 }
 
 /// TitaNet's embeddings of the spans of the current utterance.
@@ -841,8 +839,6 @@ impl<'m> Recognizer<'m> {
             spk_slice_budget: SPK_SLICE_BUDGET,
             spk_threads: true,
             spk_deadline: samples_in(sample_rate, SPK_DEADLINE_SECONDS),
-            spk_final_waits: false,
-            spk_open_word: false,
         })
     }
 
@@ -1087,18 +1083,6 @@ impl<'m> Recognizer<'m> {
             .map_or((0, Default::default(), Default::default()), |t| {
                 (t.waits, t.waited, t.work().busy)
             })
-    }
-
-    /// `[[rr:TD-16#A final waits for its words: decided by measurement]]`
-    #[doc(hidden)]
-    pub fn set_spk_final_waits(&mut self, on: bool) {
-        self.spk_final_waits = on;
-    }
-
-    /// `[[rr:TD-16#The open word: decided by measurement]]`
-    #[doc(hidden)]
-    pub fn set_spk_open_word(&mut self, on: bool) {
-        self.spk_open_word = on;
     }
 
     fn decoder_config(&self) -> DecoderConfig {
@@ -1463,7 +1447,7 @@ impl<'m> Recognizer<'m> {
             self.spk_look_ahead(samples.len());
             self.spk_slices();
         }
-        self.spk_publish(false);
+        self.spk_publish();
         let reason = self.endpoint_reason();
         let endpoint = reason.is_some();
         let decoded = self
@@ -2096,18 +2080,19 @@ impl<'m> Recognizer<'m> {
     }
 
     /// With TitaNet set, queue the words the best path shows another entry after. A `[speech]` entry is always a path's last, so it is never
-    /// queued; it carries evidence only where a queued word had its span.
+    /// queued; it carries evidence only where a queued word had its span. Multi-threaded, the path's
+    /// last word is queued too, over the audio its span holds so far.
     // [[rr:TD-15#The recognizer embeds a word once its span has closed]]
     fn spk_queue_closed_paths(&mut self) {
         if self.spk_spans.is_none() {
             return;
         }
-        let mut closed: Vec<(usize, usize)> = Vec::new();
+        let mut spans: Vec<(usize, usize)> = Vec::new();
         if let Some(path) = self.best_path.as_ref() {
             let entries = self.entries(path);
             for pair in entries.windows(2) {
                 if let EntryWord::Word(_) = pair[0].word {
-                    closed.push((pair[0].start_frame, pair[0].end_frame));
+                    spans.push((pair[0].start_frame, pair[0].end_frame));
                 }
             }
             // [[rr:TD-16#The open word: decided by measurement]]
@@ -2115,13 +2100,13 @@ impl<'m> Recognizer<'m> {
                 .spk_spans
                 .as_ref()
                 .is_some_and(|sp| sp.thread.is_some());
-            if let (true, true, Some(e)) = (self.spk_open_word, threaded, entries.last()) {
+            if let (true, Some(e)) = (threaded, entries.last()) {
                 if let EntryWord::Word(_) = e.word {
-                    closed.push((e.start_frame, e.end_frame));
+                    spans.push((e.start_frame, e.end_frame));
                 }
             }
         }
-        for (a, b) in closed {
+        for (a, b) in spans {
             self.spk_queue_span(a, b);
         }
     }
@@ -2179,9 +2164,9 @@ impl<'m> Recognizer<'m> {
         sp.pending.push_back((due, number, span));
     }
 
-    /// Publish the spans whose deadline the audio fed has reached, or with `all` every span given
-    /// to the thread, waiting for any it has not finished.
-    fn spk_publish(&mut self, all: bool) {
+    /// Publish the spans whose deadline the audio fed has reached, waiting for any the thread has
+    /// not finished.
+    fn spk_publish(&mut self) {
         let now = self.samples_round_start + self.samples_processed;
         let Some(sp) = self.spk_spans.as_mut() else {
             return;
@@ -2190,7 +2175,7 @@ impl<'m> Recognizer<'m> {
             return;
         };
         while let Some(&(due, number, span)) = sp.pending.front() {
-            if due > now && !all {
+            if due > now {
                 break;
             }
             sp.pending.pop_front();
@@ -2198,26 +2183,6 @@ impl<'m> Recognizer<'m> {
                 sp.done.insert(span, p);
             }
         }
-    }
-
-    /// With the final waits, queue the words of the path a final writes and publish every span
-    /// given to the thread.
-    // [[rr:TD-16#A final waits for its words: decided by measurement]]
-    fn spk_final_waits(&mut self, path: Option<&Path>) {
-        if !self.spk_final_waits || self.spk_spans.as_ref().is_none_or(|sp| sp.thread.is_none()) {
-            return;
-        }
-        let words: Vec<(usize, usize)> = path
-            .map(|p| self.entries(p))
-            .unwrap_or_default()
-            .iter()
-            .filter(|e| matches!(e.word, EntryWord::Word(_)))
-            .map(|e| (e.start_frame, e.end_frame))
-            .collect();
-        for (a, b) in words {
-            self.spk_queue_span(a, b);
-        }
-        self.spk_publish(true);
     }
 
     /// Run the queued embeddings for one budget of work. `[[rr:TD-15#Embedding runs in slices between advances]]`
@@ -2482,31 +2447,20 @@ impl<'m> Recognizer<'m> {
         &self.last_result
     }
 
-    /// The paths a final writes: its alternatives, or its one path.
-    fn final_paths(&self, reason: Endpoint) -> Option<Vec<Path>> {
-        let dec = self.decoder.as_ref()?;
-        if dec.num_frames_decoded() == 0 {
-            return None;
-        }
-        // A floor final is the path as it stood; a completed path would force a word onto it.
-        let completed = reason != Endpoint::Floor;
-        Some(if self.max_alternatives > 1 {
-            dec.alternatives(completed, self.max_alternatives)
-        } else {
-            vec![dec.best_path(completed).unwrap_or_default()]
-        })
-    }
-
-    fn final_json(&mut self, reason: Endpoint) -> String {
-        let Some(paths) = self.final_paths(reason) else {
+    fn final_json(&self, reason: Endpoint) -> String {
+        let Some(dec) = self.decoder.as_ref() else {
             return "{\"text\": \"\"}".into();
         };
-        self.spk_final_waits(paths.first());
+        if dec.num_frames_decoded() == 0 {
+            return "{\"text\": \"\"}".into();
+        }
         let now = self.samples_round_start + self.samples_processed;
+        // A floor final is the path as it stood; a completed path would force a word onto it.
+        let completed = reason != Endpoint::Floor;
         let mut out = String::from("{");
         if self.max_alternatives > 1 {
             out.push_str("\"alternatives\": [");
-            let alts = paths;
+            let alts = dec.alternatives(completed, self.max_alternatives);
             for (i, alt) in alts.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
@@ -2533,7 +2487,7 @@ impl<'m> Recognizer<'m> {
             out.push('}');
             return out;
         }
-        let path = paths.into_iter().next().unwrap_or_default();
+        let path = dec.best_path(completed).unwrap_or_default();
         if self.words {
             out.push_str("\"result\": [");
             self.write_final_words(&mut out, &path, now);
