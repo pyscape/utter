@@ -1212,7 +1212,7 @@ fn the_alternatives_shape_carries_its_first_alternatives_rating_at_its_top() {
 
 // [[rr:TD-17#What a word entry carries]]
 #[test]
-fn a_word_entrys_certainty_does_not_depend_on_when_results_are_read() {
+fn each_word_entry_certainty_does_not_depend_on_when_results_are_read() {
     let Some(dir) = model_dir() else { return };
     let m = Model::open(&dir).unwrap();
     let samples = clip("seven");

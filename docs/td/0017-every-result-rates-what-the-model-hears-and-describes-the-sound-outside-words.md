@@ -165,6 +165,41 @@ moves or the utterance ends, so the partials between two advances
 write them once. With these keys taken out, every result is byte for
 byte the one the runtime gave before them.
 
+### What it costs
+
+On the compute gate's streams, 400 test clips in 40 streams, 571 s of
+audio in 40 ms blocks, five repetitions on one core, against 0.0.5 and
+the runtime before this record, each cell this record / 0.0.5 / before:
+
+| Configuration | p99 block, ms | Slowest block, ms | Real-time factor |
+|---|---|---|---|
+| plain | 2.499 / 2.495 / 2.467 | 4.28 / 4.46 / 4.20 | 0.01036 / 0.01028 / 0.01020 |
+| three readings | 2.570 / 2.587 / 2.537 | 4.42 / 4.71 / 4.40 | 0.01071 / 0.01070 / 0.01052 |
+| three readings, ten alternatives | 2.618 / 2.612 / 2.574 | 4.60 / 4.88 / 4.50 | 0.01091 / 0.01084 / 0.01070 |
+| margin 8 | 2.497 / 2.482 / 2.456 | 4.25 / 4.46 / 4.22 | 0.01036 / 0.01027 / 0.01017 |
+
+The keys cost 6 to 8.5 us a block over the runtime before them. Against
+0.0.5 the real-time factor is up to 0.9% higher and the 99th percentile
+block up to 0.015 ms slower; the slowest block is faster in every
+configuration. With the keys taken out, every result is byte for byte
+0.0.5's, 14,334 results in each configuration.
+
+### Verification
+
+The unit tests check the exponential within two ulps, the certainty
+against the entropy in f64 and the AVX2 sums against the portable sums
+bit for bit, each floor against a plain sort of its band's hops, the
+decimals against the formatter, and that a hiss, a hum and a click over
+one advance's window are told apart and digital silence has no floor.
+The model tests check that the windows tile each utterance and a second
+read is empty, that a word entry's certainty does not depend on when
+results are read, that the alternatives carry their first
+alternative's rating at the top, that the certainty moves with the
+input level and the grammar within their tolerances, and that noise
+the decoder holds as an open `[speech]` carries the sound. The
+benchmark page, docs/benchmarks/sound-rating.md, measures what the keys
+tell apart on public audio.
+
 ## Consequences
 
 - A partial with the sound evidence carries 80 numbers more at its

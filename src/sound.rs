@@ -602,6 +602,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[allow(clippy::cast_precision_loss)]
     fn the_exponential_is_within_two_ulps() {
         for i in 0..=870_000 {
@@ -616,6 +617,8 @@ mod tests {
     }
 
     #[test]
+    // Miri perturbs float intrinsics by a few ULP, so the exact-bytes compare below only holds natively.
+    #[cfg_attr(miri, ignore)]
     #[allow(clippy::cast_precision_loss)]
     fn the_certainty_is_the_normalised_entropy() {
         let mut s = 3u64;
@@ -652,6 +655,7 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[allow(clippy::cast_precision_loss)]
     fn the_avx2_sums_are_the_portable_sums_bit_for_bit() {
         if !crate::gemm::have_avx2() {
@@ -697,6 +701,7 @@ mod tests {
 
     // [[rr:TD-17#The sound outside words]]
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[allow(clippy::cast_precision_loss)]
     fn hiss_hum_and_click_are_told_apart() {
         let hiss_noise = noise(WINDOW, 300.0, 13);
@@ -793,6 +798,9 @@ mod tests {
 
     // [[rr:TD-17#Each band is measured against its own floor]]
     #[test]
+    // Miri perturbs ln() by a few ULP on each call, so a silent frame's level no longer equals the
+    // one the track takes for digital silence.
+    #[cfg_attr(miri, ignore)]
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn each_floor_is_its_bands_hop_at_the_rank() {
         let bands = 3;
@@ -848,6 +856,7 @@ mod tests {
 
     // [[rr:TD-17#Each band is measured against its own floor]]
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn digital_silence_has_no_floor() {
         let mut mfcc = front_end();
         let mut track = SoundTrack::new(mfcc.num_bins());
