@@ -404,6 +404,9 @@ pub struct Recognizer<'m> {
     spk_spans: Option<SpanEmbedder<'m>>,
     /// `[[rr:TD-15#Embedding runs in slices between advances]]`
     spk_slice_budget: u64,
+    spk_threads: bool,
+    /// `[[rr:TD-16#Evidence is published at a deadline counted in audio]]`, in samples.
+    spk_deadline: u64,
     /// The acoustic model's certainty on each decoded frame of the utterance, as running sums
     /// from a zero before the first; the rows not yet read are held in the network.
     certainty: Vec<f64>,
@@ -443,6 +446,10 @@ struct SpanEmbedder<'m> {
     job: Embedding,
     samples: Vec<f32>,
     done: HashMap<(u64, u64), Pooled>,
+    /// Multi-threaded, the thread and the spans it has been given, in order, each with the
+    /// sample fed that publishes it and the job's number.
+    thread: Option<SpkThread>,
+    pending: VecDeque<(u64, u64, (u64, u64))>,
 }
 
 impl<'m> SpanEmbedder<'m> {
@@ -455,6 +462,8 @@ impl<'m> SpanEmbedder<'m> {
             job: Embedding::new(),
             samples: Vec::new(),
             done: HashMap::new(),
+            thread: None,
+            pending: VecDeque::new(),
         }
     }
 
@@ -463,12 +472,207 @@ impl<'m> SpanEmbedder<'m> {
         self.queue.clear();
         self.running = None;
         self.done.clear();
+        self.pending.clear();
+        if let Some(t) = self.thread.as_ref() {
+            t.forget();
+        }
+    }
+}
+
+/// The thread that embeds one recognizer's spans. `[[rr:TD-16#Multi-threaded by default, single-threaded by configuration]]`
+struct SpkThread {
+    shared: Arc<SpkShared>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    next: u64,
+    /// Time `accept` spent waiting for the thread, and the waits.
+    waited: std::time::Duration,
+    waits: u64,
+}
+
+struct SpkShared {
+    work: Mutex<SpkWork>,
+    wake: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct SpkWork {
+    jobs: VecDeque<SpkJob>,
+    /// Finished jobs by number; `None` for a span that carries no evidence.
+    done: HashMap<u64, Option<Pooled>>,
+    /// Jobs numbered below this were forgotten and their results are dropped.
+    first_kept: u64,
+    stop: bool,
+    running: bool,
+    /// A sleep before each job, for tests that make the thread lag.
+    delay: std::time::Duration,
+    /// Time spent embedding.
+    busy: std::time::Duration,
+}
+
+struct SpkJob {
+    number: u64,
+    start: u64,
+    samples: Vec<f32>,
+}
+
+impl SpkThread {
+    fn spawn(model: Arc<TitaNet>, sample_rate: f32) -> SpkThread {
+        let shared = Arc::new(SpkShared {
+            work: Mutex::new(SpkWork::default()),
+            wake: std::sync::Condvar::new(),
+        });
+        let theirs = Arc::clone(&shared);
+        let handle = std::thread::Builder::new()
+            .name("utter-spk".into())
+            .spawn(move || spk_thread_main(&theirs, &model, sample_rate))
+            .expect("spawn the speaker thread");
+        SpkThread {
+            shared,
+            handle: Some(handle),
+            next: 0,
+            waited: std::time::Duration::ZERO,
+            waits: 0,
+        }
+    }
+
+    fn work(&self) -> MutexGuard<'_, SpkWork> {
+        self.shared
+            .work
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn submit(&mut self, start: u64, samples: Vec<f32>) -> u64 {
+        let number = self.next;
+        self.next += 1;
+        self.work().jobs.push_back(SpkJob {
+            number,
+            start,
+            samples,
+        });
+        self.shared.wake.notify_all();
+        number
+    }
+
+    /// The result of job `number`, waiting for it if the thread has not finished it.
+    fn take(&mut self, number: u64) -> Option<Pooled> {
+        let mut work = self.work();
+        if let Some(p) = work.done.remove(&number) {
+            return p;
+        }
+        let began = std::time::Instant::now();
+        loop {
+            work = self
+                .shared
+                .wake
+                .wait(work)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(p) = work.done.remove(&number) {
+                drop(work);
+                self.waited += began.elapsed();
+                self.waits += 1;
+                return p;
+            }
+        }
+    }
+
+    fn forget(&self) {
+        let mut work = self.work();
+        work.jobs.clear();
+        work.done.clear();
+        work.first_kept = self.next;
+    }
+}
+
+impl Drop for SpkThread {
+    fn drop(&mut self) {
+        self.work().stop = true;
+        self.shared.wake.notify_all();
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+fn spk_thread_main(shared: &SpkShared, model: &TitaNet, sample_rate: f32) {
+    let mut job = Embedding::new();
+    let lock = || {
+        shared
+            .work
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    loop {
+        let (next, delay) = {
+            let mut work = lock();
+            loop {
+                if work.stop {
+                    return;
+                }
+                if let Some(j) = work.jobs.pop_front() {
+                    work.running = true;
+                    break (j, work.delay);
+                }
+                work = shared
+                    .wake
+                    .wait(work)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+        };
+        std::thread::sleep(delay);
+        let began = std::time::Instant::now();
+        let pooled = job
+            .begin_at_rate(model, &next.samples, sample_rate)
+            .ok()
+            .filter(|()| {
+                (crate::speaker::MIN_FRAMES..=RECOGNIZER_MAX_FRAMES).contains(&job.frames())
+            })
+            .map(|()| {
+                job.advance(model, u64::MAX);
+                let frames = job.frames();
+                titanet_pooled(next.start, frames, &job.take(), sample_rate)
+            });
+        let spent = began.elapsed();
+        let mut work = lock();
+        work.busy += spent;
+        work.running = false;
+        if next.number >= work.first_kept {
+            work.done.insert(next.number, pooled);
+        }
+        drop(work);
+        shared.wake.notify_all();
+    }
+}
+
+/// `[[rr:TD-15#What carries evidence]]`
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn titanet_pooled(start: u64, frames: usize, vector: &[f32], sample_rate: f32) -> Pooled {
+    let mut vector_json = String::new();
+    Recognizer::write_spk_vector_json(&mut vector_json, vector, frames);
+    let reach = (frames - 1) * crate::fbank::FRAME_SHIFT + crate::fbank::FRAME_LENGTH;
+    let reach = (reach as f64 * f64::from(sample_rate) / f64::from(crate::fbank::SAMPLE_RATE))
+        .round() as u64;
+    Pooled {
+        vector_json,
+        span_json: format!("\"spk_start\": {start}, \"spk_end\": {}", start + reach),
     }
 }
 
 /// Work units a call that does not advance the decoder spends embedding.
 /// `[[rr:TD-15#What a block may cost]]`
 pub const SPK_SLICE_BUDGET: u64 = 50_000_000;
+
+/// `[[rr:TD-16#Evidence is published at a deadline counted in audio]]`
+pub const SPK_DEADLINE_SECONDS: f64 = 0.04;
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn samples_in(sample_rate: f32, seconds: f64) -> u64 {
+    (f64::from(sample_rate) * seconds).round() as u64
+}
 
 /// Evidence as pooled once, written as JSON once for every result that carries it.
 struct Pooled {
@@ -668,6 +872,8 @@ impl<'m> Recognizer<'m> {
             spk_best_speech: None,
             spk_spans: None,
             spk_slice_budget: SPK_SLICE_BUDGET,
+            spk_threads: true,
+            spk_deadline: samples_in(sample_rate, SPK_DEADLINE_SECONDS),
             certainty: vec![0.0],
             sound: SoundTrack::new(model.mfcc_opts.num_mel_bins),
             window: ResultWindow::default(),
@@ -825,7 +1031,13 @@ impl<'m> Recognizer<'m> {
         let same = self.spk.is_some_and(|m| std::ptr::eq(m, model)) && self.spk_spans.is_some();
         self.spk = Some(model);
         if !same {
-            self.spk_spans = Some(SpanEmbedder::new(net));
+            let mut sp = SpanEmbedder::new(net);
+            if self.spk_threads {
+                sp.thread = model
+                    .titanet_shared()
+                    .map(|t| SpkThread::spawn(t, self.sample_rate));
+            }
+            self.spk_spans = Some(sp);
         }
         if self.state == State::Running {
             self.refresh_best_path();
@@ -834,10 +1046,83 @@ impl<'m> Recognizer<'m> {
         Ok(())
     }
 
+    /// Whether a recognizer with TitaNet set embeds on a thread of its own, the default, or in
+    /// slices on the caller's thread. Either may be chosen before or after the model is set; a
+    /// span already queued is carried over.
+    // [[rr:TD-16#Multi-threaded by default, single-threaded by configuration]]
+    pub fn set_spk_threads(&mut self, on: bool) {
+        if self.spk_threads == on {
+            return;
+        }
+        self.spk_threads = on;
+        let Some(sp) = self.spk_spans.as_mut() else {
+            return;
+        };
+        if on {
+            let net = self.spk.and_then(SpeakerModel::titanet_shared);
+            sp.thread = net.map(|t| SpkThread::spawn(t, self.sample_rate));
+            let spans: Vec<(u64, u64)> = sp
+                .running
+                .take()
+                .into_iter()
+                .chain(sp.queue.drain(..))
+                .collect();
+            for span in spans {
+                self.spk_submit(span);
+            }
+        } else {
+            sp.thread = None;
+            for (_, _, span) in sp.pending.drain(..).rev() {
+                sp.queue.push_front(span);
+            }
+        }
+    }
+
     /// Work units per slice, [`SPK_SLICE_BUDGET`] unless set; for tests that vary the slices.
     #[doc(hidden)]
     pub fn set_spk_slice_budget(&mut self, units: u64) {
         self.spk_slice_budget = units.max(1);
+    }
+
+    /// The deadline in samples after the audio that queued a span; for measurement.
+    #[doc(hidden)]
+    pub fn set_spk_deadline(&mut self, samples: u64) {
+        self.spk_deadline = samples;
+    }
+
+    /// A sleep before each of the thread's jobs; for tests that make it lag.
+    #[doc(hidden)]
+    pub fn set_spk_thread_delay(&mut self, delay: std::time::Duration) {
+        if let Some(t) = self.spk_spans.as_ref().and_then(|sp| sp.thread.as_ref()) {
+            t.work().delay = delay;
+        }
+    }
+
+    /// Wait until the thread has finished every span it was given; for tests that make it lead.
+    #[doc(hidden)]
+    pub fn spk_thread_settle(&self) {
+        let Some(t) = self.spk_spans.as_ref().and_then(|sp| sp.thread.as_ref()) else {
+            return;
+        };
+        let mut work = t.work();
+        while work.running || !work.jobs.is_empty() {
+            work = t
+                .shared
+                .wake
+                .wait(work)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    /// Waits at a deadline and their total time, and the thread's time embedding; for measurement.
+    #[doc(hidden)]
+    pub fn spk_thread_stats(&self) -> (u64, std::time::Duration, std::time::Duration) {
+        self.spk_spans
+            .as_ref()
+            .and_then(|sp| sp.thread.as_ref())
+            .map_or((0, Default::default(), Default::default()), |t| {
+                (t.waits, t.waited, t.work().busy)
+            })
     }
 
     fn decoder_config(&self) -> DecoderConfig {
@@ -1210,6 +1495,7 @@ impl<'m> Recognizer<'m> {
             self.spk_look_ahead(samples.len());
             self.spk_slices();
         }
+        self.spk_publish();
         let reason = self.endpoint_reason();
         let endpoint = reason.is_some();
         let decoded = self
@@ -2035,21 +2321,33 @@ impl<'m> Recognizer<'m> {
     }
 
     /// With TitaNet set, queue the words the best path shows another entry after. A `[speech]` entry is always a path's last, so it is never
-    /// queued; it carries evidence only where a queued word had its span.
+    /// queued; it carries evidence only where a queued word had its span. Multi-threaded, the path's
+    /// last word is queued too, over the audio its span holds so far.
     // [[rr:TD-15#The recognizer embeds a word once its span has closed]]
     fn spk_queue_closed_paths(&mut self) {
         if self.spk_spans.is_none() {
             return;
         }
-        let mut closed: Vec<(usize, usize)> = Vec::new();
+        let mut spans: Vec<(usize, usize)> = Vec::new();
         if let Some(path) = self.best_path.as_ref() {
-            for pair in self.entries(path).windows(2) {
+            let entries = self.entries(path);
+            for pair in entries.windows(2) {
                 if let EntryWord::Word(_) = pair[0].word {
-                    closed.push((pair[0].start_frame, pair[0].end_frame));
+                    spans.push((pair[0].start_frame, pair[0].end_frame));
+                }
+            }
+            // [[rr:TD-16#The open word: decided by measurement]]
+            let threaded = self
+                .spk_spans
+                .as_ref()
+                .is_some_and(|sp| sp.thread.is_some());
+            if let (true, Some(e)) = (threaded, entries.last()) {
+                if let EntryWord::Word(_) = e.word {
+                    spans.push((e.start_frame, e.end_frame));
                 }
             }
         }
-        for (a, b) in closed {
+        for (a, b) in spans {
             self.spk_queue_span(a, b);
         }
     }
@@ -2075,14 +2373,63 @@ impl<'m> Recognizer<'m> {
         sp.queued.insert(span);
         // At a faster rate the count is the resampler's, checked again when the job begins.
         if (crate::speaker::MIN_FRAMES - 1..=RECOGNIZER_MAX_FRAMES + 1).contains(&frames) {
-            sp.queue.push_back(span);
+            if sp.thread.is_some() {
+                self.spk_submit(span);
+            } else {
+                sp.queue.push_back(span);
+            }
+        }
+    }
+
+    /// Give the thread a span, to be published at the deadline after the audio fed so far.
+    // [[rr:TD-16#Evidence is published at a deadline counted in audio]]
+    #[allow(clippy::cast_possible_truncation)]
+    fn spk_submit(&mut self, span: (u64, u64)) {
+        let base = self.samples_round_start + self.pcm_first as u64;
+        let (Some(lo), Some(hi)) = (span.0.checked_sub(base), span.1.checked_sub(base)) else {
+            return;
+        };
+        if hi as usize > self.pcm.len() {
+            return;
+        }
+        let mut samples = Vec::new();
+        self.pcm.normalized(lo as usize, hi as usize, &mut samples);
+        let due = self.samples_round_start + self.samples_processed + self.spk_deadline;
+        let Some(sp) = self.spk_spans.as_mut() else {
+            return;
+        };
+        let Some(t) = sp.thread.as_mut() else {
+            return;
+        };
+        let number = t.submit(span.0, samples);
+        sp.pending.push_back((due, number, span));
+    }
+
+    /// Publish the spans whose deadline the audio fed has reached, waiting for any the thread has
+    /// not finished.
+    fn spk_publish(&mut self) {
+        let now = self.samples_round_start + self.samples_processed;
+        let Some(sp) = self.spk_spans.as_mut() else {
+            return;
+        };
+        let Some(t) = sp.thread.as_mut() else {
+            return;
+        };
+        while let Some(&(due, number, span)) = sp.pending.front() {
+            if due > now {
+                break;
+            }
+            sp.pending.pop_front();
+            if let Some(p) = t.take(number) {
+                sp.done.insert(span, p);
+            }
         }
     }
 
     /// Run the queued embeddings for one budget of work. `[[rr:TD-15#Embedding runs in slices between advances]]`
     #[allow(clippy::cast_possible_truncation)]
     fn spk_slices(&mut self) {
-        let Some(mut sp) = self.spk_spans.take() else {
+        let Some(mut sp) = self.spk_spans.take_if(|sp| sp.thread.is_none()) else {
             return;
         };
         let mut left = self.spk_slice_budget;
@@ -2116,29 +2463,11 @@ impl<'m> Recognizer<'m> {
                 let j = sp.running.take().expect("a job was running");
                 let frames = sp.job.frames();
                 let vector = sp.job.take();
-                sp.done.insert(j, self.titanet_pooled(j.0, frames, &vector));
+                sp.done
+                    .insert(j, titanet_pooled(j.0, frames, &vector, self.sample_rate));
             }
         }
         self.spk_spans = Some(sp);
-    }
-
-    /// `[[rr:TD-15#What carries evidence]]`
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
-        clippy::cast_sign_loss
-    )]
-    fn titanet_pooled(&self, start: u64, frames: usize, vector: &[f32]) -> Pooled {
-        let mut vector_json = String::new();
-        Self::write_spk_vector_json(&mut vector_json, vector, frames);
-        let reach = (frames - 1) * crate::fbank::FRAME_SHIFT + crate::fbank::FRAME_LENGTH;
-        let reach = (reach as f64 * f64::from(self.sample_rate)
-            / f64::from(crate::fbank::SAMPLE_RATE))
-        .round() as u64;
-        Pooled {
-            vector_json,
-            span_json: format!("\"spk_start\": {start}, \"spk_end\": {}", start + reach),
-        }
     }
 
     /// Whether a phone belongs to a word rather than to silence, by `word_boundary.int`.
@@ -3006,6 +3335,7 @@ mod tests {
         Some((Model::open(&dir).ok()?, SpeakerModel::open(&tn).ok()?))
     }
 
+    #[derive(Clone, Copy)]
     struct TnRun<'a> {
         /// Block sizes in samples, taken in turn.
         blocks: &'a [usize],
@@ -3015,6 +3345,13 @@ mod tests {
         margin: Option<f32>,
         /// A seed for a budget drawn afresh before every block, or the default budget.
         budgets: Option<u64>,
+        threads: bool,
+        /// Where the thread is switched the other way, in samples.
+        switch_at: Option<usize>,
+        /// A sleep before each of the thread's jobs, so that it lags.
+        lag: Option<std::time::Duration>,
+        /// After each block, wait for the thread to finish, so that it leads.
+        lead: bool,
     }
 
     impl TnRun<'_> {
@@ -3025,6 +3362,10 @@ mod tests {
                 readings: 0,
                 margin: None,
                 budgets: None,
+                threads: true,
+                switch_at: None,
+                lag: None,
+                lead: false,
             }
         }
     }
@@ -3041,12 +3382,19 @@ mod tests {
         rec.set_alternatives(run.readings);
         rec.set_max_alternatives(run.readings);
         rec.set_endpoint_floor_margin(run.margin);
+        rec.set_spk_threads(run.threads);
         let mut seed = run.budgets.unwrap_or(0);
         let (mut out, mut at, mut i) = (Vec::new(), 0, 0);
         while at < audio.len() {
             let b = &audio[at..(at + run.blocks[i % run.blocks.len()]).min(audio.len())];
             if run.set_at == Some(at) || run.set_at.is_some_and(|s| s > at && s < at + b.len()) {
                 rec.set_spk_model(Some(spk)).unwrap();
+                if let Some(lag) = run.lag {
+                    rec.set_spk_thread_delay(lag);
+                }
+            }
+            if run.switch_at.is_some_and(|s| s >= at && s < at + b.len()) {
+                rec.set_spk_threads(!run.threads);
             }
             if run.budgets.is_some() {
                 seed ^= seed << 13;
@@ -3058,6 +3406,9 @@ mod tests {
                 out.push(rec.result().to_string());
             } else {
                 out.push(rec.partial().to_string());
+            }
+            if run.lead {
+                rec.spk_thread_settle();
             }
             at += b.len();
             i += 1;
@@ -3155,11 +3506,17 @@ mod tests {
         let audio = tn_audio();
         let mut carried = 0;
         for blocks in TN_BLOCKS {
-            for budgets in [None, Some(0x2545_f491), Some(7)] {
+            for (threads, budgets) in [
+                (true, None),
+                (false, None),
+                (false, Some(0x2545_f491)),
+                (false, Some(7)),
+            ] {
                 for readings in [0, 3] {
                     let run = TnRun {
                         readings,
                         budgets,
+                        threads,
                         ..TnRun::plain(blocks)
                     };
                     let got = tn_results(&m, &spk, &audio, &run);
@@ -3245,6 +3602,66 @@ mod tests {
             assert!(spans.is_subset(&from_start));
             let stripped: Vec<String> = late.iter().map(|r| without_spk(r)).collect();
             assert_eq!(stripped, without);
+        }
+    }
+
+    /// The thread lagging behind the deadlines or finishing ahead of them gives the same bytes.
+    /// `[[rr:TD-16#Verification]]`
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_thread_lagging_or_leading_gives_the_same_results() {
+        let Some((m, spk)) = titanet_models() else {
+            return;
+        };
+        let audio = tn_audio();
+        for blocks in [TN_BLOCKS[2], TN_BLOCKS[4]] {
+            for readings in [0, 3] {
+                let run = TnRun {
+                    readings,
+                    ..TnRun::plain(blocks)
+                };
+                let free = tn_results(&m, &spk, &audio, &run);
+                let lag = Some(std::time::Duration::from_millis(60));
+                let lagging = tn_results(&m, &spk, &audio, &TnRun { lag, ..run });
+                let leading = tn_results(&m, &spk, &audio, &TnRun { lead: true, ..run });
+                assert!(!check_evidence(&spk, &audio, &free).is_empty());
+                assert_eq!(lagging, free);
+                assert_eq!(leading, free);
+            }
+        }
+    }
+
+    /// Switching the thread on or off mid-stream carries the queued spans over, and every span's
+    /// evidence is still the stateless call's.
+    /// `[[rr:TD-16#Multi-threaded by default, single-threaded by configuration]]`
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_thread_switched_mid_stream_gives_the_same_evidence() {
+        let Some((m, spk)) = titanet_models() else {
+            return;
+        };
+        let audio = tn_audio();
+        let without = tn_results(
+            &m,
+            &spk,
+            &audio,
+            &TnRun {
+                set_at: None,
+                ..TnRun::plain(TN_BLOCKS[2])
+            },
+        );
+        for threads in [true, false] {
+            for switch_at in [0, 8000, 24000, 40000] {
+                let run = TnRun {
+                    threads,
+                    switch_at: Some(switch_at),
+                    ..TnRun::plain(TN_BLOCKS[2])
+                };
+                let got = tn_results(&m, &spk, &audio, &run);
+                assert!(!check_evidence(&spk, &audio, &got).is_empty());
+                let stripped: Vec<String> = got.iter().map(|r| without_spk(r)).collect();
+                assert_eq!(stripped, without);
+            }
         }
     }
 }

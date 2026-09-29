@@ -258,6 +258,17 @@ pub unsafe extern "C" fn utter_recognizer_set_spk_model(
     }
 }
 
+/// With TitaNet set, nonzero embeds on a thread of the recognizer's own, the default; zero
+/// embeds in slices on the caller's thread.
+/// `[[rr:TD-16#Multi-threaded by default, single-threaded by configuration]]`
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_spk_threads(rec: *mut UtterRecognizer, on: c_int) {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner.set_spk_threads(on != 0);
+    }
+}
+
 /// Free a recognizer and the last result string it returned; null is ignored.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_free(rec: *mut UtterRecognizer) {

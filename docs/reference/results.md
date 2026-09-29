@@ -236,15 +236,28 @@ over a stream is the
 The same call takes TitaNet-small, converted once by
 scripts/titanet_convert.py; `SpkModel(path)`, `SpeakerModel::open` and
 `utter_spk_model_new` tell the two directories apart. The keys are the
-same four, with these differences, all from `[[rr:TD-15]]`:
+same four, with these differences, from `[[rr:TD-15]]` and
+`[[rr:TD-16]]`:
 
-- A word carries evidence once its span has closed and been embedded:
-  the recognizer queues a word when the best path first shows another
-  entry after it, and embeds it in slices on the blocks that do not
-  advance the decoder. Its evidence appears on the first result after
-  that, and from then on on every entry with the same span. Until then
-  its keys are absent, and a final word whose embedding has not
-  finished carries none.
+- A word carries evidence once its span has been embedded. The
+  recognizer embeds on a thread of its own: it queues a word when the
+  best path first shows another entry after it, and at each decoder
+  advance it queues the path's last word too, over the audio its span
+  holds so far, so a partial's last word can carry evidence over that
+  shorter span while it is still spoken. A queued span's evidence
+  appears on the first result read after the accept that brings the
+  audio fed to 40 ms past the accept that queued it, whatever the
+  machine; if the thread has not finished by then, that accept waits
+  for it. From then on it is on every entry with the same span. Until
+  then its keys are absent, and a final word whose evidence is not yet
+  published carries none.
+- `set_spk_threads(false)` in Rust, `utter_recognizer_set_spk_threads`
+  in C, runs no thread: the recognizer embeds closed words only, in
+  slices on the blocks that do not advance the decoder, and a word's
+  evidence appears on the first result after its embedding completes.
+  The two settings differ in which result first carries a word's
+  evidence, and in the open word's; a span's keys have the same bytes
+  in both.
 - A `[speech]` entry is always a path's last, so it is never queued; it
   carries evidence only where a word queued before had the same span.
   Readings and final alternatives carry only the evidence of spans
