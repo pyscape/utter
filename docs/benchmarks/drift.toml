@@ -819,7 +819,12 @@ weight = 4
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "cost", "seconds_per_speech_second", "utter's embed(), TitaNet-small"]
+path = [
+  "result",
+  "cost",
+  "seconds_per_speech_second",
+  "utter's embed(), TitaNet-small",
+]
 kind = "timing"
 better = "down"
 rel = 0.05
