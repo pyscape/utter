@@ -2455,7 +2455,7 @@ def main() -> None:
         lines.append("")
     text = write_page(args.out + ".md", lines)
     Path(args.out + ".json").write_text(json.dumps(report, indent=1))
-    note(f"written: {args.out}.md, .json, .clips.jsonl")
+    note(f"written: {args.out}.md, .json" + (", .clips.jsonl" if "full" in passes else ""))
     print(text)
 
 
