@@ -1068,9 +1068,10 @@ def page(report: Json, a: argparse.Namespace) -> list[str]:
         f"| {UTTER_TN} | utter's TitaNet-small through the same recognizer, set single-threaded: "
         "each closed word embedded in slices between decoder advances | 16 kHz | each word entry's "
         "own span, 25 to 120 frames |",
-        f"| {UTTER_TN_MT} | the same, multi-threaded, the default: each closed word embedded on the "
-        "recognizer's TitaNet thread and published 40 ms of audio after it was queued | 16 kHz | "
-        "each word entry's own span, 25 to 120 frames |",
+        f"| {UTTER_TN_MT} | the same, multi-threaded, the default: each closed word, and at each "
+        "advance the open word over its span so far, embedded on the recognizer's TitaNet thread and "
+        "published 40 ms of audio after it was queued | 16 kHz | each word entry's own span, 25 to "
+        "120 frames |",
         f"| {UTTER_TN_MARGIN} | the single-threaded row with a floor margin of {MARGIN_DB:g} dB set, "
         "enrollment included | 16 kHz | the span as reported |",
         f"| {UTTER_TN_MARGIN_MT} | the multi-threaded row with the same margin | 16 kHz | the span as reported |",

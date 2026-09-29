@@ -96,6 +96,11 @@ D is decided by measurement, from one block of 40 ms upward: the
 smallest D at which, on the speaker-cost streams fed in real time on
 one spare core, no accept waits at the 99th percentile.
 
+D is 40 ms, one block. On the speaker-cost streams, 400 test clips in
+40 streams, 571 s of audio in 40 ms blocks, fed in real time with the
+recognizer on one hardware thread of a core and its TitaNet thread on
+the other, no accept of 14,334 waited in either of two repetitions.
+
 ### A final waits for its words: decided by measurement
 
 Two rules are built behind a switch:
@@ -107,6 +112,12 @@ Two rules are built behind a switch:
 
 The final waits is kept if the final's block stays within the worst
 block TD-15 allows on the speaker-cost streams multi-threaded.
+
+As now is kept. On the same streams fed in real time, the final waits
+took the closing block to 14.49 ms at worst and 13.35 ms at the 99th
+percentile, against 10.91 ms, the slowest block of 0.0.5 with the
+x-vector on the same run. It would have given evidence to 384 of 389
+final words, against 351 without it.
 
 ### The open word: decided by measurement
 
@@ -124,6 +135,13 @@ The open word too is kept if, multi-threaded, it gives evidence
 on a partial earlier by a median of at least 150 ms, and the thread
 keeps up at the deadline D above.
 
+The open word too is kept. Over the 354 words that carry evidence on a
+partial under both rules, it arrives a median of 240 ms earlier, 480 ms
+at the 90th percentile, and 61 more words carry it on a partial, 415 in
+all. At D the thread kept up: one accept of 14,334 waited, 15.9 ms, in
+one repetition and none in the other. The thread's compute doubles, a
+real-time factor of 0.0056 against 0.0028.
+
 ### What a block may cost
 
 Multi-threaded, the recognizer's thread is held to 0.0.5 with
@@ -131,6 +149,53 @@ no speaker model, not with the x-vector: a 99th percentile block of
 2.86 ms, a real-time factor of 0.0117, and its slowest block, on the
 speaker-cost streams, waits included. The thread's own compute is
 reported beside them, per second of audio and per core.
+
+On the speaker-cost streams fed in real time, five repetitions, the
+recognizer on one hardware thread of a core and the TitaNet thread on
+the other:
+
+| | 99th percentile block | slowest block | real-time factor |
+|---|---|---|---|
+| multi-threaded, the recognizer's thread | 3.027 ms | 5.05 ms | 0.01306 |
+| 0.0.5, no speaker model | 3.011 ms | 5.37 ms | 0.01296 |
+| this runtime, no speaker model | 3.017 ms | 4.90 ms | 0.01307 |
+
+No accept waited. The TitaNet thread's own compute is a real-time
+factor of 0.0054 on its hardware thread, 0.0049 to 0.0061 over the
+repetitions. Against 0.0.5 the real-time factor is 0.8% higher, all of
+it `[[rr:TD-17]]`'s keys: the runtime with no speaker model is 0.9%
+higher. The 99th percentile block is 0.016 ms slower, 0.006 ms of it
+the runtime with no speaker model and 0.010 ms multi-threaded over
+that. A second run, three repetitions with every block's time kept,
+puts multi-threaded 0.003 ms over the runtime with no speaker model at
+the 99th percentile, and block for block the two are within 2 us at the
+median on advancing, closing and other blocks; with the TitaNet thread
+on a core of its own it is 0.021 ms under.
+
+Single-threaded, TD-15's limit, 0.0.5 with the x-vector, holds in every
+configuration of its gate, fed as fast as it decodes on one core, each
+cell single-threaded / 0.0.5 with the x-vector:
+
+| Configuration | p99 block, ms | Slowest block, ms | Real-time factor |
+|---|---|---|---|
+| plain | 2.604 / 2.911 | 4.45 / 5.95 | 0.01335 / 0.01713 |
+| three readings | 2.725 / 3.102 | 4.73 / 6.02 | 0.01384 / 0.01755 |
+| three readings, ten alternatives | 2.745 / 3.114 | 4.81 / 6.18 | 0.01393 / 0.01782 |
+| margin 8 | 2.618 / 2.918 | 4.37 / 5.89 | 0.01340 / 0.01721 |
+
+### Evidence in each mode
+
+On the speaker-cost streams, the audio fed when a result first carries
+a span's evidence, less the span's end, and the share of final words
+that carry evidence, the same whether fed in real time or faster:
+
+| mode | after the span's end, median / p90 / p99 | spans with evidence | final words with evidence |
+|---|---|---|---|
+| single-threaded | 420 / 530 / 610 ms | 350 of 904 | 349 of 389, 89.7% |
+| multi-threaded | 200 / 380 / 500 ms | 752 of 904 | 353 of 389, 90.7% |
+
+Multi-threaded, a span is one the best path showed at an advance, open
+or closed, so more of them carry evidence.
 
 ### Verification
 
@@ -140,8 +205,12 @@ reported beside them, per second of audio and per core.
 - The same stream fed twice, one run with the thread on an idle core
   and one with the thread slowed by a sleep per job, gives identical
   results.
-- The speaker page gains a row per rule above, with the evidence
-  latency table TD-15's page carries.
+- On the speaker-cost streams, single-threaded results are byte for
+  byte those of the runtime before this record, 14,334 results, and
+  multi-threaded with the speaker keys taken out they are those with no
+  speaker model.
+- The speaker page gives every TitaNet row in both modes, with the
+  evidence latency table TD-15's page carries.
 
 ## Consequences
 
@@ -150,12 +219,14 @@ reported beside them, per second of audio and per core.
   schedule and figures.
 - The two modes publish evidence at different points in the stream, so
   their results differ in which result first carries a word's keys,
-  never in the keys' bytes. Each mode is deterministic on its own.
+  and multi-threaded a partial's last word carries keys over its span
+  so far; a span's keys have the same bytes in both. Each mode is
+  deterministic on its own.
 - The recognizer and its thread share the queue behind a lock the host
   never observes; `accept` waits on it only at a deadline, which
   changes `[[rr:TD-2#Packaging]]`'s "never holds a lock a caller can
   observe" in the letter: the wait is a caller-visible stall, bounded
-  by one embedding.
+  by the embeddings of the spans it publishes.
 - Feeding faster than real time, as a batch host does, makes every
   deadline arrive early, and the accepts wait: the stream's wall time
   approaches the recognizer's plus the thread's. Such a host may prefer
