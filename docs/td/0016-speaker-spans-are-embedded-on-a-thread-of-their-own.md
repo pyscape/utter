@@ -166,11 +166,13 @@ repetitions. Against 0.0.5 the real-time factor is 0.8% higher, all of
 it `[[rr:TD-17]]`'s keys: the runtime with no speaker model is 0.9%
 higher. The 99th percentile block is 0.016 ms slower, 0.006 ms of it
 the runtime with no speaker model and 0.010 ms multi-threaded over
-that. A second run, three repetitions with every block's time kept,
-puts multi-threaded 0.003 ms over the runtime with no speaker model at
-the 99th percentile, and block for block the two are within 2 us at the
-median on advancing, closing and other blocks; with the TitaNet thread
-on a core of its own it is 0.021 ms under.
+that. Two more runs on a quiet machine, with every block's time kept,
+put multi-threaded 0.003 ms over the runtime with no speaker model at
+the 99th percentile in three repetitions and 0.015 ms under it in five.
+Block for block, its median is within 2 us of that runtime's on every
+kind of block in the first, and 20 us faster on advancing and closing
+blocks in the second. With the TitaNet thread on a core of its own, the
+first run puts it 0.021 ms under.
 
 Single-threaded, TD-15's limit, 0.0.5 with the x-vector, holds in every
 configuration of its gate, fed as fast as it decodes on one core, each
