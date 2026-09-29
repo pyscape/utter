@@ -926,10 +926,41 @@ def cmd_list(a: argparse.Namespace) -> None:
             print(f"  {page.name}:{'.'.join(k)} = {fmt(v)}  ({how})")
 
 
+EXAMPLES = """\
+examples:
+  find a figure's name
+    bench_compare.py list --pages speech-commands
+    bench_compare.py list --only speech-commands:steady_state
+
+  iterate on decode speed against main, steady state only, three runs a side
+    bench_compare.py run --only speech-commands:steady_state.utterpy --baseline origin/main --reps 3
+
+  iterate on accuracy, no timing, cached baseline
+    bench_compare.py run --pages speech-commands,word-times --quick --no-timing
+
+  drift check of every page against its release baseline
+    bench_compare.py run --reps 2
+
+  rerun the pages for a release and write docs/benchmarks
+    bench_compare.py run --publish
+
+  see what a run would do without building or running anything
+    bench_compare.py run --only word-times:start --dry-run
+"""
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, epilog=EXAMPLES, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="build both sides, run the pages, rank the drift")
+    r = sub.add_parser(
+        "run",
+        help="build both sides, run the pages, rank the drift",
+        description="Build the baseline and the candidate, run the pages on both, and rank what drifted.",
+        epilog=EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     r.add_argument("--pages", help=f"comma-separated, from {', '.join(PAGES)}; all by default")
     r.add_argument(
         "--only",
@@ -944,10 +975,19 @@ def main() -> None:
     r.add_argument("--dry-run", action="store_true", help="print the plan and each page's commands, run nothing")
     r.add_argument("--publish", action="store_true", help="write the candidate's pages to docs/benchmarks")
     r.add_argument("--utterpy", help="utterpy revision the candidate's binding is built from (origin/main)")
-    r.add_argument("--work", default=str(BENCH / "compare"))
-    r.add_argument("--ignore-quiet-window", action="store_true", help="the owner's call only")
+    r.add_argument("--work", default=str(BENCH / "compare"), help="builds, cache and run outputs (%(default)s)")
+    r.add_argument(
+        "--ignore-quiet-window",
+        action="store_true",
+        help="start inside the weekday 06:15-12:01 window or past 06:00; the owner's call only",
+    )
     r.set_defaults(func=cmd_run)
-    ls = sub.add_parser("list", help="name the figures a page reports, to hand to --only")
+    ls = sub.add_parser(
+        "list",
+        help="name the figures a page reports, to hand to --only",
+        description="Name the figures a page reports, as --only takes them: a page's sections first, "
+        "a named section's figures with their value, kind and weight.",
+    )
     ls.add_argument("--pages")
     ls.add_argument("--only", action="append", help="the figures to list, as for run")
     ls.add_argument(
@@ -955,7 +995,12 @@ def main() -> None:
     )
     ls.add_argument("--dir", default=str(DOCS), help="the pages to read (docs/benchmarks)")
     ls.set_defaults(func=cmd_list)
-    p = sub.add_parser("report", help="rank the drift between two directories of page outputs")
+    p = sub.add_parser(
+        "report",
+        help="rank the drift between two directories of page outputs",
+        description="Rank the drift between two directories holding <page>.json (and <page>.clips.jsonl), "
+        "running nothing: two runs' outputs, or docs/benchmarks against a copy of it.",
+    )
     p.add_argument("old")
     p.add_argument("new")
     p.add_argument("--pages")
