@@ -4,7 +4,7 @@
   "utter_revision": "ffb35d3",
   "source_dirty": false,
   "docs_dirty": false,
-  "wheel_path": "/home/jared/Repos/utterpy/.venv/lib/python3.14/site-packages/utterpy/__init__.py",
+  "wheel_path": "site-packages/utterpy/__init__.py",
   "wheel_revision": "08de39f4777c2751991427f9ae8a81596df86928",
   "wheel_matches_head": false,
   "engines": {
@@ -18,12 +18,12 @@
   "block_ms": 40
  },
  "args": {
-  "data": "/home/jared/Repos/utter-bench-data/speech_commands_v0.02",
-  "model": "/home/jared/Repos/ChessAmis/assets/voice/models/vosk-model-small-en-us-0.15",
-  "speaker_models": "/home/jared/Repos/utter-bench-data/speaker-models",
-  "titanet": "/home/jared/Repos/utter-bench-data/release-0.0.6/titanet-small",
-  "kaldi": "/home/jared/Repos/kaldi/src",
-  "lib": "/home/jared/Repos/utter-bench-data/release-0.0.6/page-target/release/libutter.so",
+  "data": "speech_commands_v0.02",
+  "model": "vosk-model-small-en-us-0.15",
+  "speaker_models": "speaker-models",
+  "titanet": "titanet-small",
+  "kaldi": "src",
+  "lib": "libutter.so",
   "out": "docs/benchmarks/speaker-evidence",
   "min_clips": 20,
   "enroll": 10,

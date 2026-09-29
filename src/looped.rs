@@ -16,8 +16,10 @@ pub struct LoopedNnet<'m> {
     /// the rows the decoder has not yet read.
     outputs: Vec<f32>,
     outputs_first: usize,
-    /// The frame `frame` last served; rows before it retire at the next chunk.
+    /// The frame `frame` last served; rows before it, and before `hold`, retire at the next
+    /// chunk.
     read: usize,
+    hold: Option<usize>,
     chunks_computed: usize,
     /// Output frames before this one belong to earlier utterances on the same pipeline.
     frame_offset: usize,
@@ -31,6 +33,7 @@ impl<'m> LoopedNnet<'m> {
             outputs: Vec::new(),
             outputs_first: 0,
             read: 0,
+            hold: None,
             chunks_computed: 0,
             frame_offset: 0,
         }
@@ -64,6 +67,21 @@ impl<'m> LoopedNnet<'m> {
             (non_subsampled / chunk) * chunk / sf
         };
         total.saturating_sub(self.frame_offset)
+    }
+
+    /// Keep the rows from absolute frame `frame` on past the next chunk, for [`row`](Self::row).
+    pub fn hold_from(&mut self, frame: usize) {
+        self.hold = Some(frame);
+    }
+
+    /// The row of absolute frame `frame`, if it is computed and has not retired.
+    pub fn row(&self, frame: usize) -> Option<&[f32]> {
+        if frame < self.outputs_first || frame >= self.outputs_end() {
+            return None;
+        }
+        let dim = self.output_dim();
+        let at = (frame - self.outputs_first) * dim;
+        Some(&self.outputs[at..at + dim])
     }
 
     fn outputs_end(&self) -> usize {
@@ -123,7 +141,11 @@ impl<'m> LoopedNnet<'m> {
             first: -(lctx as i64),
         };
         let dim = self.output_dim();
-        let retire = self.read.min(self.outputs_end()) - self.outputs_first;
+        let retire = self
+            .read
+            .min(self.hold.unwrap_or(usize::MAX))
+            .min(self.outputs_end())
+            .saturating_sub(self.outputs_first);
         self.outputs.drain(..retire * dim);
         self.outputs_first += retire;
         let scale = self.model.conf.acoustic_scale;

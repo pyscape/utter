@@ -14,6 +14,7 @@ use crate::json::write_string;
 use crate::looped::LoopedNnet;
 use crate::model::{Model, WordBoundary};
 use crate::silence_weighting::SilenceWeighting;
+use crate::sound::{certainty, Evidence, SoundTrack};
 use crate::speaker::{SpeakerModel, SpeakerStream};
 use crate::titanet::{Embedding, TitaNet, RECOGNIZER_MAX_FRAMES};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -406,7 +407,34 @@ pub struct Recognizer<'m> {
     spk_threads: bool,
     /// `[[rr:TD-16#Evidence is published at a deadline counted in audio]]`, in samples.
     spk_deadline: u64,
+    /// The acoustic model's certainty on each decoded frame of the utterance, as running sums
+    /// from a zero before the first; the rows not yet read are held in the network.
+    certainty: Vec<f64>,
+    sound: SoundTrack,
+    window: ResultWindow,
+    /// The certainty and sound keys of `[sil]` and `[speech]` entries by span, while the
+    /// utterance and the floor they were written against stand.
+    entry_sound: HashMap<(usize, usize), String>,
+    entry_sound_floor: Option<u64>,
 }
+
+/// What the top of a result is counted over: the decoded frames since the previous result.
+// [[rr:TD-17#The window is since the previous result]]
+#[derive(Default)]
+struct ResultWindow {
+    /// The utterance's first decoded frame not yet reported.
+    from_frame: usize,
+}
+
+/// Rows the network holds for the certainty before it is computed without a result to ask.
+const CERTAINTY_HELD_FRAMES: usize = 200;
+
+/// The sound keys one result has written so far, by the window's spans they describe and where
+/// they lie in the result, so the paths of a result that leave the same frames unnamed write them
+/// once. The ranges hold because a result is only cut back by the brace a word writer has just
+/// closed.
+#[derive(Default)]
+struct WrittenEvidence(Vec<(Vec<(usize, usize)>, std::ops::Range<usize>)>);
 
 /// TitaNet's embeddings of the spans of the current utterance.
 struct SpanEmbedder<'m> {
@@ -684,6 +712,13 @@ fn escape_json_number(v: f64) -> String {
     }
 }
 
+fn push_certainty(out: &mut String, v: Option<f64>) {
+    match v {
+        Some(c) => crate::sound::push_fixed(out, c, 3),
+        None => out.push_str("null"),
+    }
+}
+
 fn number_or_null(v: Option<f64>) -> String {
     match v {
         Some(x) => escape_json_number(x),
@@ -839,6 +874,11 @@ impl<'m> Recognizer<'m> {
             spk_slice_budget: SPK_SLICE_BUDGET,
             spk_threads: true,
             spk_deadline: samples_in(sample_rate, SPK_DEADLINE_SECONDS),
+            certainty: vec![0.0],
+            sound: SoundTrack::new(model.mfcc_opts.num_mel_bins),
+            window: ResultWindow::default(),
+            entry_sound: HashMap::new(),
+            entry_sound_floor: None,
         })
     }
 
@@ -1122,7 +1162,10 @@ impl<'m> Recognizer<'m> {
         let mut opts = self.model.mfcc_opts.clone();
         opts.sample_rate = self.sample_rate;
         self.pipeline = Some(FeaturePipeline::new(&opts, self.model.ivector.as_ref()));
-        self.nnet = Some(LoopedNnet::new(self.model));
+        let mut nnet = LoopedNnet::new(self.model);
+        nnet.hold_from(0);
+        self.nnet = Some(nnet);
+        self.start_sound(0);
         let cfg = self.decoder_config();
         let mut dec = Decoder::new(
             self.graph.clone(),
@@ -1160,6 +1203,7 @@ impl<'m> Recognizer<'m> {
                 if self.state != State::Finalized && self.frame_offset <= 20000 =>
             {
                 nnet.set_frame_offset(self.frame_offset);
+                nnet.hold_from(self.frame_offset);
                 dec.init_decoding();
                 self.stable.clear();
                 let first = self.frame_offset * self.model.conf.frame_subsampling_factor;
@@ -1170,6 +1214,7 @@ impl<'m> Recognizer<'m> {
                     iv.forget_before(first);
                 }
                 self.forget_pcm();
+                self.start_sound(self.frame_offset * self.model.conf.frame_subsampling_factor);
                 self.spk_cache().clear();
                 if let Some(sp) = self.spk_spans.as_mut() {
                     sp.forget();
@@ -1290,6 +1335,9 @@ impl<'m> Recognizer<'m> {
                     let row = nnet.frame(pipe, dec.num_frames_decoded());
                     dec.advance_frame(row);
                 }
+            }
+            if self.num_frames_decoded() >= self.certainty.len() + CERTAINTY_HELD_FRAMES {
+                self.catch_up_sound();
             }
             self.update_readings();
         }
@@ -1623,6 +1671,7 @@ impl<'m> Recognizer<'m> {
             out.pop();
             out.push_str(&format!(", \"stable_ms\": {hold}"));
             self.push_entry_spk(out, &span);
+            self.push_entry_sound(out, &span, false);
             out.push('}');
         }
     }
@@ -1810,6 +1859,198 @@ impl<'m> Recognizer<'m> {
             let _ = now;
         }
         out.push('}');
+    }
+
+    /// Begin the certainty and the bands of an utterance whose first feature frame in the
+    /// pipeline is `first`.
+    fn start_sound(&mut self, first: usize) {
+        self.certainty.truncate(1);
+        self.sound.start_utterance(first);
+        self.entry_sound.clear();
+        self.window.from_frame = 0;
+    }
+
+    /// Compute the certainty of the frames decoded since it was last computed, and take their
+    /// bands from the front end.
+    // [[rr:TD-17#Computed when a result is read]]
+    fn catch_up_sound(&mut self) {
+        let sf = self.model.conf.frame_subsampling_factor;
+        let scale = self.model.conf.acoustic_scale;
+        let (Some(pipe), Some(nnet), Some(dec)) = (
+            self.pipeline.as_mut(),
+            self.nnet.as_mut(),
+            self.decoder.as_ref(),
+        ) else {
+            return;
+        };
+        let decoded = dec.num_frames_decoded();
+        let offset = nnet.frame_offset();
+        while self.certainty.len() <= decoded {
+            let f = self.certainty.len() - 1;
+            let row = nnet
+                .row(offset + f)
+                .expect("a decoded frame's row is held until its certainty is computed");
+            let last = self.certainty[f];
+            self.certainty.push(last + certainty(row, scale));
+        }
+        nnet.hold_from(offset + decoded);
+        let sound = &mut self.sound;
+        let to = sound.pipeline_frame(decoded * sf);
+        pipe.mfcc
+            .take_logmel(sound.next_frame(), to, |l| sound.push(l));
+        sound.refresh_floor();
+        if sound.floor_version() != self.entry_sound_floor {
+            self.entry_sound_floor = sound.floor_version();
+            self.entry_sound.clear();
+        }
+    }
+
+    /// The mean certainty over the utterance's decoded frames in `spans`, and their count.
+    #[allow(clippy::cast_precision_loss)]
+    fn mean_certainty(&self, spans: &[(usize, usize)]) -> (Option<f64>, usize) {
+        let known = self.certainty.len() - 1;
+        let (mut sum, mut n) = (0.0, 0);
+        for &(a, b) in spans {
+            let b = b.min(known);
+            if a < b {
+                sum += self.certainty[b] - self.certainty[a];
+                n += b - a;
+            }
+        }
+        ((n > 0).then(|| sum / n as f64), n)
+    }
+
+    /// The frames from `from` to the decoded frontier that a path's entries spend in words, and
+    /// those they spend outside them. A `[speech]` entry is in words while `open`, on a partial
+    /// or a reading; on a final it has closed with no word.
+    // [[rr:TD-17#Words and outside words]]
+    fn split_window(
+        &self,
+        entries: &[Entry],
+        open: bool,
+        from: usize,
+    ) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+        let to = self.num_frames_decoded();
+        let mut words = Vec::new();
+        let mut outside = Vec::new();
+        let mut at = from;
+        for e in entries {
+            let in_words = match e.word {
+                EntryWord::Word(_) => true,
+                EntryWord::Speech => open,
+                EntryWord::Silence => false,
+            };
+            let (a, b) = (e.start_frame.max(from), e.end_frame.min(to));
+            if !in_words || a >= b {
+                continue;
+            }
+            if at < a {
+                outside.push((at, a));
+            }
+            words.push((a, b));
+            at = at.max(b);
+        }
+        if at < to {
+            outside.push((at, to));
+        }
+        (words, outside)
+    }
+
+    /// The sound evidence over the utterance's decoded frames in `spans`, or its keys as null.
+    fn push_evidence(&self, out: &mut String, spans: &[(usize, usize)]) {
+        let sf = self.model.conf.frame_subsampling_factor;
+        match self.sound.evidence(spans, sf) {
+            Some(ev) => {
+                let shift = self.frame_samples() / sf as u64;
+                let first = self.samples_round_start
+                    + self.sound.pipeline_frame(ev.rise_start) as u64 * shift;
+                ev.write(out, first, f64::from(self.model.mfcc_opts.frame_shift_ms));
+            }
+            None => Evidence::write_none(out),
+        }
+    }
+
+    /// The rating over the window's frames, split by a path's entries, and the sound evidence over
+    /// those in no named word.
+    // [[rr:TD-17#Where the keys appear]]
+    fn push_window_rating(
+        &self,
+        out: &mut String,
+        entries: &[Entry],
+        open: bool,
+        written: &mut WrittenEvidence,
+    ) {
+        use std::fmt::Write;
+        let (words, outside) = self.split_window(entries, open, self.window.from_frame);
+        let (cw, nw) = self.mean_certainty(&words);
+        let (co, no) = self.mean_certainty(&outside);
+        out.push_str(", \"certainty_words\": ");
+        push_certainty(out, cw);
+        let _ = write!(out, ", \"words_frames\": {nw}, \"certainty_outside\": ");
+        push_certainty(out, co);
+        let _ = write!(out, ", \"outside_frames\": {no}");
+        // [[rr:TD-17#The sound outside words]]
+        let unnamed = if open && entries.iter().any(|e| e.word == EntryWord::Speech) {
+            self.split_window(entries, false, self.window.from_frame).1
+        } else {
+            outside
+        };
+        if let Some((_, at)) = written.0.iter().find(|(spans, _)| *spans == unnamed) {
+            out.extend_from_within(at.clone());
+            return;
+        }
+        let start = out.len();
+        self.push_evidence(out, &unnamed);
+        written.0.push((unnamed, start..out.len()));
+    }
+
+    /// The window's rating keys with no decoded frame in it.
+    fn push_empty_rating(out: &mut String) {
+        out.push_str(
+            ", \"certainty_words\": null, \"words_frames\": 0, \"certainty_outside\": null, \"outside_frames\": 0",
+        );
+        Evidence::write_none(out);
+    }
+
+    /// Whether the window holds a decoded frame.
+    fn window_has_frames(&self) -> bool {
+        self.num_frames_decoded() > self.window.from_frame
+    }
+
+    /// An entry's certainty, and on `[sil]` and `[speech]` with `evidence` its sound evidence.
+    // [[rr:TD-17#What a word entry carries]]
+    fn push_entry_sound(&self, out: &mut String, e: &Entry, evidence: bool) {
+        let (c, _) = self.mean_certainty(&[(e.start_frame, e.end_frame)]);
+        out.push_str(", \"certainty\": ");
+        push_certainty(out, c);
+        if evidence && !matches!(e.word, EntryWord::Word(_)) {
+            self.push_evidence(out, &[(e.start_frame, e.end_frame)]);
+        }
+    }
+
+    /// [`push_entry_sound`](Self::push_entry_sound) with the sound evidence, kept in `kept` for
+    /// the partials that follow while nothing it reads changes.
+    fn push_entry_sound_kept(
+        &self,
+        kept: &mut HashMap<(usize, usize), String>,
+        out: &mut String,
+        e: &Entry,
+    ) {
+        if matches!(e.word, EntryWord::Word(_)) {
+            self.push_entry_sound(out, e, true);
+            return;
+        }
+        let keys = kept.entry((e.start_frame, e.end_frame)).or_insert_with(|| {
+            let mut keys = String::new();
+            self.push_entry_sound(&mut keys, e, true);
+            keys
+        });
+        out.push_str(keys);
+    }
+
+    /// Start the next window at the decoded frontier.
+    fn close_window(&mut self) {
+        self.window.from_frame = self.num_frames_decoded();
     }
 
     fn push_floor(&self, out: &mut String) {
@@ -2330,30 +2571,38 @@ impl<'m> Recognizer<'m> {
     /// [`set_alternatives`](Self::set_alternatives) is on, word entries when
     /// [`set_partial_words`](Self::set_partial_words) is on, and the noise floor.
     /// Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#the-partial-result>.
+    pub fn partial(&mut self) -> &str {
+        self.spk_catch_up_for_result();
+        self.catch_up_sound();
+        self.write_partial();
+        self.close_window();
+        &self.last_result
+    }
+
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
         clippy::cast_sign_loss
     )]
-    pub fn partial(&mut self) -> &str {
-        self.spk_catch_up_for_result();
+    fn write_partial(&mut self) {
         let empty = |this: &mut Self| {
             let mut out = format!("{{\"partial\": \"{SIL}\"");
             this.push_floor(&mut out);
+            Self::push_empty_rating(&mut out);
             out.push('}');
             this.last_result = out;
         };
         if self.state != State::Running {
             empty(self);
-            return &self.last_result;
+            return;
         }
         let Some(dec) = self.decoder.as_ref() else {
             empty(self);
-            return &self.last_result;
+            return;
         };
         if dec.num_frames_decoded() == 0 {
             empty(self);
-            return &self.last_result;
+            return;
         }
         self.refresh_best_path();
         if self.partial_alternatives > 0 {
@@ -2361,10 +2610,11 @@ impl<'m> Recognizer<'m> {
         }
         let Some(path) = self.best_path.as_ref() else {
             empty(self);
-            return &self.last_result;
+            return;
         };
         let now = self.samples_round_start + self.samples_processed;
         let mut out = String::with_capacity(self.last_result.len());
+        let mut written = WrittenEvidence::default();
         out.push_str("{\"partial\": ");
         write_string(&mut out, &self.text_of_path(path));
         if self.partial_alternatives > 0 {
@@ -2391,6 +2641,7 @@ impl<'m> Recognizer<'m> {
                         self.write_word(&mut out, span, false, false, now);
                         out.pop();
                         self.push_entry_spk(&mut out, span);
+                        self.push_entry_sound(&mut out, span, false);
                         out.push('}');
                     }
                     out.push(']');
@@ -2405,6 +2656,7 @@ impl<'m> Recognizer<'m> {
                             .map(f64::from)
                     ),
                 ));
+                self.push_rating(&mut out, alt, true, &mut written);
                 out.push('}');
             }
             out.push(']');
@@ -2415,6 +2667,7 @@ impl<'m> Recognizer<'m> {
             Vec::new()
         };
         if self.partial_words {
+            let mut kept = std::mem::take(&mut self.entry_sound);
             out.push_str(", \"partial_result\": [");
             for (j, span) in entries.iter().enumerate() {
                 if j > 0 {
@@ -2429,9 +2682,11 @@ impl<'m> Recognizer<'m> {
                 w.push_str(&format!(", \"stable_ms\": {stable_ms}"));
                 out.push_str(&w);
                 self.push_entry_spk(&mut out, span);
+                self.push_entry_sound_kept(&mut kept, &mut out, span);
                 out.push('}');
             }
             out.push(']');
+            self.entry_sound = kept;
         }
         self.push_floor(&mut out);
         if self.spk.is_some() {
@@ -2442,9 +2697,18 @@ impl<'m> Recognizer<'m> {
                 .collect();
             self.push_spk(&mut out, &speech);
         }
+        if self.window_has_frames() {
+            let entries = if entries.is_empty() {
+                self.entries(path)
+            } else {
+                entries
+            };
+            self.push_window_rating(&mut out, &entries, true, &mut written);
+        } else {
+            Self::push_empty_rating(&mut out);
+        }
         out.push('}');
         self.last_result = out;
-        &self.last_result
     }
 
     fn final_json(&self, reason: Endpoint) -> String {
@@ -2458,9 +2722,11 @@ impl<'m> Recognizer<'m> {
         // A floor final is the path as it stood; a completed path would force a word onto it.
         let completed = reason != Endpoint::Floor;
         let mut out = String::from("{");
+        let mut written = WrittenEvidence::default();
         if self.max_alternatives > 1 {
             out.push_str("\"alternatives\": [");
             let alts = dec.alternatives(completed, self.max_alternatives);
+            let mut first_rating = 0..0;
             for (i, alt) in alts.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
@@ -2476,6 +2742,11 @@ impl<'m> Recognizer<'m> {
                 }
                 out.push_str("\"text\": ");
                 write_string(&mut out, &self.text_of_path(alt));
+                let start = out.len();
+                self.push_rating(&mut out, alt, false, &mut written);
+                if i == 0 {
+                    first_rating = start..out.len();
+                }
                 out.push('}');
             }
             out.push(']');
@@ -2483,6 +2754,11 @@ impl<'m> Recognizer<'m> {
             self.push_floor(&mut out);
             if let (Some(top), true) = (alts.first(), self.spk.is_some()) {
                 self.push_spk(&mut out, &self.speech_spans(top, true));
+            }
+            if alts.is_empty() {
+                self.push_window_rating(&mut out, &[], false, &mut written);
+            } else {
+                out.extend_from_within(first_rating);
             }
             out.push('}');
             return out;
@@ -2509,8 +2785,25 @@ impl<'m> Recognizer<'m> {
             out.push_str(", ");
             Self::write_spk_span(&mut out, ev);
         }
+        self.push_rating(&mut out, &path, false, &mut written);
         out.push('}');
         out
+    }
+
+    /// The window's rating keys split by `path`, whose `[speech]` entry is `open` on a partial
+    /// or a reading.
+    fn push_rating(
+        &self,
+        out: &mut String,
+        path: &Path,
+        open: bool,
+        written: &mut WrittenEvidence,
+    ) {
+        if self.window_has_frames() {
+            self.push_window_rating(out, &self.entries(path), open, written);
+        } else {
+            Self::push_empty_rating(out);
+        }
     }
 
     /// libvosk's `Result`: the final of the utterance decoded so far; the next `accept`
@@ -2528,7 +2821,9 @@ impl<'m> Recognizer<'m> {
             _ => Endpoint::Host,
         };
         self.state = State::Endpoint;
+        self.catch_up_sound();
         self.last_result = self.final_json(reason);
+        self.close_window();
         &self.last_result
     }
 
@@ -2550,7 +2845,9 @@ impl<'m> Recognizer<'m> {
         self.update_stable();
         self.last_endpoint = None;
         self.state = State::Finalized;
+        self.catch_up_sound();
         self.last_result = self.final_json(Endpoint::Flush);
+        self.close_window();
         // libvosk drops the pipeline here; the next accept rebuilds it.
         if let Some(d) = &self.decoder {
             self.frame_offset += d.num_frames_decoded();

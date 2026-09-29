@@ -41,6 +41,7 @@ from speech_commands import (  # noqa: E402
     provenance_line,
     quantile,
     read_pcm,
+    recorded_path,
     write_page,
 )
 
@@ -128,7 +129,7 @@ def main() -> None:
     empty_both = 0
     for i, (label, clip) in enumerate(clips):
         pcm = read_pcm(clip)
-        row: dict[str, Any] = {"clip": str(clip), "label": label}
+        row: dict[str, Any] = {"clip": recorded_path(clip, 2), "label": label}
         got: dict[str, list[tuple[str, float, float]]] = {}
         for n, eng in engines.items():
             got[n] = timed_words(feed(eng.new(), pcm, args.block_ms))

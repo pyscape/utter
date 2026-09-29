@@ -615,7 +615,8 @@ def asking_for_alternatives_check(
     lines.append("|---|---|")
     fig: sc.Json = {}
     for name, rows in stock.items():
-        both = [(r, other[c][name]) for c, r in rows.items() if c in other and name in other[c]]
+        keyed = {sc.recorded_path(c, 2): r for c, r in rows.items()}
+        both = [(r, other[c][name]) for c, r in keyed.items() if c in other and name in other[c]]
         same = sum(1 for mine, theirs in both if mine["words"] == theirs["words"])
         lines.append(f"| {name} | {same} / {len(both)} ({sc.pct(same, len(both)):.2f}%) |")
         fig[name] = dict(same=same, clips=len(both))

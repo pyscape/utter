@@ -1,5 +1,16 @@
 ## Reading
 
+The figures on this page predate a change to how the utter rows enrol,
+and stand until the page is rerun. They were measured with one vector
+per final: a speaker's ten enrolment clips run together into a median
+of four finals, so each profile rested on about four vectors. The
+script now enrols every utter row with one vector per spoken word that
+carries evidence, as the other rows enrol one per clip. Replaying this
+run's draws with that enrolment, TitaNet-small in the crate passes
+81.4% at 1% false accept instead of 73.9%, with or without the floor
+margin; the x-vector 41.4% instead of 40.1%, and 37.4% instead of
+37.0% with the margin.
+
 One word through the stock speaker model is evidence, but not much of
 it, and utter makes it available on nearly every word. Over 1,990 probe
 words from 206 speakers, utter's word evidence names the speaker among

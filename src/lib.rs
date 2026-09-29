@@ -98,6 +98,8 @@ pub mod recognizer;
 pub mod resample;
 #[doc(hidden)]
 pub mod silence_weighting;
+#[doc(hidden)]
+pub mod sound;
 pub mod speaker;
 #[doc(hidden)]
 pub mod titanet;

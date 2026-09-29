@@ -205,7 +205,7 @@ mod avx2 {
     }
 }
 
-fn have_avx2() -> bool {
+pub(crate) fn have_avx2() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         use std::sync::OnceLock;
