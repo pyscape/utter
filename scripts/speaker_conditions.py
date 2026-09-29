@@ -1,30 +1,39 @@
 #!/usr/bin/env python3
-"""Speaker evidence away from the speaker's own device: TitaNet-small through utter's stateless
-embed on words in a noisy room, and on words from speakers who all share one microphone.
+"""Speaker evidence away from the speaker's own device: the evidence utter's recognizer puts on
+each word with TitaNet-small set, in a noisy room and from speakers who all share one microphone.
 
     python scripts/speaker_conditions.py noise --model MODEL_DIR [--data DIR] \\
         [--lib target/release/libutter.so] [--out docs/benchmarks/speaker-noise]
     python scripts/speaker_conditions.py vctk --model MODEL_DIR [--vctk ZIP] \\
         [--lib target/release/libutter.so] [--out docs/benchmarks/speaker-vctk]
 
-MODEL_DIR is the stock small English model; utter's recognizer finds the word spans, and
-utter_spk_model_embed embeds them with TitaNet-small as scripts/titanet_convert.py writes it.
+MODEL_DIR is the stock small English model. Each speaker's audio runs through utter's C ABI as
+continuous streams, as a host feeds it, to a recognizer with TitaNet-small set, as
+scripts/titanet_convert.py writes it. Every spoken word entry of the finals is a word; one with
+evidence is a probe whatever its label, and the words without evidence are counted. Two rows:
 
-noise: the Speech Commands v2 (CC BY 4.0) test split as scripts/speaker_evidence.py draws it.
-Each speaker enrols from --enroll clean words; the probe words are scored clean, then with one of
-the dataset's _background_noise_ recordings laid under them at each SNR in SNRS_DB, the SNR taken
-over the span embedded. Thresholds are the clean row's at the same length: a host sets its gate
-in the quiet and meets the room afterwards.
+- recognizer: the entry's own spk vector;
+- embed(): utter_spk_model_embed over the entry's spk_start to spk_end, as a host that embeds the
+  spans itself would.
+
+noise: the Speech Commands v2 (CC BY 4.0) test split as scripts/speaker_evidence.py draws it,
+under that page's grammar. Each speaker's --enroll clips are one clean stream that sets the
+profile; the --probes other clips are a second stream, decoded clean and again with one of the
+dataset's _background_noise_ recordings laid under each clip at each SNR in SNRS_DB. The SNR is
+over the clip's active speech, its 10 ms frames within ACTIVE_DB of its loudest. Thresholds are
+the clean row's at the same length: a host sets its gate in the quiet and meets the room
+afterwards.
 
 vctk: the CSTR VCTK Corpus 0.92 (CC BY 4.0), read from its DataShare zip, the DPA 4035 channel
-(mic1) at 48 kHz resampled to 16 kHz by sox. Each utterance is decoded under a grammar of its own
-prompt's words, so the recognizer places the words it was told were said; one word of at least
---min-word-ms is taken per utterance. Each speaker enrols from --enroll such words from as many
-utterances, and --probes words from other utterances are probes. Thresholds are the set's own.
+(mic1) at 48 kHz resampled to 16 kHz by sox. utter decodes under a grammar only, so each stream's
+grammar is the words of its own utterances' prompts. Each speaker enrols from one stream of
+--enroll utterances, and --probes other utterances are the probe stream. Thresholds are the set's
+own.
 
-In both, a probe is scored by cosine against every enrolled profile. Beside single words, each
-speaker's probe words are joined, --streams times in shuffled orders, and cut at each length in
-POOLED_MS, which is the evidence a host has once that much of a move has been spoken. Per row:
+Probes are scored by cosine against every enrolled profile, one per row. Beside single words, a
+speaker's probe words are taken, --streams times in shuffled orders, until their evidence has
+pooled each length in POOLED_MS: the recognizer row averages their vectors weighted by frames,
+the embed() row embeds their spans joined. Per row:
 
 - equal error rate over own-profile against other-profile scores, among probes with evidence;
 - accepted at 1% false accept: probes whose own score clears the threshold that lets 1% of
@@ -63,9 +72,14 @@ type Vec = NDArray[np.float64]
 type Samples = NDArray[np.float32]
 RATE = sc.RATE
 SNRS_DB = (20.0, 10.0, 5.0)
+ACTIVE_DB = 20.0
 POOLED_MS = (500, 1000, 2000)
+# TitaNet's frames are 10 ms.
+FRAME_MS = 10
 WORD = "one word"
 CLEAN = "clean"
+REC, EMB = "recognizer", "embed()"
+ROWS = (REC, EMB)
 FALSE_ACCEPT = 0.01
 FALSE_REJECT = 0.01
 
@@ -74,18 +88,32 @@ def samples(pcm: bytes) -> Samples:
     return np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def pcm_of(x: Samples) -> bytes:
+    return bytes((np.clip(x, -1.0, 32767 / 32768) * 32768.0).astype(np.int16).tobytes())
+
+
+@dataclass
+class Word:
+    """A spoken word entry of a final, with its evidence and the span it pooled."""
+
+    speaker: str
+    rec: Vec | None
+    frames: int
+    span: Samples | None
+    emb: Vec | None = None
+
+
 @dataclass
 class Item:
-    """One scored item: a probe word, or a cut of a speaker's joined probe words."""
+    """One scored item: a probe word, or the words pooled to a length."""
 
     key: str
     speaker: str
-    x: Samples
     vectors: dict[str, Vec | None] = field(default_factory=dict)
 
 
 class Utter:
-    """utter's C ABI: the model for word spans, TitaNet-small for embeddings."""
+    """utter's C ABI: a recognizer with TitaNet-small set, and its stateless embed."""
 
     def __init__(self, lib_path: str, model_dir: str, titanet: str) -> None:
         self.u = se.UtterLib(lib_path)
@@ -96,15 +124,24 @@ class Utter:
             raise SystemExit("utter could not open the model or TitaNet-small")
         self.dim = int(lib.utter_spk_model_dim(self.u.tn))
 
-    def words(self, grammar: Sequence[str], pcm: bytes, block_ms: int) -> list[Json]:
-        """The spoken word entries of every final, the audio fed in blocks as a host feeds it."""
-        rec = se.UtterRec(self.u, grammar, se.BARE)
+    def stream(self, speaker: str, grammar: Sequence[str], x: Samples, block_ms: int) -> list[Word]:
+        """The stream through one recognizer: every spoken word entry of its finals."""
+        pcm = pcm_of(x)
+        rec = se.UtterRec(self.u, grammar, se.SETUPS[se.UTTER_TN])
         finals: list[Json] = []
         for b in se.blocks(pcm, block_ms):
             if rec.accept(b):
                 finals.append(rec.closed())
         finals.append(rec.final())
-        return [e for f in finals for e in f.get("result", []) if se.spoken(e)]
+        out = []
+        for e in (e for f in finals for e in f.get("result", []) if se.spoken(e)):
+            v = se.evidence(e)
+            w = Word(speaker, v, int(e.get("spk_frames", 0)), None)
+            if v is not None:
+                w.span = x[int(e["spk_start"]) : int(e["spk_end"])]
+                w.emb = self.embed(w.span)
+            out.append(w)
+        return out
 
     def embed(self, x: Samples) -> Vec | None:
         out = (ctypes.c_float * self.dim)()
@@ -115,12 +152,8 @@ class Utter:
         return np.asarray(out[:n], dtype=np.float64) if n > 0 else None
 
 
-def span_of(entries: Sequence[Mapping[str, Any]], n: int) -> tuple[int, int] | None:
-    if not entries:
-        return None
-    a = max(0, round(min(float(e["start"]) for e in entries) * RATE))
-    b = min(n, round(max(float(e["end"]) for e in entries) * RATE))
-    return (a, b) if b > a else None
+def profiles_of(words: Sequence[Word]) -> dict[str, Vec | None]:
+    return {REC: se.profile_of([w.rec for w in words]), EMB: se.profile_of([w.emb for w in words])}
 
 
 # --- scoring --------------------------------------------------------------------------------------
@@ -132,7 +165,7 @@ class Gate:
     reject: float
 
 
-def trials(items: Sequence[Item], cond: str, profiles: Mapping[str, Vec]) -> tuple[list[float], list[float], int]:
+def trials(items: Sequence[Item], row_: str, profiles: Mapping[str, Vec]) -> tuple[list[float], list[float], int]:
     """Own-profile scores, other-profile scores, and the items with no vector."""
     names = sorted(profiles)
     mat = np.stack([se.unit(profiles[n]) for n in names])
@@ -140,7 +173,7 @@ def trials(items: Sequence[Item], cond: str, profiles: Mapping[str, Vec]) -> tup
     other: list[float] = []
     missing = 0
     for it in items:
-        v = it.vectors.get(cond)
+        v = it.vectors.get(row_)
         if v is None or it.speaker not in profiles:
             missing += 1
             continue
@@ -157,9 +190,9 @@ def gate_of(own: Sequence[float], other: Sequence[float]) -> Gate:
     )
 
 
-def row(items: Sequence[Item], cond: str, profiles: Mapping[str, Vec], gate: Gate | None) -> Json:
+def score(items: Sequence[Item], row_: str, profiles: Mapping[str, Vec], gate: Gate | None) -> Json:
     """gate, when given, is set elsewhere; the row's own 1% false accept figure is kept beside it."""
-    own, other, missing = trials(items, cond, profiles)
+    own, other, missing = trials(items, row_, profiles)
     own_gate = gate_of(own, other)
     g = gate or own_gate
     n = len(items)
@@ -182,32 +215,89 @@ def row(items: Sequence[Item], cond: str, profiles: Mapping[str, Vec], gate: Gat
     )
 
 
-def pooled_items(words: Mapping[str, Sequence[Samples]], streams: int, rng: random.Random) -> dict[int, list[Item]]:
-    """Each speaker's words joined in shuffled orders and cut at each pooled length."""
+def word_items(words: Mapping[str, Sequence[Word]]) -> list[Item]:
+    """Every spoken word is an item; one without evidence counts as none for both rows."""
+    return [Item(f"{s}/{i}", s, {REC: w.rec, EMB: w.emb}) for s, ws in words.items() for i, w in enumerate(ws)]
+
+
+def pooled_items(
+    ut: Utter, words: Mapping[str, Sequence[Word]], streams: int, rng: random.Random
+) -> dict[int, list[Item]]:
+    """A speaker's words with evidence, in shuffled orders, taken until they have pooled each length."""
     out: dict[int, list[Item]] = {n: [] for n in POOLED_MS}
-    for s, pieces in words.items():
-        pieces = list(pieces)
+    for s, ws in words.items():
+        have = [w for w in ws if w.rec is not None and w.span is not None]
         for j in range(streams):
-            rng.shuffle(pieces)
-            x = np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+            rng.shuffle(have)
             for n in POOLED_MS:
-                m = n * RATE // 1000
-                if len(x) >= m:
-                    out[n].append(Item(f"{s}/{j}/{n}", s, x[:m]))
+                taken, ms = [], 0
+                for w in have:
+                    if ms >= n:
+                        break
+                    taken.append(w)
+                    ms += w.frames * FRAME_MS
+                if ms < n:
+                    continue
+                weights = np.array([w.frames for w in taken], dtype=np.float64)
+                rec = np.average(
+                    np.stack([se.unit(w.rec) for w in taken if w.rec is not None]), axis=0, weights=weights
+                )
+                spans = [w.span for w in taken if w.span is not None]
+                out[n].append(Item(f"{s}/{j}/{n}", s, {REC: rec, EMB: ut.embed(np.concatenate(spans))}))
     return out
 
 
-def by_length(words: Sequence[Item], pooled: Mapping[int, list[Item]]) -> dict[str, list[Item]]:
-    return {WORD: list(words)} | {f"{n / 1000:g} s": pooled[n] for n in POOLED_MS}
+def table_of(
+    ut: Utter,
+    words: Mapping[str, Sequence[Word]],
+    profiles: Mapping[str, Mapping[str, Vec]],
+    streams: int,
+    rng: random.Random,
+    gates: Mapping[str, Mapping[str, Gate]] | None,
+) -> dict[str, dict[str, Json]]:
+    """Per length, per row. gates, when given, are per length and row."""
+    pooled = pooled_items(ut, words, streams, rng)
+    lengths = {WORD: word_items(words)} | {f"{n / 1000:g} s": pooled[n] for n in POOLED_MS}
+    return {
+        label: {r: score(items, r, profiles[r], gates[label][r] if gates else None) for r in ROWS}
+        for label, items in lengths.items()
+    }
+
+
+def gates_of(table: Mapping[str, Mapping[str, Json]]) -> dict[str, dict[str, Gate]]:
+    return {
+        label: {r: Gate(x["gate"]["accept"], x["gate"]["reject"]) for r, x in rows.items()}
+        for label, rows in table.items()
+    }
+
+
+def split_profiles(by_speaker: Mapping[str, Mapping[str, Vec | None]]) -> dict[str, dict[str, Vec]]:
+    """Per row, the speakers it enrolled; a speaker a row could not enrol is no rival under it."""
+    return {r: {s: v for s, p in by_speaker.items() if (v := p[r]) is not None} for r in ROWS}
+
+
+def evidence_counts(words: Mapping[str, Sequence[Word]]) -> Json:
+    ws = [w for x in words.values() for w in x]
+    return dict(words=len(ws), with_evidence=sum(w.rec is not None for w in ws))
 
 
 # --- noise ----------------------------------------------------------------------------------------
 
 
+def active_rms(x: Samples) -> float:
+    n = RATE * FRAME_MS // 1000
+    frames = x[: len(x) // n * n].reshape(-1, n).astype(np.float64)
+    if not len(frames):
+        return 0.0
+    power = np.mean(np.square(frames), axis=1)
+    loud = power >= power.max() * 10.0 ** (-ACTIVE_DB / 10.0)
+    return float(np.sqrt(np.mean(power[loud])))
+
+
 def mixed(x: Samples, noise: Samples, offset: int, snr_db: float) -> Samples:
-    """x with noise laid under it at snr_db over x's own span, saturating as an ADC would."""
+    """x with noise laid under it at snr_db over x's active speech, saturating as an ADC would."""
     seg = np.take(noise, np.arange(offset, offset + len(x)), mode="wrap")
-    sig = float(np.sqrt(np.mean(np.square(x, dtype=np.float64))))
+    sig = active_rms(x)
     nse = float(np.sqrt(np.mean(np.square(seg, dtype=np.float64))))
     if sig == 0 or nse == 0:
         return x
@@ -230,58 +320,44 @@ def run_noise(a: argparse.Namespace) -> Json:
     room_names = sorted(rooms)
     ut = Utter(a.lib, a.model, a.titanet)
     grammar = sc.DATASET_WORDS + sc.LETTERS + sc.NATO + sc.COLOURS
+    conds = [CLEAN] + [snr_label(d) for d in SNRS_DB]
 
-    def span(key: str) -> Samples | None:
-        pcm = sc.read_pcm(data / key)
-        sp = span_of(ut.words(grammar, pcm, a.block_ms), len(pcm) // 2)
-        return samples(pcm)[sp[0] : sp[1]] if sp else None
-
-    profiles: dict[str, Vec] = {}
-    probe_words: dict[str, list[Samples]] = {}
-    no_span = 0
+    by_speaker: dict[str, dict[str, Vec | None]] = {}
+    enrol_words: dict[str, list[Word]] = {}
+    probe_words: dict[str, dict[str, list[Word]]] = {c: {} for c in conds}
+    draws: dict[str, int] = {}
     for s in names:
         keys = speakers[s][:]
         rng.shuffle(keys)
-        enrol = [x for k in keys[: a.enroll] if (x := span(k)) is not None]
-        p = se.profile_of([ut.embed(x) for x in enrol])
-        if p is None:
-            continue
-        profiles[s] = p
-        probe_words[s] = []
-        for k in keys[a.enroll : a.enroll + a.probes]:
-            x = span(k)
-            if x is None:
-                no_span += 1
-            else:
-                probe_words[s].append(x)
-    sc.note(f"{len(profiles)} of {len(names)} speakers enrolled, {sum(map(len, probe_words.values()))} probe words")
-
-    words = [Item(f"{s}/{i}", s, x) for s, xs in probe_words.items() for i, x in enumerate(xs)]
-    lengths = by_length(words, pooled_items(probe_words, a.streams, rng))
-    conds = [CLEAN] + [snr_label(d) for d in SNRS_DB]
-    draws: dict[str, list[str]] = {}
-    for label, items in lengths.items():
-        for it in items:
+        enrol = np.concatenate([samples(sc.read_pcm(data / k)) for k in keys[: a.enroll]])
+        enrol_words[s] = ut.stream(s, grammar, enrol, a.block_ms)
+        by_speaker[s] = profiles_of(enrol_words[s])
+        clips = [samples(sc.read_pcm(data / k)) for k in keys[a.enroll : a.enroll + a.probes]]
+        laid = []
+        for x in clips:
             room = rng.choice(room_names)
-            off = rng.randrange(len(rooms[room]))
-            draws.setdefault(room, []).append(it.key)
-            it.vectors[CLEAN] = ut.embed(it.x)
-            for d in SNRS_DB:
-                it.vectors[snr_label(d)] = ut.embed(mixed(it.x, rooms[room], off, d))
-        sc.note(f"{label}: {len(items)} items embedded clean and at {len(SNRS_DB)} SNRs")
+            draws[room] = draws.get(room, 0) + 1
+            laid.append((x, rooms[room], rng.randrange(len(rooms[room]))))
+        probe_words[CLEAN][s] = ut.stream(s, grammar, np.concatenate(clips), a.block_ms)
+        for d in SNRS_DB:
+            noisy = np.concatenate([mixed(x, room, off, d) for x, room, off in laid])
+            probe_words[snr_label(d)][s] = ut.stream(s, grammar, noisy, a.block_ms)
+        sc.note(f"{s}: {len(enrol_words[s])} enrolment words, {len(probe_words[CLEAN][s])} clean probe words")
+    profiles = split_profiles(by_speaker)
 
-    table: dict[str, dict[str, Json]] = {}
-    for label, items in lengths.items():
-        clean = row(items, CLEAN, profiles, None)
-        g = Gate(clean["gate"]["accept"], clean["gate"]["reject"])
-        table[label] = {c: clean if c == CLEAN else row(items, c, profiles, g) for c in conds}
+    clean = table_of(ut, probe_words[CLEAN], profiles, a.streams, rng, None)
+    gates = gates_of(clean)
+    tables = {CLEAN: clean} | {
+        c: table_of(ut, probe_words[c], profiles, a.streams, rng, gates) for c in conds if c != CLEAN
+    }
+    table = {label: {c: tables[c][label] for c in conds} for label in clean}
     return dict(
         speakers=len(names),
-        enrolled=len(profiles),
-        probes=len(words),
-        probes_without_span=no_span,
+        enrolled={r: len(p) for r, p in profiles.items()},
+        enrolment=evidence_counts(enrol_words),
+        probes={c: evidence_counts(probe_words[c]) for c in conds},
         rooms={r: len(v) / RATE for r, v in rooms.items()},
-        room_draws={r: len(k) for r, k in sorted(draws.items())},
+        room_draws=dict(sorted(draws.items())),
         conditions=conds,
         table=table,
         utter=dict(version=ut.u.version, revision=ut.u.revision),
@@ -312,7 +388,7 @@ class Vctk:
         text = self.z.read(self.prompts[spk][utt]).decode("utf-8", "replace").lower()
         return re.findall(r"[a-z]+(?:'[a-z]+)?", text)
 
-    def pcm(self, utt: str) -> bytes:
+    def audio(self, utt: str) -> Samples:
         spk = utt.split("_")[0]
         flac = self.z.read(f"wav48_silence_trimmed/{spk}/{utt}_mic1.flac")
         done = subprocess.run(
@@ -321,7 +397,7 @@ class Vctk:
             capture_output=True,
             check=True,
         )
-        return done.stdout
+        return samples(done.stdout)
 
 
 def run_vctk(a: argparse.Namespace) -> Json:
@@ -331,64 +407,31 @@ def run_vctk(a: argparse.Namespace) -> Json:
     if a.limit_speakers:
         names = sorted(rng.sample(names, min(a.limit_speakers, len(names))))
     ut = Utter(a.lib, a.model, a.titanet)
-    min_n = a.min_word_ms * RATE // 1000
-    decoded = placed = 0
-    word_ms: list[float] = []
 
-    def one_word(utt: str) -> Samples | None:
-        """A word the recognizer placed in the utterance, drawn among those long enough."""
-        nonlocal decoded, placed
-        told = corpus.words(utt)
-        if not told:
-            return None
-        pcm = corpus.pcm(utt)
-        decoded += 1
-        entries = [e for e in ut.words(sorted(set(told)), pcm, a.block_ms) if str(e["word"]) in told]
-        placed += len(entries)
-        spans = [sp for e in entries if (sp := span_of([e], len(pcm) // 2)) and sp[1] - sp[0] >= min_n]
-        if not spans:
-            return None
-        b, e = rng.choice(spans)
-        word_ms.append((e - b) * 1000.0 / RATE)
-        return samples(pcm)[b:e]
+    def stream(s: str, utts: Sequence[str]) -> list[Word]:
+        grammar = sorted({w for u in utts for w in corpus.words(u)})
+        return ut.stream(s, grammar, np.concatenate([corpus.audio(u) for u in utts]), a.block_ms)
 
-    profiles: dict[str, Vec] = {}
-    probe_words: dict[str, list[Samples]] = {}
+    by_speaker: dict[str, dict[str, Vec | None]] = {}
+    enrol_words: dict[str, list[Word]] = {}
+    probe_words: dict[str, list[Word]] = {}
+    seconds = 0.0
     for s in names:
         utts = sorted(corpus.prompts[s])
         rng.shuffle(utts)
-        enrol: list[Samples] = []
-        probes: list[Samples] = []
-        for u in utts:
-            if len(probes) >= a.probes:
-                break
-            x = one_word(u)
-            if x is not None:
-                (enrol if len(enrol) < a.enroll else probes).append(x)
-        p = se.profile_of([ut.embed(x) for x in enrol]) if len(enrol) == a.enroll else None
-        if p is None:
-            continue
-        profiles[s] = p
-        probe_words[s] = probes
-        sc.note(f"{s}: {len(enrol)} enrolment and {len(probes)} probe words")
-
-    words = [Item(f"{s}/{i}", s, x) for s, xs in probe_words.items() for i, x in enumerate(xs)]
-    lengths = by_length(words, pooled_items(probe_words, a.streams, rng))
-    for items in lengths.values():
-        for it in items:
-            it.vectors[CLEAN] = ut.embed(it.x)
-    table = {label: {CLEAN: row(items, CLEAN, profiles, None)} for label, items in lengths.items()}
+        enrol_words[s] = stream(s, utts[: a.enroll])
+        by_speaker[s] = profiles_of(enrol_words[s])
+        probe_words[s] = stream(s, utts[a.enroll : a.enroll + a.probes])
+        seconds += sum(len(w.span) for w in enrol_words[s] + probe_words[s] if w.span is not None) / RATE
+        sc.note(f"{s}: {len(enrol_words[s])} enrolment and {len(probe_words[s])} probe words")
+    profiles = split_profiles(by_speaker)
+    table = {label: {CLEAN: rows} for label, rows in table_of(ut, probe_words, profiles, a.streams, rng, None).items()}
     return dict(
         speakers=len(names),
-        enrolled=len(profiles),
-        probes=len(words),
-        utterances_decoded=decoded,
-        words_placed=placed,
-        word_ms=dict(
-            median=float(np.median(word_ms)) if word_ms else float("nan"),
-            p10=float(np.quantile(word_ms, 0.1)) if word_ms else float("nan"),
-            p90=float(np.quantile(word_ms, 0.9)) if word_ms else float("nan"),
-        ),
+        enrolled={r: len(p) for r, p in profiles.items()},
+        enrolment=evidence_counts(enrol_words),
+        probes={CLEAN: evidence_counts(probe_words)},
+        evidence_seconds=seconds,
         conditions=[CLEAN],
         table=table,
         utter=dict(version=ut.u.version, revision=ut.u.revision),
@@ -408,6 +451,21 @@ def header(report: Json, a: argparse.Namespace) -> str:
     )
 
 
+def rows_text(a: argparse.Namespace) -> list[str]:
+    return [
+        f"Each stream runs through a recognizer with TitaNet-small set. Every spoken word entry of "
+        "its finals is a word, and one with evidence is a probe whatever its label; *no evidence* "
+        f"is the share of words without. The *{REC}* row scores the entry's own vector; the "
+        f"*{EMB}* row scores utter_spk_model_embed over the entry's spk_start to spk_end, as a "
+        "host that embeds the spans itself would. Each row enrols from its own vectors. Beside "
+        f"single words, a speaker's probe words are taken, {a.streams} times in shuffled orders, "
+        f"until their evidence has pooled {', '.join(f'{n / 1000:g} s' for n in POOLED_MS)}: the "
+        f"{REC} row averages their vectors weighted by frames, the {EMB} row embeds their spans "
+        "joined. The last word taken may carry the pool past the length.",
+        "",
+    ]
+
+
 def figures(r: Json, lines: list[str], threshold_note: str) -> None:
     lines += [
         "*Can't tell* is a score above the threshold that turns away 1% of own-profile scores "
@@ -416,17 +474,29 @@ def figures(r: Json, lines: list[str], threshold_note: str) -> None:
         "inside it. When the two thresholds cross the band is empty. The cell gives the share of "
         f"own-profile scores in the band, then of other-profile scores. {threshold_note}",
         "",
-        "| speech | condition | items | no evidence | equal error rate | accepted at 1% false accept "
+        "| speech | condition | row | items | no evidence | equal error rate | accepted at 1% false accept "
         "| accepted at the gate | false accept at the gate | can't tell |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for label, conds in r["table"].items():
-        for c, x in conds.items():
-            lines.append(
-                f"| {label} | {c} | {x['items']} | {se.pct(x['no_evidence'])} | {se.pct(x['eer'])} "
-                f"| {se.pct(x['accepted_own'])} | {se.pct(x['accepted'])} | {se.pct(x['false_accept'])} "
-                f"| {se.pct(x['band_own'])}, {se.pct(x['band_other'])} |"
-            )
+        for c, rows in conds.items():
+            for rw, x in rows.items():
+                lines.append(
+                    f"| {label} | {c} | {rw} | {x['items']} | {se.pct(x['no_evidence'])} | {se.pct(x['eer'])} "
+                    f"| {se.pct(x['accepted_own'])} | {se.pct(x['accepted'])} | {se.pct(x['false_accept'])} "
+                    f"| {se.pct(x['band_own'])}, {se.pct(x['band_other'])} |"
+                )
+
+
+def counts_text(r: Json) -> str:
+    e = r["enrolment"]
+    return (
+        f"{r['enrolled'][REC]} of {r['speakers']} speakers enrolled under the {REC} row and "
+        f"{r['enrolled'][EMB]} under {EMB}, from {e['with_evidence']} of {e['words']} enrolment "
+        "words with evidence. Probe words with evidence: "
+        + ", ".join(f"{c} {x['with_evidence']} of {x['words']}" for c, x in r["probes"].items())
+        + "."
+    )
 
 
 def noise_page(report: Json, a: argparse.Namespace) -> list[str]:
@@ -439,21 +509,18 @@ def noise_page(report: Json, a: argparse.Namespace) -> list[str]:
         "",
         "Speech Commands speakers each recorded on their own device, so the room a word was "
         "spoken in is part of what a profile learns. This page lays a room under the probe "
-        "words and asks how far TitaNet-small's evidence through utter_spk_model_embed moves "
-        f"when the profile was enrolled in the quiet. {r['enrolled']} speakers of the test split "
-        f"with at least {a.min_clips} clips enrol from {a.enroll} clean words each; "
-        f"{r['probes']} probe words ({r['probes_without_span']} probe clips gave utter's "
-        "recognizer no word and are left out) are scored clean and with a background recording "
-        f"laid under them at {', '.join(snr_label(d) for d in SNRS_DB)} SNR, the SNR taken over "
-        "the span embedded. Each item draws one recording and offset, the same at every SNR. "
-        f"The recordings: {rooms}; pink and white noise are generated.",
+        "words and asks how far the speaker evidence moves when the profile was enrolled in the "
+        f"quiet. Speakers of the test split with at least {a.min_clips} clips enrol from one "
+        f"clean stream of {a.enroll} clips; {a.probes} other clips each are a probe stream, "
+        "decoded clean and again with a background recording laid under each clip at "
+        f"{', '.join(snr_label(d) for d in SNRS_DB)} SNR, the SNR over the clip's 10 ms frames "
+        f"within {ACTIVE_DB:g} dB of its loudest. Each clip draws one recording and offset, the "
+        f"same at every SNR. The recordings: {rooms}; pink and white noise are generated. "
+        "Streams decode under the Speech Commands page's grammar.",
         "",
-        "The word span is where utter's recognizer, under the Speech Commands page's grammar, "
-        "puts the clip's spoken words, found on the clean clip. Beside single words, each "
-        f"speaker's probe words are joined {a.streams} times in shuffled orders and cut at "
-        f"{', '.join(f'{n / 1000:g} s' for n in POOLED_MS)} of speech, and the room laid under "
-        "the cut.",
+        counts_text(r),
         "",
+        *rows_text(a),
     ]
     figures(
         r,
@@ -466,7 +533,6 @@ def noise_page(report: Json, a: argparse.Namespace) -> list[str]:
 
 def vctk_page(report: Json, a: argparse.Namespace) -> list[str]:
     r = report["result"]
-    wm = r["word_ms"]
     L = [
         "# Speaker evidence on a shared microphone",
         "",
@@ -474,20 +540,15 @@ def vctk_page(report: Json, a: argparse.Namespace) -> list[str]:
         "",
         "Speech Commands speakers each recorded on their own device, so a profile carries the "
         "microphone as well as the voice. In the CSTR VCTK Corpus 0.92 (CC BY 4.0) every "
-        "speaker read into the same microphones in the same room; this page scores "
-        "TitaNet-small through utter_spk_model_embed on the DPA 4035 channel (mic1), resampled "
-        "from 48 kHz to 16 kHz.",
+        "speaker read into the same microphones in the same room; this page uses the DPA 4035 "
+        "channel (mic1), resampled from 48 kHz to 16 kHz. Each speaker enrols from one stream "
+        f"of {a.enroll} utterances, and {a.probes} other utterances are the probe stream. utter "
+        "decodes under a grammar only, so a stream's grammar is the words of its own "
+        "utterances' prompts; the model's full vocabulary is not open to it.",
         "",
-        "VCTK has no word times. Each utterance is decoded by utter's recognizer under a grammar "
-        "of its own prompt's words, which places the words it was told were said; one word of "
-        f"at least {a.min_word_ms} ms is drawn per utterance ({r['words_placed']} words placed in "
-        f"{r['utterances_decoded']} utterances decoded; the words drawn have a median of "
-        f"{wm['median']:.0f} ms, 10th and 90th percentiles {wm['p10']:.0f} and {wm['p90']:.0f} ms). "
-        f"{r['enrolled']} of {r['speakers']} speakers enrol from {a.enroll} words from as many "
-        f"utterances; {r['probes']} probe words come from {a.probes} other utterances each. "
-        f"Beside single words, each speaker's probe words are joined {a.streams} times in "
-        f"shuffled orders and cut at {', '.join(f'{n / 1000:g} s' for n in POOLED_MS)} of speech.",
+        counts_text(r),
         "",
+        *rows_text(a),
     ]
     figures(r, L, "The gate and the band are each row's own.")
     return L
@@ -517,7 +578,6 @@ def main() -> None:
             p.add_argument("--min-clips", type=int, default=20)
         else:
             p.add_argument("--vctk", default=str(Path.home() / "Repos/utter-bench-data/vctk/VCTK-Corpus-0.92.zip"))
-            p.add_argument("--min-word-ms", type=int, default=250)
     a = ap.parse_args()
     t = time.monotonic()
     result = run_noise(a) if a.set == "noise" else run_vctk(a)
