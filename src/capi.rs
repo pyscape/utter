@@ -458,26 +458,3 @@ pub unsafe extern "C" fn utter_recognizer_reset(rec: *mut UtterRecognizer) {
         r.inner.reset();
     }
 }
-
-/// Measurement only, never committed to main: the deadline in samples.
-#[no_mangle]
-pub unsafe extern "C" fn utter_recognizer_set_spk_deadline(rec: *mut UtterRecognizer, samples: u64) {
-    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
-    if let Some(r) = unsafe { rec.as_mut() } {
-        r.inner.set_spk_deadline(samples);
-    }
-}
-
-/// Measurement only: waits, nanoseconds waited, nanoseconds the thread spent embedding.
-#[no_mangle]
-pub unsafe extern "C" fn utter_recognizer_spk_thread_stats(rec: *const UtterRecognizer, out: *mut u64) {
-    // SAFETY: null or a live handle; `out` holds three values.
-    if let (Some(r), false) = (unsafe { rec.as_ref() }, out.is_null()) {
-        let (n, waited, busy) = r.inner.spk_thread_stats();
-        unsafe {
-            *out = n;
-            *out.add(1) = waited.as_nanos() as u64;
-            *out.add(2) = busy.as_nanos() as u64;
-        }
-    }
-}
