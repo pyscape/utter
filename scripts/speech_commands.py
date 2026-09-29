@@ -398,6 +398,20 @@ def holm(pvalues: Sequence[float]) -> list[float]:
 # Rooted pathspecs: git resolves a bare one against the caller's directory, which here is scripts.
 SOURCE_PATHS = (":/src", ":/scripts", ":/build.rs", ":/Cargo.toml", ":/Cargo.lock")
 
+# Each pass writes the JSON key it is named by; full also writes agreement and significance.
+PASSES = (
+    "full",
+    "determinism",
+    "endpoint",
+    "block_size",
+    "steady_state",
+    "snr",
+    "grammar_size",
+    "twelve",
+    "noise",
+    "wordless",
+)
+
 
 def provenance(args: argparse.Namespace, modules: Iterable[str]) -> dict[str, Any]:
     """What a reader needs to judge the figures: the build, the engines, the machine."""
@@ -2320,9 +2334,17 @@ def main() -> None:
     ap.add_argument("--wordless-seed", type=int, default=20260912, help="seed for the tail lengths and offsets")
     ap.add_argument("--block-sizes", default="10,20,40,80,100", help="block-size sweep, empty to skip")
     ap.add_argument("--block-clips", type=int, default=400, help="clips per block size")
+    ap.add_argument(
+        "--passes",
+        default=",".join(PASSES),
+        help="the passes to run, named by the key each writes in the JSON; all by default",
+    )
     args = ap.parse_args()
     if not args.out and not args.preflight_only:
         ap.error("--out is required")
+    passes = [p.strip() for p in args.passes.split(",") if p.strip()]
+    if unknown := sorted(set(passes) - set(PASSES)):
+        ap.error(f"--passes names {unknown}; the passes are {', '.join(PASSES)}")
     data = Path(args.data)
     listed = [line.strip() for line in (data / f"{args.split}_list.txt").read_text().splitlines() if line.strip()]
     by_word: defaultdict[str, list[str]] = defaultdict(list)
@@ -2377,11 +2399,12 @@ def main() -> None:
     lines.append(provenance_line(prov))
     lines.append("")
     lines.extend(engines_section)
-    full_grammar_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report)
-    write_clip_records(args.out + ".clips.jsonl", clips, report["full"])
-    for r in report["full"].values():
-        del r["outcome"]
-    if not args.no_determinism:
+    if "full" in passes:
+        full_grammar_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report)
+        write_clip_records(args.out + ".clips.jsonl", clips, report["full"])
+        for r in report["full"].values():
+            del r["outcome"]
+    if "determinism" in passes and not args.no_determinism:
         determinism_pass(
             modules,
             args.model,
@@ -2393,7 +2416,7 @@ def main() -> None:
             args.determinism_clips,
             args.determinism_alternatives,
         )
-    if args.endpoint_clips:
+    if "endpoint" in passes and args.endpoint_clips:
         endpoint_pass(
             modules,
             args.model,
@@ -2407,18 +2430,23 @@ def main() -> None:
             bound,
         )
     block_sizes = [int(v) for v in args.block_sizes.split(",") if v.strip()]
-    if block_sizes:
+    if "block_size" in passes and block_sizes:
         block_size_pass(modules, args.model, clips, full_grammar, lines, report, block_sizes, args.block_clips)
-    steady_state_pass(modules, args.model, clips, args.block_ms, full_grammar, lines, report, args.steady_state_clips)
+    if "steady_state" in passes:
+        steady_state_pass(
+            modules, args.model, clips, args.block_ms, full_grammar, lines, report, args.steady_state_clips
+        )
     levels = [int(v) for v in args.snr_db.split(",") if v.strip()]
-    if levels:
+    if "snr" in passes and levels:
         snr_pass(modules, args.model, clips, noise, args.block_ms, full_grammar, lines, report, levels, args.snr_clips)
     sizes = [int(v) for v in args.grammar_sizes.split(",") if v.strip()]
-    if sizes:
+    if "grammar_size" in passes and sizes:
         grammar_size_pass(modules, args.model, clips, args.block_ms, lines, report, sizes, args.grammar_clips)
-    twelve_class_pass(modules, args.model, clips, noise, args.block_ms, lines, report)
-    noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report, bound)
-    if args.wordless_clips:
+    if "twelve" in passes:
+        twelve_class_pass(modules, args.model, clips, noise, args.block_ms, lines, report)
+    if "noise" in passes:
+        noise_pass(modules, args.model, noise, args.block_ms, full_grammar, lines, report, bound)
+    if "wordless" in passes and args.wordless_clips:
         wordless_pass(modules, args.model, clips, noise, args.block_ms, full_grammar, lines, report, args)
     # [[rr:docs/benchmarks/README.md#Benchmarks]]
     reading = Path(args.out + ".reading.md")
@@ -2427,7 +2455,7 @@ def main() -> None:
         lines.append("")
     text = write_page(args.out + ".md", lines)
     Path(args.out + ".json").write_text(json.dumps(report, indent=1))
-    note(f"written: {args.out}.md, .json, .clips.jsonl")
+    note(f"written: {args.out}.md, .json" + (", .clips.jsonl" if "full" in passes else ""))
     print(text)
 
 
