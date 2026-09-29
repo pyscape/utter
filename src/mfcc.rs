@@ -303,6 +303,16 @@ impl Mfcc {
         self.scratch = (w, power, logmel);
     }
 
+    /// The log mel energies of the frame [`compute_frame`](Self::compute_frame) last computed.
+    pub fn last_logmel(&self) -> &[f32] {
+        &self.scratch.2
+    }
+
+    /// Mel bands per frame.
+    pub fn num_bins(&self) -> usize {
+        self.filt.len()
+    }
+
     /// All complete frames of `samples` (int16 range) as [num_frames x num_ceps].
     pub fn compute(&mut self, samples: &[f32]) -> Mat {
         let n = self.num_frames(samples.len());

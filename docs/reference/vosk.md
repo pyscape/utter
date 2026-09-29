@@ -70,3 +70,6 @@ stock keys first.
 Two visible differences remain. Where Vosk's partial text is empty,
 utter's is `[sil]` or `[speech]`. And `conf` on a final's words is a
 constant `1.0`, because there is no lattice to compute it from.
+Each word's added `certainty` rates how well the acoustic model heard
+its span; it is not Vosk's `conf` and is on its own scale,
+[certainty and the sound outside words](results.md#certainty-and-the-sound-outside-words).
