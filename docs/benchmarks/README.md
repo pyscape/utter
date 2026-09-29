@@ -32,6 +32,12 @@ written in `<page>.reading.md` and the report appends it to itself. The
 prose is kept under version control beside the figures and survives
 being regenerated.
 
+`scripts/bench_compare.py` runs any of the pages against a baseline
+build and the checkout as it stands, with the same scripts on both
+sides, and ranks what drifted: `drift.toml` says what each figure's
+slip costs. It is the way to rerun the pages for a release too, with
+`--publish`.
+
 Where the two engines are compared, the comparison is paired: the same
 clips through both, and the split reported with an exact McNemar test,
 because a difference of a handful of clips in ten thousand is otherwise
