@@ -2,8 +2,8 @@
 #
 # The comparison tool flattens each page's <page>.json to paths (a list
 # element's segment is its index) and gives every numeric figure the first
-# rule below whose page and path match; a path pattern is one glob per
-# segment, and "**" spans any number of segments.
+# rule below whose page and path match. A path pattern is one glob per
+# segment; "**" spans any number of segments, and {a,b} is any of a and b.
 #
 # kind
 #   exact   decoded output, deterministic: any change is real
@@ -11,8 +11,9 @@
 #           and only the part of a slip beyond the runs' own spread counts
 #   oracle  libvosk's or another reference engine's figure, which utter
 #           cannot move; a change means the inputs or the harness changed
-#   input   the size of what was run; a change makes the page not comparable
-#   ignore  p-values, fitted thresholds, bootstrap bounds
+#   input   the size or setting of what was run; a change makes the page
+#           not comparable
+#   ignore  p-values, fitted thresholds, bootstrap bounds, wall clocks
 #
 # better    "up", "down", or "either" when any move is a slip
 # tol       one unit of slip, in the figure's own unit; rel is a fraction
@@ -25,6 +26,11 @@
 # Report order: pages not comparable (an input or oracle moved), lines
 # crossed, the rest by severity, then improvements. Rows matched by the
 # same rule fold under the worst of them.
+#
+# bench_compare.py check holds this file to the pages: every section a page
+# writes is listed under [sections], every figure has a rule of its own
+# rather than [defaults], every exact or timing rule names its section, and
+# every rule matches a figure. run --publish checks before and after.
 
 [defaults]
 kind = "exact"
@@ -37,60 +43,159 @@ default = "v0.0.4"
 speaker-evidence = "v0.0.5"
 sound-rating = "v0.0.6"
 
-# ------------------------------------------------------------------ inputs
+# A section is a page's top-level key, or the key under "result" where a page
+# nests its figures there.
+[sections]
+speech-commands = [
+  "clips",
+  "block_ms",
+  "grammar_size",
+  "preflight",
+  "agreement",
+  "significance",
+  "full",
+  "determinism",
+  "endpoint",
+  "block_size",
+  "steady_state",
+  "snr",
+  "twelve",
+  "noise",
+  "wordless",
+]
+partial-trust = [
+  "block_ms",
+  "alternatives",
+  "fit_clips",
+  "calibration",
+  "hold_until_gap",
+  "first_sightings",
+  "revised",
+  "auc_headline",
+  "availability",
+  "auc_at_sighting",
+  "auc_by_gap_bucket",
+  "incremental_in_sample",
+  "incremental_filled",
+  "equal_words_held",
+  "auc_at_next_advance",
+  "next_advance_calibration",
+  "next_advance",
+  "vanishings",
+  "census",
+  "rules",
+]
+word-times = [
+  "clips",
+  "block_ms",
+  "grammar_size",
+  "frame_ms",
+  "words",
+  "off_grid",
+  "same_sequence",
+  "differ",
+  "empty_both",
+  "paired_words",
+  "start",
+  "end",
+  "word",
+  "abs_ms",
+  "signed_ms",
+]
+quiet-onsets = ["grammar_size", "sweep"]
+decoder-diagnostics = [
+  "clips",
+  "block_ms",
+  "alternatives",
+  "grammar_size",
+  "preflight",
+  "oracle",
+  "nbest_check",
+  "oracle_wide",
+  "beam",
+  "beam_sweep",
+  "conf_read",
+  "attribution",
+]
+partial-states = [
+  "grammar_size",
+  "seed",
+  "alternatives",
+  "build",
+  "parity",
+  "sizes",
+  "decode_seconds",
+  "fit",
+  "advance_ms",
+  "A1",
+  "A1_bootstrap",
+  "A2",
+  "A2_lead_ms",
+  "A2_mcnemar",
+  "A3",
+  "A4",
+  "A4_by_pause",
+  "A5",
+  "A5_bound",
+  "B1",
+  "B2",
+  "B2_advances",
+  "B2_by_lead",
+  "B3",
+  "B4",
+  "B5",
+  "B_mcnemar",
+  "B_mcnemar_gaining",
+  "B_bootstrap_call_ms",
+  "B_bootstrap_call_ms_gaining",
+  "B_gaining",
+  "B_call_ms",
+  "C1_momentum",
+  "C2_silence",
+  "C3_aligned",
+  "C3_crossing",
+  "C5_onset",
+  "C4_reversal",
+  "vosk",
+  "wordless",
+]
+speaker-evidence = [
+  "seconds",
+  "result.speakers",
+  "result.kept",
+  "result.dropped",
+  "result.profiles_per_engine",
+  "result.probes",
+  "result.probes_without_span",
+  "result.games",
+  "result.engines",
+  "result.word",
+  "result.after_end",
+  "result.readings",
+  "result.partials",
+  "result.curve",
+  "result.agreement",
+  "result.cost",
+  "result.latency",
+]
+sound-rating = ["seconds", "result.words", "result.level", "result.sounds"]
+
+# ------------------------------------------------- before the general rules
 
 [[rule]]
 page = "*"
-path = ["**", "clips"]
-kind = "input"
+path = ["seconds"]
+kind = "ignore"
+note = "the page's wall clock"
 
 [[rule]]
-page = "*"
-path = ["**", "*total*"]
-kind = "input"
+page = "partial-states"
+path = ["decode_seconds"]
+kind = "timing"
+better = "down"
+rel = 0.05
+weight = 2
 
-[[rule]]
-page = "*"
-path = ["**", "minutes"]
-kind = "input"
-
-[[rule]]
-page = "*"
-path = ["**", "blocks"]
-kind = "input"
-
-[[rule]]
-page = "*"
-path = ["**", "n"]
-kind = "input"
-
-[[rule]]
-page = "*"
-path = ["**", "probes"]
-kind = "input"
-
-[[rule]]
-page = "*"
-path = ["**", "windows"]
-kind = "input"
-
-[[rule]]
-page = "quiet-onsets"
-path = ["sweep", "*", "per_engine", "*", "words"]
-kind = "input"
-
-[[rule]]
-page = "quiet-onsets"
-path = ["sweep", "*", "per_engine", "*", "pauses"]
-kind = "input"
-
-[[rule]]
-page = "quiet-onsets"
-path = ["sweep", "*", "per_engine", "*", "finishes"]
-kind = "input"
-
-
-# ---------------------------------------------------------------- everywhere
 [[rule]]
 page = "*"
 path = ["**", "vosk*", "**", "*rtf"]
@@ -119,15 +224,69 @@ kind = "ignore"
 
 [[rule]]
 page = "speaker-evidence"
+path = ["result", "latency", "rows", "vosk*", "*"]
+kind = "ignore"
+
+[[rule]]
+page = "speaker-evidence"
 path = ["result", "cost", "seconds_per_speech_second", "[!u]*"]
 kind = "ignore"
 note = "the reference engines' cost"
 
-[[rule]]
-page = "speaker-evidence"
-path = ["result", "latency", "rows", "vosk*", "*"]
-kind = "ignore"
+# ------------------------------------------------------------------ inputs
 
+[[rule]]
+page = "*"
+path = ["**", "clips"]
+kind = "input"
+
+[[rule]]
+page = "*"
+path = ["**", "*total*"]
+kind = "input"
+
+[[rule]]
+page = "*"
+path = ["**", "*minutes"]
+kind = "input"
+
+[[rule]]
+page = "*"
+path = ["**", "*seconds"]
+kind = "input"
+note = "audio lengths; a page's own wall clock is ignored above"
+
+[[rule]]
+page = "*"
+path = ["**", "blocks"]
+kind = "input"
+
+[[rule]]
+page = "*"
+path = ["**", "n"]
+kind = "input"
+
+[[rule]]
+page = "*"
+path = ["**", "probes"]
+kind = "input"
+
+[[rule]]
+page = "*"
+path = ["**", "windows"]
+kind = "input"
+
+[[rule]]
+page = "*"
+path = ["**", "{block_ms,frame_ms,pad_ms,finest_ms,base_floor_dbfs}"]
+kind = "input"
+
+[[rule]]
+page = "*"
+path = ["{grammar_size,alternatives,seed}"]
+kind = "input"
+
+# ---------------------------------------------------------------- oracle
 
 [[rule]]
 page = "*"
@@ -149,23 +308,26 @@ page = "*"
 path = ["**", "holm"]
 kind = "ignore"
 
-[[rule]]
-page = "*"
-path = ["**", "seconds"]
-kind = "ignore"
-note = "wall clock of a whole pass; the rtf beside it is the compute figure"
-
 # ---------------------------------------------------------- speech-commands
 
 [[rule]]
 page = "speech-commands"
+path = ["determinism", "*", "fresh_processes", "compared"]
+kind = "input"
+
+[[rule]]
+page = "speech-commands"
 path = ["determinism", "utterpy", "fresh_processes", "*"]
-kind = "exact"
 better = "down"
 tol = 1
 weight = 10
 line = "any"
 note = "partials and finals are lists of clips that differed between processes; counted by length"
+
+[[rule]]
+page = "speech-commands"
+path = ["agreement", "pair"]
+kind = "input"
 
 [[rule]]
 page = "speech-commands"
@@ -186,10 +348,24 @@ note = "a one-way excess of empty finals is what a dropped reading looks like"
 
 [[rule]]
 page = "speech-commands"
+path = ["agreement", "empty", "utterpy"]
+better = "down"
+tol = 2
+weight = 6
+
+[[rule]]
+page = "speech-commands"
 path = ["agreement", "differ*"]
 better = "down"
 tol = 3
 weight = 8
+
+[[rule]]
+page = "speech-commands"
+path = ["significance", "**"]
+tol = 3
+weight = 2
+note = "paired splits; the figures they are drawn from rank above"
 
 [[rule]]
 page = "speech-commands"
@@ -208,9 +384,65 @@ weight = 5
 
 [[rule]]
 page = "speech-commands"
+path = ["full", "*", "per_word", "*", "1"]
+kind = "input"
+
+[[rule]]
+page = "speech-commands"
 path = ["full", "utterpy", "confusions", "**"]
-weight = 2
 tol = 3
+weight = 2
+
+[[rule]]
+page = "speech-commands"
+path = ["full", "utterpy", "{rtf,decode_rtf}"]
+kind = "timing"
+better = "down"
+rel = 0.03
+weight = 4
+
+[[rule]]
+page = "speech-commands"
+path = ["full", "utterpy", "ctor_*"]
+kind = "timing"
+better = "down"
+rel = 0.20
+weight = 2
+
+[[rule]]
+page = "speech-commands"
+path = ["full", "utterpy", "latency_ms_*"]
+better = "down"
+tol = 10
+weight = 5
+
+[[rule]]
+page = "speech-commands"
+path = ["full", "utterpy", "{first_changed,first_revised}"]
+better = "down"
+tol = 5
+weight = 5
+
+[[rule]]
+page = "speech-commands"
+path = ["full", "utterpy", "never_in_partial"]
+better = "down"
+tol = 5
+weight = 4
+
+[[rule]]
+page = "speech-commands"
+path = ["full", "utterpy", "rev_lag_ms_*"]
+better = "down"
+tol = 10
+weight = 3
+
+[[rule]]
+page = "speech-commands"
+path = ["full", "**"]
+tol = 5
+weight = 2
+note = "first_shown, first_flushed, latency_n"
 
 [[rule]]
 page = "speech-commands"
@@ -245,6 +477,12 @@ kind = "timing"
 better = "down"
 rel = 0.20
 weight = 2
+
+[[rule]]
+page = "speech-commands"
+path = ["{grammar_size,block_size}", "sizes", "*", "*", "accuracy"]
+kind = "ignore"
+note = "the correct count beside it ranks"
 
 [[rule]]
 page = "speech-commands"
@@ -307,6 +545,13 @@ weight = 4
 
 [[rule]]
 page = "speech-commands"
+path = ["block_size", "**"]
+tol = 2
+weight = 2
+note = "latency_n, compared_to_finest"
+
+[[rule]]
+page = "speech-commands"
 path = ["endpoint", "agreement", "same"]
 better = "up"
 tol = 2
@@ -318,6 +563,13 @@ path = ["endpoint", "engines", "utterpy*", "never"]
 better = "down"
 tol = 1
 weight = 7
+
+[[rule]]
+page = "speech-commands"
+path = ["endpoint", "engines", "utterpy*", "endpointed"]
+better = "up"
+tol = 1
+weight = 5
 
 [[rule]]
 page = "speech-commands"
@@ -333,6 +585,13 @@ better = "either"
 tol = 3
 weight = 4
 note = "direction unknown: words the host's bound costs; set better once read"
+
+[[rule]]
+page = "speech-commands"
+path = ["endpoint", "**"]
+tol = 2
+weight = 3
+note = "agreement.both"
 
 [[rule]]
 page = "speech-commands"
@@ -365,10 +624,22 @@ weight = 4
 
 [[rule]]
 page = "speech-commands"
+path = ["snr", "levels", "*"]
+kind = "input"
+
+[[rule]]
+page = "speech-commands"
 path = ["snr", "results", "utterpy", "*"]
 better = "up"
 tol = 3
 weight = 6
+
+[[rule]]
+page = "speech-commands"
+path = ["snr", "**"]
+tol = 2
+weight = 2
+note = "the paired splits"
 
 [[rule]]
 page = "speech-commands"
@@ -390,6 +661,11 @@ path = ["noise", "utterpy*", "sil_rival"]
 better = "down"
 tol = 5
 weight = 3
+
+[[rule]]
+page = "speech-commands"
+path = ["wordless", "takes"]
+kind = "input"
 
 [[rule]]
 page = "speech-commands"
@@ -435,17 +711,10 @@ weight = 4
 
 [[rule]]
 page = "speech-commands"
-path = ["agreement", "empty", "utterpy"]
-better = "down"
-tol = 2
-weight = 6
-
-[[rule]]
-page = "speech-commands"
-path = ["significance", "**"]
+path = ["wordless", "**"]
 tol = 3
 weight = 2
-note = "paired splits; the figures they are drawn from rank above"
+note = "finals on wordless audio and the paired splits"
 
 # --------------------------------------------------------------- word-times
 
@@ -459,14 +728,14 @@ line = 0
 
 [[rule]]
 page = "word-times"
-path = ["*", "exact"]
+path = ["{start,end,word}", "exact"]
 better = "up"
 tol = 5
 weight = 8
 
 [[rule]]
 page = "word-times"
-path = ["*", "beyond"]
+path = ["{start,end,word}", "beyond"]
 better = "down"
 tol = 1
 weight = 8
@@ -474,14 +743,14 @@ line = "any"
 
 [[rule]]
 page = "word-times"
-path = ["*", "two_frames"]
+path = ["{start,end,word}", "two_frames"]
 better = "down"
 tol = 2
 weight = 6
 
 [[rule]]
 page = "word-times"
-path = ["*", "one_frame"]
+path = ["{start,end,word}", "one_frame"]
 better = "down"
 tol = 5
 weight = 5
@@ -499,6 +768,23 @@ path = ["differ"]
 better = "down"
 tol = 3
 weight = 7
+
+[[rule]]
+page = "word-times"
+path = ["words", "utterpy"]
+tol = 3
+weight = 5
+
+[[rule]]
+page = "word-times"
+path = ["empty_both"]
+tol = 3
+weight = 4
+
+[[rule]]
+page = "word-times"
+path = ["paired_words"]
+kind = "input"
 
 [[rule]]
 page = "word-times"
@@ -543,10 +829,41 @@ line = "any"
 
 [[rule]]
 page = "decoder-diagnostics"
-path = ["oracle*", "*", "utterpy", "**"]
+path = ["{oracle,oracle_wide}", "paired", "*", "engines"]
+kind = "input"
+
+[[rule]]
+page = "decoder-diagnostics"
+path = ["{oracle,oracle_wide}", "paired", "**"]
+tol = 5
+weight = 2
+
+[[rule]]
+page = "decoder-diagnostics"
+path = ["{oracle,oracle_wide}", "*", "utterpy", "**"]
 better = "up"
 tol = 5
 weight = 3
+
+[[rule]]
+page = "decoder-diagnostics"
+path = ["beam", "clips", "utterpy", "became_wrong"]
+better = "down"
+tol = 1
+weight = 4
+
+[[rule]]
+page = "decoder-diagnostics"
+path = ["beam", "clips", "utterpy", "became_right"]
+better = "up"
+tol = 1
+weight = 3
+
+[[rule]]
+page = "decoder-diagnostics"
+path = ["beam", "**"]
+tol = 2
+weight = 2
 
 [[rule]]
 page = "decoder-diagnostics"
@@ -556,11 +873,22 @@ weight = 2
 
 [[rule]]
 page = "decoder-diagnostics"
+path = ["conf_read", "**"]
+tol = 5
+weight = 1
+
+[[rule]]
+page = "decoder-diagnostics"
 path = ["attribution", "**"]
 tol = 5
 weight = 1
 
 # ----------------------------------------------------------- partial-trust
+
+[[rule]]
+page = "partial-trust"
+path = ["fit_clips"]
+kind = "input"
 
 [[rule]]
 page = "partial-trust"
@@ -574,7 +902,18 @@ kind = "ignore"
 
 [[rule]]
 page = "partial-trust"
-path = ["**", "ece"]
+path = ["rules", "frozen", "**", "*_[lh][io]"]
+kind = "ignore"
+note = "bootstrap bounds"
+
+[[rule]]
+page = "partial-trust"
+path = ["rules", "operating_point", "trust"]
+kind = "input"
+
+[[rule]]
+page = "partial-trust"
+path = ["next_advance", "ece"]
 better = "down"
 tol = 0.005
 weight = 5
@@ -595,6 +934,16 @@ weight = 5
 
 [[rule]]
 page = "partial-trust"
+path = [
+  "{calibration,next_advance_calibration,hold_until_gap,equal_words_held}",
+  "*",
+  "{lo,hi,gap}",
+]
+kind = "input"
+note = "the bins and bars the table is cut at"
+
+[[rule]]
+page = "partial-trust"
 path = ["hold_until_gap", "*", "caught"]
 better = "up"
 tol = 5
@@ -609,7 +958,19 @@ weight = 5
 
 [[rule]]
 page = "partial-trust"
-path = ["auc_*", "**"]
+path = [
+  "{calibration,next_advance_calibration,hold_until_gap,equal_words_held}",
+  "**",
+]
+tol = 5
+weight = 2
+
+[[rule]]
+page = "partial-trust"
+path = [
+  "{auc_headline,auc_at_sighting,auc_by_gap_bucket,auc_at_next_advance}",
+  "**",
+]
 better = "either"
 tol = 0.01
 weight = 3
@@ -624,10 +985,28 @@ weight = 3
 
 [[rule]]
 page = "partial-trust"
+path = ["availability", "**"]
+tol = 5
+weight = 2
+
+[[rule]]
+page = "partial-trust"
+path = ["{incremental_in_sample,incremental_filled}", "**"]
+tol = 0.01
+weight = 1
+
+[[rule]]
+page = "partial-trust"
 path = ["next_advance", "revisions*"]
 better = "down"
 tol = 5
 weight = 4
+
+[[rule]]
+page = "partial-trust"
+path = ["next_advance", "**"]
+tol = 5
+weight = 2
 
 [[rule]]
 page = "partial-trust"
@@ -641,65 +1020,79 @@ path = ["census", "**"]
 tol = 0.05
 weight = 2
 
+[[rule]]
+page = "partial-trust"
+path = ["rules", "**"]
+rel = 0.02
+weight = 1
+note = "the fitted rules' AUCs, calibration, delays and operating points"
+
 # ---------------------------------------------------------- partial-states
 
 [[rule]]
 page = "partial-states"
-path = ["decode_seconds"]
-kind = "timing"
-better = "down"
-rel = 0.05
-weight = 2
+path = ["{build,sizes}", "**"]
+kind = "input"
+
+[[rule]]
+page = "partial-states"
+path = ["{A1_bootstrap,B_bootstrap_call_ms,B_bootstrap_call_ms_gaining}", "**"]
+kind = "ignore"
 
 [[rule]]
 page = "partial-states"
 path = ["advance_ms", "**"]
-kind = "timing"
-better = "down"
-rel = 0.05
+tol = 5
 weight = 2
+note = "audio time between decoding advances, not compute"
 
 [[rule]]
 page = "partial-states"
-path = ["A5*", "**", "lost"]
+path = ["{A5,A5_bound}", "**", "lost"]
 better = "down"
 tol = 2
 weight = 7
 
 [[rule]]
 page = "partial-states"
-path = ["A5*", "**", "finals_never_shown"]
+path = ["{A5,A5_bound}", "**", "finals_never_shown"]
 better = "down"
 tol = 1
 weight = 6
 
 [[rule]]
 page = "partial-states"
-path = ["A5*", "**", "restarted"]
+path = ["{A5,A5_bound}", "**", "restarted"]
 better = "down"
 tol = 1
 weight = 5
 
 [[rule]]
 page = "partial-states"
-path = ["A5*", "**", "*mistaken"]
+path = ["{A5,A5_bound}", "**", "*mistaken"]
 better = "down"
 tol = 5
 weight = 5
 
 [[rule]]
 page = "partial-states"
-path = ["A5*", "**", "finishes_called"]
+path = ["{A5,A5_bound}", "**", "finishes_called"]
 better = "up"
 tol = 3
 weight = 5
 
 [[rule]]
 page = "partial-states"
-path = ["A5*", "**", "finish_ms_p*"]
+path = ["{A5,A5_bound}", "**", "finish_ms_p*"]
 better = "down"
 tol = 10
 weight = 5
+
+[[rule]]
+page = "partial-states"
+path = ["{A5,A5_bound}", "**"]
+tol = 5
+weight = 2
 
 [[rule]]
 page = "partial-states"
@@ -717,28 +1110,29 @@ weight = 4
 
 [[rule]]
 page = "partial-states"
-path = ["*_bootstrap*", "**"]
-kind = "ignore"
-
-[[rule]]
-page = "partial-states"
-path = ["*", "**"]
+path = [
+  "{fit,A1,A2,A2_lead_ms,A2_mcnemar,A3,A4,A4_by_pause,B1,B2,B2_advances,B2_by_lead,B3,B4,B5,B_mcnemar,B_mcnemar_gaining,B_gaining,B_call_ms,C1_momentum,C2_silence,C3_aligned,C3_crossing,C5_onset,C4_reversal}",
+  "**",
+]
 tol = 5
 weight = 1
-note = "A1-A4, B and C are exploratory; any move shows, none ranks high"
+note = "the exploratory sections; any move shows, none ranks high"
 
 # ------------------------------------------------------------ quiet-onsets
 
 [[rule]]
 page = "quiet-onsets"
-path = ["sweep", "*", "per_engine", "*", "lost"]
-better = "down"
-tol = 2
-weight = 6
+path = ["sweep", "*", "{level,streams}"]
+kind = "input"
 
 [[rule]]
 page = "quiet-onsets"
-path = ["sweep", "*", "per_engine", "*", "cut"]
+path = ["sweep", "*", "per_engine", "*", "{words,pauses,finishes}"]
+kind = "input"
+
+[[rule]]
+page = "quiet-onsets"
+path = ["sweep", "*", "per_engine", "*", "{lost,cut}"]
 better = "down"
 tol = 2
 weight = 6
@@ -756,9 +1150,14 @@ path = ["sweep", "*", "per_engine", "*", "*"]
 better = "down"
 tol = 2
 weight = 4
-note = "restarted, misread, gained, late, floor_finals"
+note = "restarted, misread, gained, late, floor_finals, pauses_ended, finishes_called, finals"
 
 # -------------------------------------------------------- speaker-evidence
+
+[[rule]]
+page = "speaker-evidence"
+path = ["result", "{speakers,kept,dropped,probes_without_span,games,engines}"]
+kind = "input"
 
 [[rule]]
 page = "speaker-evidence"
@@ -774,6 +1173,13 @@ kind = "oracle"
 page = "speaker-evidence"
 path = ["result", "**", "CAM++", "**"]
 kind = "oracle"
+
+[[rule]]
+page = "speaker-evidence"
+path = ["result", "profiles_per_engine", "utter*"]
+better = "up"
+tol = 1
+weight = 4
 
 [[rule]]
 page = "speaker-evidence"
@@ -811,7 +1217,7 @@ weight = 5
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "latency", "rows", "*", "*"]
+path = ["result", "latency", "**"]
 kind = "timing"
 better = "down"
 rel = 0.03
@@ -860,12 +1266,12 @@ weight = 5
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "word", "utter*", "threshold"]
+path = ["result", "{word,readings,curve}", "**", "threshold"]
 kind = "ignore"
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "**", "lag_ms", "*"]
+path = ["result", "{after_end,readings,partials}", "**", "lag_ms", "*"]
 better = "down"
 tol = 20
 weight = 4
@@ -879,21 +1285,21 @@ weight = 3
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "**", "top1", "*"]
+path = ["result", "{word,readings,curve}", "**", "top1", "*"]
 better = "up"
 tol = 0.01
 weight = 4
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "**", "accepted*"]
+path = ["result", "{word,readings,curve,after_end,partials}", "**", "accepted*"]
 better = "up"
 tol = 0.01
 weight = 3
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "**"]
+path = ["result", "{word,after_end,readings,partials,curve,agreement}", "**"]
 tol = 0.01
 weight = 2
 
@@ -955,39 +1361,6 @@ note = "the example rule's confusion; which cell is right depends on the event r
 
 [[rule]]
 page = "sound-rating"
-path = ["result", "**"]
+path = ["result", "{words,level,sounds}", "**"]
 tol = 0.01
 weight = 1
-
-# ---------------------------------------------------------------- settings
-
-[[rule]]
-page = "*"
-path = ["**", "*_ms"]
-kind = "input"
-note = "run settings (block_ms, frame_ms, pad_ms, finest_ms); a measured *_ms has a rule above this one"
-
-[[rule]]
-page = "*"
-path = ["grammar_size"]
-kind = "input"
-
-[[rule]]
-page = "*"
-path = ["alternatives"]
-kind = "input"
-
-[[rule]]
-page = "*"
-path = ["sweep", "*", "level"]
-kind = "input"
-
-[[rule]]
-page = "speech-commands"
-path = ["full", "*", "per_word", "*", "1"]
-kind = "input"
-
-[[rule]]
-page = "word-times"
-path = ["paired_words"]
-kind = "input"

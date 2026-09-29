@@ -36,6 +36,10 @@ jobs:
       - run: pip install --require-hashes -r .github/requirements/lint.txt
       - run: ruff check scripts && ruff format --check scripts
       - run: mypy
+      - name: drift.toml describes every figure on the benchmark pages
+        run: |
+          git fetch --quiet --tags origin
+          python3 scripts/bench_compare.py check
       - name: The C header compiles as C and C++
         run: |
           gcc -x c -std=c99 -fsyntax-only -Wall -Wextra -Werror include/utter.h

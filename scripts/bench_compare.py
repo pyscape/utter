@@ -5,6 +5,7 @@
         [--baseline v0.0.4] [--reps 3] [--no-timing] [--publish] [--dry-run]
     python scripts/bench_compare.py list [--pages ...] [--only PAGE:PATH] [--depth N]
     python scripts/bench_compare.py report OLD_DIR NEW_DIR [--pages ...] [--only PAGE:PATH]
+    python scripts/bench_compare.py check
 
 The candidate is this checkout as it stands, uncommitted edits included. Each page's baseline is
 the release docs/benchmarks/drift.toml names for it, or --baseline for every page. Both sides run
@@ -23,7 +24,9 @@ sweep) runs only the passes the figures need.
 only with a quick baseline. Outputs go under ~/Repos/utter-bench-data/compare; docs/benchmarks
 is written only by --publish, which takes a full run from a clean checkout.
 
-The ranking and every weight are in docs/benchmarks/drift.toml.
+The ranking and every weight are in docs/benchmarks/drift.toml. check holds that file to the pages
+(every section listed, every figure under a rule, every rule matching); CI runs it, and run --publish
+runs it before and after.
 """
 
 import argparse
@@ -42,6 +45,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from speech_commands import PASSES as SPEECH_COMMANDS_PASSES
 
 REPO = Path(__file__).resolve().parent.parent
 BENCH = Path.home() / "Repos/utter-bench-data"
@@ -194,9 +199,6 @@ def sound_rating(c: Ctx) -> list[Step]:
     argv = ["--model", str(MODEL), "--lib", str(c.side.lib), "--out", str(c.prefix)]
     return [Step("sound_rating.py", argv + pick(c.quick, ["--limit", "2000", "--level-clips", "200"]), "sound-rating")]
 
-
-SPEECH_COMMANDS_PASSES = ("full", "determinism", "endpoint", "block_size", "steady_state", "snr", "grammar_size",
-                          "twelve", "noise", "wordless")  # fmt: skip
 
 # In the order a full run takes them: decoder-diagnostics reads the two pages before it.
 PAGES = {
@@ -440,6 +442,10 @@ class Rule:
 
 def load_rules(path: Path = DRIFT) -> tuple[list[Rule], dict[str, Any], dict[str, str]]:
     cfg = tomllib.loads(path.read_text())
+    return parse_rules(cfg)
+
+
+def parse_rules(cfg: Mapping[str, Any]) -> tuple[list[Rule], dict[str, Any], dict[str, str]]:
     d = cfg.get("defaults", {})
     rules = []
     for i, r in enumerate(cfg.get("rule", [])):
@@ -465,12 +471,18 @@ def load_rules(path: Path = DRIFT) -> tuple[list[Rule], dict[str, Any], dict[str
     return rules, {"default": default}, baseline
 
 
+def segment(name: str, pattern: str) -> bool:
+    if pattern.startswith("{") and pattern.endswith("}"):
+        return any(fnmatch.fnmatchcase(name, p) for p in pattern[1:-1].split(","))
+    return fnmatch.fnmatchcase(name, pattern)
+
+
 def match(pattern: Sequence[str], path: Sequence[str]) -> bool:
     if not pattern:
         return not path
     if pattern[0] == "**":
         return any(match(pattern[1:], path[i:]) for i in range(len(path) + 1))
-    return bool(path) and fnmatch.fnmatchcase(path[0], pattern[0]) and match(pattern[1:], path[1:])
+    return bool(path) and segment(path[0], pattern[0]) and match(pattern[1:], path[1:])
 
 
 def rule_for(rules: Sequence[Rule], default: Rule, page: str, path: Sequence[str]) -> Rule:
@@ -716,6 +728,106 @@ def to_json(results: Sequence[PageResult]) -> list[dict[str, Any]]:
     ]
 
 
+# ---------------------------------------------------------------- checking
+
+
+def section_of(path: Sequence[str]) -> str:
+    return ".".join(path[:2] if path[0] == "result" and len(path) > 1 else path[:1])
+
+
+def literal(seg: str) -> bool:
+    options = seg[1:-1].split(",") if seg.startswith("{") and seg.endswith("}") else [seg]
+    return not any(ch in o for o in options for ch in "*?[")
+
+
+def anchored(rule: Rule) -> bool:
+    """Whether a rule names the section it scores, so a new section cannot fall under it unseen."""
+    if rule.page == "*" or not rule.path:
+        return False
+    at = 1 if rule.path[0] == "result" else 0
+    return len(rule.path) > at and all(literal(seg) for seg in rule.path[: at + 1])
+
+
+def version_tag(ref: str) -> tuple[int, ...] | None:
+    parts = ref.removeprefix("v").split(".")
+    return tuple(int(p) for p in parts) if ref.startswith("v") and all(p.isdigit() for p in parts) else None
+
+
+def check(pages_dir: Path = DOCS, drift: Path = DRIFT) -> list[str]:
+    """What keeps drift.toml from describing the pages: every problem found, empty when it holds."""
+    cfg = tomllib.loads(drift.read_text())
+    rules, defaults, baselines = parse_rules(cfg)
+    listed: dict[str, list[str]] = dict(cfg.get("sections", {}))
+    problems = []
+
+    on_disk = {p.name.removesuffix(".json") for p in pages_dir.glob("*.json") if p.name.count(".") == 1}
+    for name in sorted(on_disk - set(PAGES)):
+        problems.append(f"{name}.json is in {pages_dir.name} but bench_compare.py has no page for it")
+    for name in sorted(set(PAGES) - on_disk):
+        problems.append(f"page {name} has no {name}.json in {pages_dir.name}")
+    for name in sorted(set(listed) - set(PAGES)):
+        problems.append(f"[sections] lists {name}, which is not a page")
+
+    used: set[int] = set()
+    for name, page in PAGES.items():
+        if name not in on_disk:
+            continue
+        figs = figures(json.loads(page.json(pages_dir / name).read_text()))
+        sections = list(dict.fromkeys(section_of(k) for k in figs))
+        want = listed.get(name)
+        if want is None:
+            problems.append(f"{name}: no [sections] entry; its sections are {sections}")
+        else:
+            for sec in sections:
+                if sec not in want:
+                    problems.append(f"{name}: section {sec} is not in [sections]; decide its rules and list it")
+            for sec in want:
+                if sec not in sections:
+                    problems.append(f"{name}: [sections] lists {sec}, which the page no longer writes")
+        unruled: dict[str, int] = {}
+        for k in figs:
+            rule = rule_for(rules, defaults["default"], name, k)
+            if rule.index < 0:
+                unruled[section_of(k)] = unruled.get(section_of(k), 0) + 1
+            else:
+                used.add(rule.index)
+        for sec, n in unruled.items():
+            problems.append(
+                f"{name}: {n} figure(s) in {sec} have no rule (bench_compare.py list --only '{name}:{sec}')"
+            )
+        for field_key in page.passes:
+            if field_key not in sections:
+                problems.append(f"{name}: the pass map names {field_key}, which the page does not write")
+        if name == "speech-commands" and set(page.passes.values()) != set(SPEECH_COMMANDS_PASSES):
+            problems.append("speech-commands: the pass map and speech_commands.PASSES name different passes")
+
+    for r in rules:
+        where = f"rule {r.index} ({r.page}: {'.'.join(r.path)})"
+        if r.index not in used:
+            problems.append(f"{where} matches no figure")
+        if r.kind in ("exact", "timing") and not anchored(r):
+            problems.append(f"{where} scores figures without naming their section")
+        if r.kind not in ("exact", "timing", "oracle", "input", "ignore"):
+            problems.append(f"{where} has kind {r.kind}")
+        if r.better not in ("up", "down", "either"):
+            problems.append(f"{where} has better = {r.better}")
+
+    tags = [t for t in (version_tag(x) for x in git("tag", "--list", "v*").split()) if t]
+    newest = max(tags) if tags else ()
+    for name in PAGES:
+        ref = baselines.get(name, baselines.get("default"))
+        if not ref:
+            problems.append(f"{name}: no baseline and no default")
+            continue
+        try:
+            git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        except SystemExit:
+            v = version_tag(ref)
+            if v is None or v <= newest:
+                problems.append(f"{name}: baseline {ref} does not resolve")
+    return problems
+
+
 # ---------------------------------------------------------------- commands
 
 
@@ -748,6 +860,8 @@ def cmd_run(a: argparse.Namespace) -> None:
             raise SystemExit("--publish takes a clean checkout; commit first")
         if only:
             raise SystemExit("--publish takes whole pages, not --only")
+        if problems := check():
+            raise SystemExit("drift.toml does not describe the pages; bench_compare.py check:\n" + "\n".join(problems))
 
     plan: list[tuple[Page, str | None]] = []
     missing: list[str] = []
@@ -880,6 +994,9 @@ def cmd_run(a: argparse.Namespace) -> None:
         "timing left out" if a.no_timing else f"{reps} run{'s' if reps > 1 else ''} a side"
     )
     text = render(results, header, not a.no_timing)
+    if a.publish and (problems := check()):
+        text += "\nThe published pages have figures drift.toml does not describe; fix it before the next run:\n"
+        text += "".join(f"  {p}\n" for p in problems)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "report.txt").write_text(text)
     (run_dir / "report.json").write_text(json.dumps(to_json(results), indent=1) + "\n")
@@ -907,6 +1024,15 @@ def cmd_report(a: argparse.Namespace) -> None:
     if not results:
         raise SystemExit(f"no page has a .json in both {old} and {new}")
     print(render(results, f"{old} -> {new}", a.timing), end="")
+
+
+def cmd_check(a: argparse.Namespace) -> None:
+    problems = check(Path(a.dir))
+    for p in problems:
+        print(p)
+    if problems:
+        raise SystemExit(f"{len(problems)} problem(s): drift.toml does not describe the pages")
+    print(f"drift.toml describes every figure on the {len(PAGES)} pages")
 
 
 def cmd_list(a: argparse.Namespace) -> None:
@@ -1000,6 +1126,15 @@ def main() -> None:
         help="start inside the weekday 06:15-12:01 window or past 06:00; the owner's call only",
     )
     r.set_defaults(func=cmd_run)
+    c = sub.add_parser(
+        "check",
+        help="that drift.toml describes every page, section and figure",
+        description="That drift.toml describes the pages: every page and section listed, every figure under a "
+        "rule of its own, every scoring rule naming its section, every rule matching a figure, every baseline "
+        "resolving. run --publish runs it before and after.",
+    )
+    c.add_argument("--dir", default=str(DOCS), help="the pages to check (docs/benchmarks)")
+    c.set_defaults(func=cmd_check)
     ls = sub.add_parser(
         "list",
         help="name the figures a page reports, to hand to --only",
