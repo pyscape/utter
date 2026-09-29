@@ -1176,6 +1176,40 @@ fn every_decoded_frame_is_rated_by_one_result() {
     assert!(finals > 0, "a rule closes the pause");
 }
 
+/// A result's rating keys from the `certainty_words` at `from`, through `rise_db`'s value.
+fn rating_at(json: &str, from: usize) -> &str {
+    let tail = &json[from..];
+    let rise = tail
+        .find("\"rise_db\": ")
+        .expect("the rating ends with rise_db");
+    &tail[..rise + tail[rise..].find(['}', ']']).expect("the object ends")]
+}
+
+// [[rr:TD-17#Where the keys appear]]
+#[test]
+fn the_alternatives_shape_carries_its_first_alternatives_rating_at_its_top() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    let mut audio = clip("yes");
+    audio.extend(vec![0i16; 16000]);
+    audio.extend(clip("seven"));
+    let mut rec = Recognizer::new(&m, 16000.0, &grammar()).unwrap();
+    rec.set_words(true);
+    rec.set_partial_words(true);
+    rec.set_alternatives(3);
+    rec.set_max_alternatives(4);
+    let (_, finals) = decode(&mut rec, &audio);
+    let key = ", \"certainty_words\": ";
+    let mut compared = 0;
+    for f in finals.iter().filter(|f| f.contains("\"alternatives\": [{")) {
+        let first = rating_at(f, f.find(key).expect("a rated alternative"));
+        assert_eq!(first, rating_at(f, f.rfind(key).unwrap()), "{f}");
+        assert!(first.contains("\"band_sd_db\": ["), "{f}");
+        compared += 1;
+    }
+    assert!(compared > 1, "{finals:?}");
+}
+
 // [[rr:TD-17#What a word entry carries]]
 #[test]
 fn a_word_entrys_certainty_does_not_depend_on_when_results_are_read() {

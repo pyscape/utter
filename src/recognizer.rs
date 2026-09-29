@@ -426,6 +426,13 @@ struct ResultWindow {
 /// Rows the network holds for the certainty before it is computed without a result to ask.
 const CERTAINTY_HELD_FRAMES: usize = 200;
 
+/// The sound keys one result has written so far, by the window's spans they describe and where
+/// they lie in the result, so the paths of a result that leave the same frames unnamed write them
+/// once. The ranges hold because a result is only cut back by the brace a word writer has just
+/// closed.
+#[derive(Default)]
+struct WrittenEvidence(Vec<(Vec<(usize, usize)>, std::ops::Range<usize>)>);
+
 /// TitaNet's embeddings of the spans of the current utterance.
 struct SpanEmbedder<'m> {
     model: &'m TitaNet,
@@ -1680,7 +1687,13 @@ impl<'m> Recognizer<'m> {
     /// The rating over the window's frames, split by a path's entries, and the sound evidence over
     /// those in no named word.
     // [[rr:TD-17#Where the keys appear]]
-    fn push_window_rating(&self, out: &mut String, entries: &[Entry], open: bool) {
+    fn push_window_rating(
+        &self,
+        out: &mut String,
+        entries: &[Entry],
+        open: bool,
+        written: &mut WrittenEvidence,
+    ) {
         use std::fmt::Write;
         let (words, outside) = self.split_window(entries, open, self.window.from_frame);
         let (cw, nw) = self.mean_certainty(&words);
@@ -1691,12 +1704,18 @@ impl<'m> Recognizer<'m> {
         push_certainty(out, co);
         let _ = write!(out, ", \"outside_frames\": {no}");
         // [[rr:TD-17#The sound outside words]]
-        if open && entries.iter().any(|e| e.word == EntryWord::Speech) {
-            let (_, unnamed) = self.split_window(entries, false, self.window.from_frame);
-            self.push_evidence(out, &unnamed);
+        let unnamed = if open && entries.iter().any(|e| e.word == EntryWord::Speech) {
+            self.split_window(entries, false, self.window.from_frame).1
         } else {
-            self.push_evidence(out, &outside);
+            outside
+        };
+        if let Some((_, at)) = written.0.iter().find(|(spans, _)| *spans == unnamed) {
+            out.extend_from_within(at.clone());
+            return;
         }
+        let start = out.len();
+        self.push_evidence(out, &unnamed);
+        written.0.push((unnamed, start..out.len()));
     }
 
     /// The window's rating keys with no decoded frame in it.
@@ -2266,6 +2285,7 @@ impl<'m> Recognizer<'m> {
         };
         let now = self.samples_round_start + self.samples_processed;
         let mut out = String::with_capacity(self.last_result.len());
+        let mut written = WrittenEvidence::default();
         out.push_str("{\"partial\": ");
         write_string(&mut out, &self.text_of_path(path));
         if self.partial_alternatives > 0 {
@@ -2307,7 +2327,7 @@ impl<'m> Recognizer<'m> {
                             .map(f64::from)
                     ),
                 ));
-                self.push_rating(&mut out, alt, true);
+                self.push_rating(&mut out, alt, true, &mut written);
                 out.push('}');
             }
             out.push(']');
@@ -2354,7 +2374,7 @@ impl<'m> Recognizer<'m> {
             } else {
                 entries
             };
-            self.push_window_rating(&mut out, &entries, true);
+            self.push_window_rating(&mut out, &entries, true, &mut written);
         } else {
             Self::push_empty_rating(&mut out);
         }
@@ -2373,9 +2393,11 @@ impl<'m> Recognizer<'m> {
         // A floor final is the path as it stood; a completed path would force a word onto it.
         let completed = reason != Endpoint::Floor;
         let mut out = String::from("{");
+        let mut written = WrittenEvidence::default();
         if self.max_alternatives > 1 {
             out.push_str("\"alternatives\": [");
             let alts = dec.alternatives(completed, self.max_alternatives);
+            let mut first_rating = 0..0;
             for (i, alt) in alts.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
@@ -2391,7 +2413,11 @@ impl<'m> Recognizer<'m> {
                 }
                 out.push_str("\"text\": ");
                 write_string(&mut out, &self.text_of_path(alt));
-                self.push_rating(&mut out, alt, false);
+                let start = out.len();
+                self.push_rating(&mut out, alt, false, &mut written);
+                if i == 0 {
+                    first_rating = start..out.len();
+                }
                 out.push('}');
             }
             out.push(']');
@@ -2400,9 +2426,10 @@ impl<'m> Recognizer<'m> {
             if let (Some(top), true) = (alts.first(), self.spk.is_some()) {
                 self.push_spk(&mut out, &self.speech_spans(top, true));
             }
-            match alts.first() {
-                Some(top) => self.push_rating(&mut out, top, false),
-                None => self.push_window_rating(&mut out, &[], false),
+            if alts.is_empty() {
+                self.push_window_rating(&mut out, &[], false, &mut written);
+            } else {
+                out.extend_from_within(first_rating);
             }
             out.push('}');
             return out;
@@ -2429,16 +2456,22 @@ impl<'m> Recognizer<'m> {
             out.push_str(", ");
             Self::write_spk_span(&mut out, ev);
         }
-        self.push_rating(&mut out, &path, false);
+        self.push_rating(&mut out, &path, false, &mut written);
         out.push('}');
         out
     }
 
     /// The window's rating keys split by `path`, whose `[speech]` entry is `open` on a partial
     /// or a reading.
-    fn push_rating(&self, out: &mut String, path: &Path, open: bool) {
+    fn push_rating(
+        &self,
+        out: &mut String,
+        path: &Path,
+        open: bool,
+        written: &mut WrittenEvidence,
+    ) {
         if self.window_has_frames() {
-            self.push_window_rating(out, &self.entries(path), open);
+            self.push_window_rating(out, &self.entries(path), open, written);
         } else {
             Self::push_empty_rating(out);
         }
