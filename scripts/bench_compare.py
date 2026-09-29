@@ -355,9 +355,10 @@ def run_page(page: Page, ctx: Ctx, logs: Path) -> tuple[bool, float, str]:
         env["PYTHONPATH"] = str(ctx.side.site)
     (BENCH / "tmp").mkdir(exist_ok=True)
     ctx.prefix.parent.mkdir(parents=True, exist_ok=True)
-    start = time.monotonic()
+    spent = 0.0
     for step in page.steps(ctx):
         wait_for_load(MAX_LOAD)
+        start = time.monotonic()
         log = logs / f"{ctx.side.label}-{step.log}.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("w") as f:
@@ -367,10 +368,11 @@ def run_page(page: Page, ctx: Ctx, logs: Path) -> tuple[bool, float, str]:
                 [str(PYTHON), str(REPO / "scripts" / step.script), *step.argv],
                 cwd=REPO, env=env, stdout=f, stderr=subprocess.STDOUT,
             ).returncode  # fmt: skip
+        spent += time.monotonic() - start
         if rc:
             tail = "\n".join(log.read_text().splitlines()[-15:])
-            return False, time.monotonic() - start, f"{step.log} exited {rc} ({log}):\n{tail}"
-    return True, time.monotonic() - start, ""
+            return False, spent, f"{step.log} exited {rc} ({log}):\n{tail}"
+    return True, spent, ""
 
 
 def parse_only(specs: Sequence[str]) -> list[tuple[str, list[str]]]:
