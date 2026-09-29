@@ -347,27 +347,24 @@ impl SoundTrack {
         (!self.floor.is_empty()).then_some(self.floor.as_slice())
     }
 
-    /// The evidence over the utterance's feature frames in `spans`, each `[start, end)`, in
-    /// order and not overlapping, clipped to the frames taken; `None` when they hold no frame.
+    /// The evidence over the utterance's feature frames in `spans`, each `[start, end)` in units
+    /// of `unit` feature frames, in order and not overlapping, clipped to the frames taken; `None`
+    /// when they hold no frame.
     #[allow(clippy::cast_precision_loss)]
-    pub fn evidence(&self, spans: &[(usize, usize)]) -> Option<Evidence> {
+    pub fn evidence(&self, spans: &[(usize, usize)], unit: usize) -> Option<Evidence> {
         let floor = self.floor();
         let taken = self.frames();
         let bands = self.bands;
+        let frames = || {
+            spans
+                .iter()
+                .map(move |&(a, b)| (a * unit, (b * unit).min(taken)))
+                .filter(|&(a, b)| a < b)
+        };
         let mut n = 0usize;
-        let mut sum = vec![0.0f64; bands];
-        let mut sum_sq = vec![0.0f64; bands];
         let mut loudest: Option<(usize, f32)> = None;
-        for &(a, b) in spans {
-            let b = b.min(taken);
-            if a >= b {
-                continue;
-            }
+        for (a, b) in frames() {
             n += b - a;
-            for k in 0..bands {
-                sum[k] += self.sum[b * bands + k] - self.sum[a * bands + k];
-                sum_sq[k] += self.sum_sq[b * bands + k] - self.sum_sq[a * bands + k];
-            }
             for (t, &l) in self.broad[a..b].iter().enumerate() {
                 if loudest.is_none_or(|(_, m)| l > m) {
                     loudest = Some((a + t, l));
@@ -376,18 +373,23 @@ impl SoundTrack {
         }
         let (peak, peak_db) = loudest?;
         let nf = n as f64;
-        let mut level = Vec::with_capacity(bands);
+        let mut level = floor.map(|_| Vec::with_capacity(bands));
         let mut sd = Vec::with_capacity(bands);
         for k in 0..bands {
-            let mean = sum[k] / nf;
-            level.push(floor.map(|f| mean - f64::from(f[k])));
-            sd.push((sum_sq[k] / nf - mean * mean).max(0.0).sqrt());
+            let (mut sum, mut sum_sq) = (0.0f64, 0.0f64);
+            for (a, b) in frames() {
+                sum += self.sum[b * bands + k] - self.sum[a * bands + k];
+                sum_sq += self.sum_sq[b * bands + k] - self.sum_sq[a * bands + k];
+            }
+            let mean = sum / nf;
+            if let (Some(level), Some(f)) = (level.as_mut(), floor) {
+                level.push(mean - f64::from(f[k]));
+            }
+            sd.push((sum_sq / nf - mean * mean).max(0.0).sqrt());
         }
         // The rise runs through the spans' frames that touch the loudest without a gap.
-        let (lo, hi) = spans
-            .iter()
-            .find(|&&(a, b)| a <= peak && peak < b)
-            .map(|&(a, b)| (a, b.min(taken)))
+        let (lo, hi) = frames()
+            .find(|&(a, b)| a <= peak && peak < b)
             .expect("the loudest frame lies in a span");
         let within = |t: usize| self.broad[t] >= peak_db - RISE_DB;
         let mut start = peak;
@@ -399,7 +401,7 @@ impl SoundTrack {
             end += 1;
         }
         Some(Evidence {
-            level: level.into_iter().collect(),
+            level,
             sd,
             rise_start: start,
             rise_frames: end - start,
@@ -455,29 +457,37 @@ fn push_db_array(out: &mut String, values: &[f64]) {
         if i > 0 {
             out.push_str(", ");
         }
-        push_tenths(out, v);
+        push_fixed(out, v, 1);
     }
     out.push(']');
 }
 
-/// `v` to one decimal, as `{v:.1}` writes it, a sign on a negative zero included. The
-/// formatter's exact rounding is only needed near a tie; elsewhere the nearest tenth of `v * 10`
-/// is the nearest tenth of `v`, and writing it directly is several times faster.
+/// `v` to `places` decimals, at most three, as `{v:.places$}` writes it, a sign on a negative
+/// zero included. The formatter's exact rounding is only needed near a tie; elsewhere the
+/// integer nearest `v * 10^places` is the formatter's digits, and writing it directly is several
+/// times faster.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn push_tenths(out: &mut String, v: f64) {
+pub(crate) fn push_fixed(out: &mut String, v: f64, places: usize) {
     use std::fmt::Write;
-    let scaled = v * 10.0;
+    const SCALE: [f64; 4] = [1.0, 10.0, 100.0, 1000.0];
+    const UNIT: [u64; 4] = [1, 10, 100, 1000];
+    let scaled = v * SCALE[places];
     let n = scaled.round();
     if n.is_nan() || n.abs() >= 1e9 || (scaled - n).abs() > 0.499_99 {
-        let _ = write!(out, "{v:.1}");
+        let _ = write!(out, "{v:.places$}");
         return;
     }
     if v.is_sign_negative() {
         out.push('-');
     }
     let n = n.abs() as u64;
-    let _ = write!(out, "{}.", n / 10);
-    out.push(char::from(b'0' + (n % 10) as u8));
+    let _ = write!(out, "{}", n / UNIT[places]);
+    if places > 0 {
+        out.push('.');
+        for d in (0..places).rev() {
+            out.push(char::from(b'0' + (n / UNIT[d] % 10) as u8));
+        }
+    }
 }
 
 impl Evidence {
@@ -496,12 +506,12 @@ impl Evidence {
         let ms = self.rise_frames as f64 * frame_ms;
         let _ = write!(
             out,
-            ", \"rise_start_sample\": {rise_start_sample}, \"rise_ms\": {ms:.0}, \"rise_db\": "
+            ", \"rise_start_sample\": {rise_start_sample}, \"rise_ms\": "
         );
+        push_fixed(out, ms, 0);
+        out.push_str(", \"rise_db\": ");
         match self.rise_db {
-            Some(db) => {
-                push_tenths(out, db);
-            }
+            Some(db) => push_fixed(out, db, 1),
             None => out.push_str("null"),
         }
     }
@@ -575,7 +585,7 @@ mod tests {
             *s += event(i);
         }
         let span = push(&mut track, &mut mfcc, &window);
-        track.evidence(&[span]).expect("frames in the span")
+        track.evidence(&[span], 1).expect("frames in the span")
     }
 
     #[allow(clippy::cast_precision_loss)]
@@ -733,8 +743,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[allow(clippy::cast_precision_loss)]
-    fn tenths_are_written_as_the_formatter_writes_them() {
+    fn fixed_decimals_are_written_as_the_formatter_writes_them() {
         let mut s = 9u64;
         let mut values = vec![
             0.0,
@@ -744,25 +755,39 @@ mod tests {
             0.25,
             0.35,
             -0.25,
+            0.0005,
+            0.0625,
+            0.9995,
+            1.0,
             1e-12,
             -1e-12,
             99.95,
             -99.95,
             1e12,
             f64::NAN,
+            f64::INFINITY,
         ];
-        for _ in 0..200_000 {
+        for _ in 0..50_000 {
             s ^= s << 13;
             s ^= s >> 7;
             s ^= s << 17;
             let u = (s >> 11) as f64 / (1u64 << 53) as f64;
+            values.push(u);
             values.push((u - 0.5) * 300.0);
-            values.push(((u - 0.5) * 3000.0).round() / 20.0);
+            // Halfway between two values at each number of places, and the doubles either side.
+            for halves in [2.0, 20.0, 200.0, 2000.0] {
+                let tie = ((u - 0.5) * 3000.0).round() / halves;
+                values.push(tie);
+                values.push(f64::from_bits(tie.to_bits() + 1));
+                values.push(f64::from_bits(tie.to_bits().wrapping_sub(1)));
+            }
         }
-        for v in values {
-            let mut out = String::new();
-            push_tenths(&mut out, v);
-            assert_eq!(out, format!("{v:.1}"), "{v:e}");
+        for places in 0..=3 {
+            for &v in &values {
+                let mut out = String::new();
+                push_fixed(&mut out, v, places);
+                assert_eq!(out, format!("{v:.places$}"), "{v:e} to {places}");
+            }
         }
     }
 

@@ -501,8 +501,11 @@ fn escape_json_number(v: f64) -> String {
     }
 }
 
-fn certainty_json(v: Option<f64>) -> String {
-    v.map_or_else(|| "null".into(), |c| format!("{c:.3}"))
+fn push_certainty(out: &mut String, v: Option<f64>) {
+    match v {
+        Some(c) => crate::sound::push_fixed(out, c, 3),
+        None => out.push_str("null"),
+    }
 }
 
 fn number_or_null(v: Option<f64>) -> String {
@@ -1663,8 +1666,7 @@ impl<'m> Recognizer<'m> {
     /// The sound evidence over the utterance's decoded frames in `spans`, or its keys as null.
     fn push_evidence(&self, out: &mut String, spans: &[(usize, usize)]) {
         let sf = self.model.conf.frame_subsampling_factor;
-        let frames: Vec<(usize, usize)> = spans.iter().map(|&(a, b)| (a * sf, b * sf)).collect();
-        match self.sound.evidence(&frames) {
+        match self.sound.evidence(spans, sf) {
             Some(ev) => {
                 let shift = self.frame_samples() / sf as u64;
                 let first = self.samples_round_start
@@ -1679,16 +1681,17 @@ impl<'m> Recognizer<'m> {
     /// those in no named word.
     // [[rr:TD-17#Where the keys appear]]
     fn push_window_rating(&self, out: &mut String, entries: &[Entry], open: bool) {
+        use std::fmt::Write;
         let (words, outside) = self.split_window(entries, open, self.window.from_frame);
         let (cw, nw) = self.mean_certainty(&words);
         let (co, no) = self.mean_certainty(&outside);
-        out.push_str(&format!(
-            ", \"certainty_words\": {}, \"words_frames\": {nw}, \"certainty_outside\": {}, \"outside_frames\": {no}",
-            certainty_json(cw),
-            certainty_json(co)
-        ));
+        out.push_str(", \"certainty_words\": ");
+        push_certainty(out, cw);
+        let _ = write!(out, ", \"words_frames\": {nw}, \"certainty_outside\": ");
+        push_certainty(out, co);
+        let _ = write!(out, ", \"outside_frames\": {no}");
         // [[rr:TD-17#The sound outside words]]
-        if open {
+        if open && entries.iter().any(|e| e.word == EntryWord::Speech) {
             let (_, unnamed) = self.split_window(entries, false, self.window.from_frame);
             self.push_evidence(out, &unnamed);
         } else {
@@ -1713,7 +1716,8 @@ impl<'m> Recognizer<'m> {
     // [[rr:TD-17#What a word entry carries]]
     fn push_entry_sound(&self, out: &mut String, e: &Entry, evidence: bool) {
         let (c, _) = self.mean_certainty(&[(e.start_frame, e.end_frame)]);
-        out.push_str(&format!(", \"certainty\": {}", certainty_json(c)));
+        out.push_str(", \"certainty\": ");
+        push_certainty(out, c);
         if evidence && !matches!(e.word, EntryWord::Word(_)) {
             self.push_evidence(out, &[(e.start_frame, e.end_frame)]);
         }
