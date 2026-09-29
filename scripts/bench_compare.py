@@ -831,14 +831,18 @@ def cmd_run(a: argparse.Namespace) -> None:
                 cand_prefix = got
                 cand_runs.append(json.loads(page.json(got).read_text()))
         else:
+            # A side that fails does not stop the other: with --publish the candidate's page is
+            # wanted even when the baseline cannot run today's script.
+            errors: list[str] = []
             for rep in range(1, reps + 1):
                 order = (base, candidate) if rep % 2 else (candidate, base)
                 for side in order:
                     if a.publish and side is candidate and rep > 1:
                         continue
-                    got, res.error = run_side(page, side, rep, run_dir, a.quick, a.publish, passes)
+                    got, err = run_side(page, side, rep, run_dir, a.quick, a.publish, passes)
                     if got is None:
-                        break
+                        errors.append(err)
+                        continue
                     doc = json.loads(page.json(got).read_text())
                     if side is candidate:
                         cand_runs.append(doc)
@@ -846,8 +850,9 @@ def cmd_run(a: argparse.Namespace) -> None:
                     else:
                         base_runs.append(doc)
                         base_prefix = got
-                if res.error:
+                if errors:
                     break
+            res.error = "; ".join(errors)
             if base_runs and not res.error:
                 shutil.rmtree(cache, ignore_errors=True)
                 cache.mkdir(parents=True)
