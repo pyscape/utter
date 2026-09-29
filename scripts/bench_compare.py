@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run benchmark pages against a baseline build and a candidate build, and rank what drifted.
 
-    python scripts/bench_compare.py run [--pages speech-commands,word-times] [--quick] \\
-        [--baseline v0.0.4] [--reps 3] [--no-timing] [--publish]
-    python scripts/bench_compare.py report OLD_DIR NEW_DIR [--pages ...]
+    python scripts/bench_compare.py run [--pages speech-commands,word-times] [--only PAGE:PATH] [--quick] \\
+        [--baseline v0.0.4] [--reps 3] [--no-timing] [--publish] [--dry-run]
+    python scripts/bench_compare.py list [--pages ...] [--only PAGE:PATH] [--depth N]
+    python scripts/bench_compare.py report OLD_DIR NEW_DIR [--pages ...] [--only PAGE:PATH]
 
 The candidate is this checkout as it stands, uncommitted edits included. Each page's baseline is
 the release docs/benchmarks/drift.toml names for it, or --baseline for every page. Both sides run
@@ -13,6 +14,10 @@ A page's measured figures are deterministic, so a baseline run is cached and reu
 scripts and the page's arguments are unchanged. Its timing figures are not: with timing on, the
 baseline is run again beside the candidate, alternating, --reps times each, and a timing slip
 counts only beyond the spread of those runs. --no-timing reuses the cache and leaves timing out.
+
+--only names figures, speech-commands:steady_state.utterpy.rtf say, and ranks only those; list
+prints the names. A page whose script can skip passes (speech-commands, decoder-diagnostics' beam
+sweep) runs only the passes the figures need.
 
 --quick runs each page on a fixed subset, minutes rather than an hour; a quick run is compared
 only with a quick baseline. Outputs go under ~/Repos/utter-bench-data/compare; docs/benchmarks
@@ -85,6 +90,9 @@ class Page:
     steps: Callable[["Ctx"], list[Step]]
     json: Callable[[Path], Path] = lambda p: p.with_suffix(".json")
     clips: Callable[[Path], Path] = lambda p: p.with_suffix(".clips.jsonl")
+    # The pass that writes each top-level JSON key, for pages whose script can skip passes; a key
+    # not named here is written by a pass that always runs.
+    passes: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -94,6 +102,7 @@ class Ctx:
     side: Side
     quick: bool
     sibling_inputs: Path  # where this side's other pages are, for pages that read them
+    passes: frozenset[str] | None = None  # None runs every pass
 
 
 def common() -> list[str]:
@@ -111,6 +120,8 @@ def speech_commands(c: Ctx) -> list[Step]:
         ["--limit", "20", "--steady-state-clips", "100", "--snr-clips", "200", "--grammar-clips", "100",
          "--endpoint-clips", "200", "--wordless-clips", "30", "--block-clips", "100", "--determinism-clips", "300"],
     )  # fmt: skip
+    if c.passes is not None:
+        argv += ["--passes", ",".join(sorted(c.passes))]
     return [Step("speech_commands.py", argv, "speech-commands")]
 
 
@@ -153,6 +164,8 @@ def decoder_diagnostics(c: Ctx) -> list[Step]:
     argv += pick(
         c.quick, ["--limit", "20", "--probe-clips", "50", "--sweep-clips", "200", "--steady-state-clips", "100"]
     )
+    if c.passes is not None and "beam_sweep" not in c.passes:
+        argv += ["--beam-sweep", ""]
     return [Step("decoder_diagnostics.py", argv, "decoder-diagnostics")]
 
 
@@ -182,15 +195,24 @@ def sound_rating(c: Ctx) -> list[Step]:
     return [Step("sound_rating.py", argv + pick(c.quick, ["--limit", "2000", "--level-clips", "200"]), "sound-rating")]
 
 
+SPEECH_COMMANDS_PASSES = ("full", "determinism", "endpoint", "block_size", "steady_state", "snr", "grammar_size",
+                          "twelve", "noise", "wordless")  # fmt: skip
+
 # In the order a full run takes them: decoder-diagnostics reads the two pages before it.
 PAGES = {
     p.name: p
     for p in (
-        Page("speech-commands", "wheel", (36, 6), speech_commands),
+        Page(
+            "speech-commands",
+            "wheel",
+            (36, 6),
+            speech_commands,
+            passes={k: k for k in SPEECH_COMMANDS_PASSES} | {"agreement": "full", "significance": "full"},
+        ),  # fmt: skip
         Page("partial-trust", "wheel", (5, 1), partial_trust),
         Page("word-times", "wheel", (7, 1), word_times),
         Page("quiet-onsets", "wheel", (3, 1), quiet_onsets),
-        Page("decoder-diagnostics", "wheel", (15, 3), decoder_diagnostics),
+        Page("decoder-diagnostics", "wheel", (15, 3), decoder_diagnostics, passes={"beam_sweep": "beam_sweep"}),
         Page("partial-states", "wheel", (36, 10), partial_states),
         Page("speaker-evidence", "lib", (27, 6), speaker_evidence),
         Page("sound-rating", "lib", (5, 1), sound_rating),
@@ -351,13 +373,48 @@ def run_page(page: Page, ctx: Ctx, logs: Path) -> tuple[bool, float, str]:
     return True, time.monotonic() - start, ""
 
 
-def run_side(page: Page, side: Side, rep: int, run_dir: Path, quick: bool, publish: bool) -> tuple[Path | None, str]:
+def parse_only(specs: Sequence[str]) -> list[tuple[str, list[str]]]:
+    """--only's page:path patterns; a path is dotted segments, each a glob, and names its subtree."""
+    out = []
+    for spec in specs:
+        for item in spec.split(","):
+            if not item.strip():
+                continue
+            page, _, path = item.strip().rpartition(":")
+            out.append((page or "*", [seg for seg in path.split(".") if seg]))
+    return out
+
+
+def only_for(only: Sequence[tuple[str, list[str]]], page: str) -> list[list[str]] | None:
+    """The patterns that apply to a page, or None when --only was not given."""
+    if not only:
+        return None
+    return [path for p, path in only if fnmatch.fnmatchcase(page, p)]
+
+
+def needed_passes(page: Page, patterns: list[list[str]] | None) -> frozenset[str] | None:
+    """The passes a page must run for the figures asked for; None when every pass is needed."""
+    if patterns is None or not page.passes:
+        return None
+    needed = set()
+    for path in patterns:
+        if not path or any(ch in path[0] for ch in "*?["):
+            return None
+        if path[0] in page.passes:
+            needed.add(page.passes[path[0]])
+    return frozenset(needed)
+
+
+def run_side(
+    page: Page, side: Side, rep: int, run_dir: Path, quick: bool, publish: bool, passes: frozenset[str] | None
+) -> tuple[Path | None, str]:
     """One run of a page on one side: where its outputs are, or why there are none."""
     label = f"{side.label}-{rep}"
     prefix, sib = run_dir / label / page.name, run_dir / label
     if publish and side.label == "candidate":
         prefix, sib = DOCS / page.name, DOCS
-    ok, secs, err = run_page(page, Ctx(prefix, run_dir / label, side, quick, sib), run_dir / "logs" / str(rep))
+    ctx = Ctx(prefix, run_dir / label, side, quick, sib, passes)
+    ok, secs, err = run_page(page, ctx, run_dir / "logs" / str(rep))
     print(f"  {label} {'done' if ok else 'FAILED'} in {secs / 60:.1f} min", flush=True)
     return (prefix, "") if ok else (None, f"{side.label} run failed: {err}")
 
@@ -477,13 +534,17 @@ class PageResult:
 
 
 def judge(page: str, base_runs: Sequence[Mapping[str, Any]], cand_runs: Sequence[Mapping[str, Any]],
-          rules: Sequence[Rule], default: Rule, timing: bool) -> PageResult:  # fmt: skip
+          rules: Sequence[Rule], default: Rule, timing: bool,
+          only: list[list[str]] | None = None) -> PageResult:  # fmt: skip
     res = PageResult(page, "")
     bases = [figures(d) for d in base_runs]
     cands = [figures(d) for d in cand_runs]
     res.timing_reps = min(len(bases), len(cands))
     for path in sorted(set(bases[0]) | set(cands[0])):
         rule = rule_for(rules, default, page, path)
+        # Inputs and the oracle are checked whatever --only names: they say whether the rest compares.
+        if only is not None and rule.kind not in ("input", "oracle") and not any(match(p + ["**"], path) for p in only):
+            continue
         if rule.kind == "ignore" or (rule.kind == "timing" and not timing):
             res.ignored += 1
             continue
@@ -656,10 +717,14 @@ def to_json(results: Sequence[PageResult]) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------- commands
 
 
-def selected(arg: str | None) -> list[Page]:
-    if not arg:
-        return list(PAGES.values())
-    names = [n.strip() for n in arg.split(",") if n.strip()]
+def selected(arg: str | None, only: Sequence[tuple[str, list[str]]] = ()) -> list[Page]:
+    """--pages, or when it is not given, the pages --only names, or every page."""
+    names = [n.strip() for n in (arg or "").split(",") if n.strip()]
+    if not names:
+        named = [page for page, _ in only if page != "*"]
+        if not named or len(named) < len(only):
+            return list(PAGES.values())
+        names = [n for n in PAGES if any(fnmatch.fnmatchcase(n, pat) for pat in named)]
     unknown = [n for n in names if n not in PAGES]
     if unknown:
         raise SystemExit(f"no page {', '.join(unknown)}; the pages are {', '.join(PAGES)}")
@@ -667,7 +732,8 @@ def selected(arg: str | None) -> list[Page]:
 
 
 def cmd_run(a: argparse.Namespace) -> None:
-    pages = selected(a.pages)
+    only = parse_only(a.only or [])
+    pages = selected(a.pages, only)
     rules, defaults, baselines = load_rules()
     work = Path(a.work)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -678,10 +744,15 @@ def cmd_run(a: argparse.Namespace) -> None:
             raise SystemExit("--publish takes a full run")
         if candidate.revision.endswith("-dirty"):
             raise SystemExit("--publish takes a clean checkout; commit first")
+        if only:
+            raise SystemExit("--publish takes whole pages, not --only")
 
     plan: list[tuple[Page, str]] = []
     missing: list[str] = []
     for p in pages:
+        if only and not only_for(only, p.name):
+            print(f"skipping {p.name} (--only names nothing on it)")
+            continue
         rev = a.baseline or baselines.get(p.name, baselines.get("default", "v0.0.4"))
         try:
             git("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}")
@@ -698,13 +769,15 @@ def cmd_run(a: argparse.Namespace) -> None:
     total = sum(p.minutes[1 if a.quick else 0] * (1 + (0 if a.no_timing else 1)) * reps for p, _ in plan)
     if not a.ignore_quiet_window and (why := quiet_window_block(total)):
         raise SystemExit(f"not starting: {why}")
-    print(f"run {run_dir}; about {total:.0f} min if nothing is cached", flush=True)
+    print(f"run {run_dir}; at most about {total:.0f} min if nothing is cached", flush=True)
     if a.dry_run:
         for page, rev in plan:
             placeholder = Side("candidate", REPO, candidate.revision, BENCH / "SITE", BENCH / "LIB.so")
+            passes = needed_passes(page, only_for(only, page.name))
             ctx = Ctx(run_dir / "candidate-1" / page.name, run_dir / "candidate-1", placeholder, a.quick,
-                      run_dir / "candidate-1")  # fmt: skip
-            print(f"{page.name}: baseline {rev}, binding {page.binding}")
+                      run_dir / "candidate-1", passes)  # fmt: skip
+            shown = "every pass" if passes is None else "passes " + (", ".join(sorted(passes)) or "that always run")
+            print(f"{page.name}: baseline {rev}, binding {page.binding}, {shown}")
             for step in page.steps(ctx):
                 print(f"  {step.script} {' '.join(step.argv)}")
         return
@@ -738,7 +811,10 @@ def cmd_run(a: argparse.Namespace) -> None:
         ensure_candidate(page.binding)
         res = PageResult(page.name, f"{rev} ({short(base.revision)})")
         results.append(res)
-        key = hashlib.sha256(f"{page.name}|{mode}|{base.revision}|{digest}".encode()).hexdigest()[:16]
+        patterns = only_for(only, page.name)
+        passes = needed_passes(page, patterns)
+        ran = "all" if passes is None else ",".join(sorted(passes))
+        key = hashlib.sha256(f"{page.name}|{mode}|{ran}|{base.revision}|{digest}".encode()).hexdigest()[:16]
         cache = work / "cache" / key
         base_runs: list[dict[str, Any]] = []
         cand_runs: list[dict[str, Any]] = []
@@ -748,7 +824,7 @@ def cmd_run(a: argparse.Namespace) -> None:
             print("  baseline from cache", flush=True)
             base_prefix = cache / page.name
             base_runs.append(json.loads(page.json(base_prefix).read_text()))
-            got, res.error = run_side(page, candidate, 1, run_dir, a.quick, a.publish)
+            got, res.error = run_side(page, candidate, 1, run_dir, a.quick, a.publish, passes)
             if got:
                 cand_prefix = got
                 cand_runs.append(json.loads(page.json(got).read_text()))
@@ -758,7 +834,7 @@ def cmd_run(a: argparse.Namespace) -> None:
                 for side in order:
                     if a.publish and side is candidate and rep > 1:
                         continue
-                    got, res.error = run_side(page, side, rep, run_dir, a.quick, a.publish)
+                    got, res.error = run_side(page, side, rep, run_dir, a.quick, a.publish, passes)
                     if got is None:
                         break
                     doc = json.loads(page.json(got).read_text())
@@ -777,7 +853,7 @@ def cmd_run(a: argparse.Namespace) -> None:
                     shutil.copy2(f, cache / f.name)
         if res.error or not base_runs or not cand_runs:
             continue
-        judged = judge(page.name, base_runs, cand_runs, rules, defaults["default"], not a.no_timing)
+        judged = judge(page.name, base_runs, cand_runs, rules, defaults["default"], not a.no_timing, patterns)
         judged.baseline = res.baseline
         judged.clips_moved = clips_moved(page.clips(base_prefix), page.clips(cand_prefix))
         results[-1] = judged
@@ -798,12 +874,15 @@ def cmd_report(a: argparse.Namespace) -> None:
     rules, defaults, _ = load_rules()
     old, new = Path(a.old), Path(a.new)
     results = []
-    for page in selected(a.pages):
+    only = parse_only(a.only or [])
+    for page in selected(a.pages, only):
+        if only and not only_for(only, page.name):
+            continue
         bo, bn = page.json(old / page.name), page.json(new / page.name)
         if not (bo.exists() and bn.exists()):
             continue
         r = judge(page.name, [json.loads(bo.read_text())], [json.loads(bn.read_text())], rules,
-                  defaults["default"], a.timing)  # fmt: skip
+                  defaults["default"], a.timing, only_for(only, page.name))  # fmt: skip
         r.baseline = str(old)
         r.clips_moved = clips_moved(page.clips(old / page.name), page.clips(new / page.name))
         results.append(r)
@@ -812,11 +891,52 @@ def cmd_report(a: argparse.Namespace) -> None:
     print(render(results, f"{old} -> {new}", a.timing), end="")
 
 
+def cmd_list(a: argparse.Namespace) -> None:
+    """The figures a page reports, by the names --only takes, from the pages in docs/benchmarks."""
+    rules, defaults, _ = load_rules()
+    only = parse_only(a.only or [])
+    for page in selected(a.pages, only):
+        patterns = only_for(only, page.name)
+        if only and not patterns:
+            continue
+        path = page.json(Path(a.dir) / page.name)
+        if not path.exists():
+            print(f"{page.name}: no {path}")
+            continue
+        figs = figures(json.loads(path.read_text()))
+        if patterns is not None:
+            figs = {k: v for k, v in figs.items() if any(match(p + ["**"], k) for p in patterns)}
+        depth = a.depth or (0 if patterns else 1)
+        print(f"{page.name}  ({len(figs)} figures)")
+        if depth:
+            groups: dict[tuple[str, ...], int] = {}
+            for k in figs:
+                groups[k[:depth]] = groups.get(k[:depth], 0) + 1
+            for k, n in groups.items():
+                one = n == 1 and k in figs
+                print(f"  {page.name}:{'.'.join(k)}" + (f" = {fmt(figs[k])}" if one else f"  ({n})"))
+            continue
+        for k, v in figs.items():
+            r = rule_for(rules, defaults["default"], page.name, k)
+            how = (
+                r.kind
+                if r.kind in ("input", "oracle", "ignore")
+                else f"{r.kind}, better {r.better}, weight {fmt(r.weight)}"
+            )
+            print(f"  {page.name}:{'.'.join(k)} = {fmt(v)}  ({how})")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="build both sides, run the pages, rank the drift")
     r.add_argument("--pages", help=f"comma-separated, from {', '.join(PAGES)}; all by default")
+    r.add_argument(
+        "--only",
+        action="append",
+        help="figures to rank, as page:path with dotted glob segments (speech-commands:steady_state.utterpy); "
+        "repeatable or comma-separated; a page whose script can skip passes runs only those the figures need",
+    )
     r.add_argument("--quick", action="store_true", help="each page on a fixed subset")
     r.add_argument("--baseline", help="one revision for every page instead of drift.toml's per-page releases")
     r.add_argument("--reps", type=int, default=1, help="runs a side, alternating; 2 or more gives timing a spread")
@@ -827,10 +947,19 @@ def main() -> None:
     r.add_argument("--work", default=str(BENCH / "compare"))
     r.add_argument("--ignore-quiet-window", action="store_true", help="the owner's call only")
     r.set_defaults(func=cmd_run)
+    ls = sub.add_parser("list", help="name the figures a page reports, to hand to --only")
+    ls.add_argument("--pages")
+    ls.add_argument("--only", action="append", help="the figures to list, as for run")
+    ls.add_argument(
+        "--depth", type=int, default=0, help="group by this many path segments; 1 by default, leaves under --only"
+    )
+    ls.add_argument("--dir", default=str(DOCS), help="the pages to read (docs/benchmarks)")
+    ls.set_defaults(func=cmd_list)
     p = sub.add_parser("report", help="rank the drift between two directories of page outputs")
     p.add_argument("old")
     p.add_argument("new")
     p.add_argument("--pages")
+    p.add_argument("--only", action="append", help="figures to rank, as for run")
     p.add_argument("--timing", action="store_true", help="rank timing figures too; single runs, no spread")
     p.set_defaults(func=cmd_report)
     a = ap.parse_args()
