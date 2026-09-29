@@ -68,7 +68,6 @@ WORD = "one word"
 CLEAN = "clean"
 FALSE_ACCEPT = 0.01
 FALSE_REJECT = 0.01
-VCTK_ROOT = "VCTK-Corpus-0.92"
 
 
 def samples(pcm: bytes) -> Samples:
@@ -300,10 +299,10 @@ class Vctk:
         self.prompts: dict[str, dict[str, str]] = {}
         audio = set()
         for n in self.z.namelist():
-            m = re.fullmatch(rf"{VCTK_ROOT}/txt/(p\d+|s\d+)/(\1_\d+)\.txt", n)
+            m = re.fullmatch(r"txt/(p\d+|s\d+)/(\1_\d+)\.txt", n)
             if m:
                 self.prompts.setdefault(m[1], {})[m[2]] = n
-            m = re.fullmatch(rf"{VCTK_ROOT}/wav48_silence_trimmed/(p\d+|s\d+)/((\1_\d+)_mic1)\.flac", n)
+            m = re.fullmatch(r"wav48_silence_trimmed/(p\d+|s\d+)/((\1_\d+)_mic1)\.flac", n)
             if m:
                 audio.add(m[3])
         self.prompts = {s: {u: n for u, n in us.items() if u in audio} for s, us in sorted(self.prompts.items())}
@@ -315,7 +314,7 @@ class Vctk:
 
     def pcm(self, utt: str) -> bytes:
         spk = utt.split("_")[0]
-        flac = self.z.read(f"{VCTK_ROOT}/wav48_silence_trimmed/{spk}/{utt}_mic1.flac")
+        flac = self.z.read(f"wav48_silence_trimmed/{spk}/{utt}_mic1.flac")
         done = subprocess.run(
             ["sox", "-q", "-t", "flac", "-", "-t", "raw", "-r", str(RATE), "-b", "16", "-c", "1", "-e", "signed", "-"],
             input=flac,
