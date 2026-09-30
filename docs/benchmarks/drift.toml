@@ -1392,7 +1392,11 @@ weight = 1
 
 [[rule]]
 page = "speaker-[nv]*"
-path = ["result", "{conditions,speakers,rooms,room_draws,evidence_seconds}", "**"]
+path = [
+  "result",
+  "{conditions,speakers,rooms,room_draws,evidence_seconds}",
+  "**",
+]
 kind = "input"
 
 [[rule]]
@@ -1424,7 +1428,12 @@ weight = 5
 
 [[rule]]
 page = "speaker-[nv]*"
-path = ["result", "table", "**", "{band_own,band_other,false_accept,false_reject}"]
+path = [
+  "result",
+  "table",
+  "**",
+  "{band_own,band_other,false_accept,false_reject}",
+]
 better = "down"
 tol = 0.01
 weight = 3
