@@ -78,17 +78,21 @@ See the [result fields](docs/reference/results.md#the-partial-result) and
 
 ### Know who spoke each word
 
-With Vosk's speaker model set, every word of every partial and final
-carries a speaker vector over its own span, so a host can gate a
-command on who said it, word by word, before the utterance ends. The
-stock recognizer computes one vector per final over the whole
-utterance, and none under half a second of speech. In the [speaker
-benchmark](docs/benchmarks/speaker-evidence.md), one word names its
-speaker among two enrolled speakers 95.4% of the time with utter and
-48.4% with the stock wheel, and utter's evidence reaches a partial a
-median 40 ms after the word ends. One word is weak evidence for a
-strict gate; the page measures how much speech a gate needs. See the
-[speaker evidence fields](docs/reference/results.md#speaker-evidence).
+Set a speaker model and every word of every partial and final carries
+a speaker vector over its own span, so a host can gate a command on who
+said it, word by word, before the utterance ends. The stock recognizer
+computes one vector per final over the whole utterance, and none under
+half a second of speech.
+
+utter takes two speaker models. On 16 kHz audio, use TitaNet-small,
+converted once from NVIDIA's published export. In the [speaker
+benchmark](docs/benchmarks/speaker-evidence.md), one word clears a gate
+at 1% false accept 81.2% of the time, against 41.6% for Vosk's x-vector
+model, and its evidence reaches a partial a median 80 ms after the word
+ends, computed on a thread of the recognizer's own. The x-vector,
+vosk-model-spk-0.4, is for audio below 16 kHz. See [setting up
+TitaNet-small](#speaker-evidence) and the [speaker evidence
+fields](docs/reference/results.md#speaker-evidence).
 
 ### Build and ship on every platform
 
@@ -232,6 +236,41 @@ without reaching GitHub:
 ```bash
 gh attestation verify utter-linux-x86_64.tar.gz --bundle utter-v0.0.3.sigstore.json --owner pyscape
 ```
+
+### Speaker evidence
+
+TitaNet-small comes from sherpa-onnx's export of NVIDIA's NeMo model,
+under the NeMo toolkit's Apache 2.0 license. Convert it once with
+[scripts/titanet_convert.py](scripts/titanet_convert.py), which needs
+onnx and numpy; utter reads the result with neither:
+
+```bash
+curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx
+echo "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e  nemo_en_titanet_small.onnx" | sha256sum --check
+curl -LO https://raw.githubusercontent.com/pyscape/utter/main/scripts/titanet_convert.py
+pip install onnx numpy
+python titanet_convert.py nemo_en_titanet_small.onnx titanet-small
+```
+
+Then give the directory to the recognizer as a speaker model:
+
+```python
+spk = utterpy.SpkModel("titanet-small")
+rec = utterpy.KaldiRecognizer(model, 16000, grammar, spk_model=spk)
+```
+
+```rust
+let spk = utter::SpeakerModel::open(Path::new("titanet-small"))?;
+rec.set_spk_model(Some(&spk))?;
+```
+
+In C, utter_spk_model_new and utter_recognizer_set_spk_model. The same
+calls open vosk-model-spk-0.4 unzipped. The recognizer embeds on a
+thread of its own; set_spk_threads(false) in Rust, or
+utter_recognizer_set_spk_threads in C, keeps it on the caller's thread,
+with evidence later. The [TitaNet-small
+fields](docs/reference/results.md#titanet-small) say how its evidence
+differs from the x-vector's.
 
 ## Where next
 
