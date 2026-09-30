@@ -1,0 +1,196 @@
+{
+ "provenance": {
+  "date": "2026-09-30 09:21:17Z",
+  "utter_revision": "ca5450e",
+  "source_dirty": false,
+  "docs_dirty": true,
+  "wheel_path": "python/utterpy/__init__.py",
+  "wheel_revision": "f07e6b4bdfda51c1ddbb1001746c37806a763ad8",
+  "wheel_matches_head": false,
+  "engines": {
+   "numpy": "2.5.3"
+  },
+  "model": "vosk-model-small-en-us-0.15",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
+  "python": "3.14.4",
+  "block_ms": 40
+ },
+ "args": {
+  "set": "vctk",
+  "model": "vosk-model-small-en-us-0.15",
+  "titanet": "titanet-small",
+  "lib": "libutter-v0.0.6.so",
+  "out": "docs/benchmarks/speaker-vctk",
+  "enroll": 10,
+  "probes": 10,
+  "streams": 3,
+  "limit_speakers": 0,
+  "block_ms": 40,
+  "seed": 14,
+  "vctk": "VCTK-Corpus-0.92.zip"
+ },
+ "seconds": 156.63692107600218,
+ "result": {
+  "speakers": 109,
+  "enrolled": {
+   "recognizer": 109,
+   "embed()": 109
+  },
+  "enrolment": {
+   "words": 7411,
+   "with_evidence": 3438
+  },
+  "probes": {
+   "clean": {
+    "words": 7491,
+    "with_evidence": 3565
+   }
+  },
+  "evidence_seconds": 2975.6650000000004,
+  "conditions": [
+   "clean"
+  ],
+  "table": {
+   "one word": {
+    "clean": {
+     "recognizer": {
+      "items": 7491,
+      "no_evidence": 0.5240955813643038,
+      "eer": 0.06507713884992986,
+      "accepted_own": 0.37471632625817647,
+      "accepted": 0.37471632625817647,
+      "false_accept": 0.010002077814139525,
+      "false_reject": 0.010098176718092567,
+      "band_own": 0.20252454417952315,
+      "band_other": 0.2839177185600748,
+      "gate": {
+       "accept": 0.4609542599758227,
+       "reject": 0.23211695451375514
+      }
+     },
+     "embed()": {
+      "items": 7491,
+      "no_evidence": 0.5240955813643038,
+      "eer": 0.06507713884992986,
+      "accepted_own": 0.37471632625817647,
+      "accepted": 0.37471632625817647,
+      "false_accept": 0.010002077814139525,
+      "false_reject": 0.010098176718092567,
+      "band_own": 0.20252454417952315,
+      "band_other": 0.2839229130954236,
+      "gate": {
+       "accept": 0.460954627303113,
+       "reject": 0.23211662630042562
+      }
+     }
+    }
+   },
+   "0.5 s": {
+    "clean": {
+     "recognizer": {
+      "items": 327,
+      "no_evidence": 0.0,
+      "eer": 0.02430909502774945,
+      "accepted_own": 0.9388379204892966,
+      "accepted": 0.9388379204892966,
+      "false_accept": 0.010023785253143052,
+      "false_reject": 0.012232415902140673,
+      "band_own": 0.04892966360856269,
+      "band_other": 0.027721146222675276,
+      "gate": {
+       "accept": 0.5084950105096324,
+       "reject": 0.4340168294797916
+      }
+     },
+     "embed()": {
+      "items": 327,
+      "no_evidence": 0.0,
+      "eer": 0.01604088798278403,
+      "accepted_own": 0.9785932721712538,
+      "accepted": 0.9785932721712538,
+      "false_accept": 0.010023785253143052,
+      "false_reject": 0.012232415902140673,
+      "band_own": 0.009174311926605505,
+      "band_other": 0.012430626344999434,
+      "gate": {
+       "accept": 0.4890896476225032,
+       "reject": 0.4491226776533644
+      }
+     }
+    }
+   },
+   "1 s": {
+    "clean": {
+     "recognizer": {
+      "items": 327,
+      "no_evidence": 0.0,
+      "eer": 0.006130365839845978,
+      "accepted_own": 0.9969418960244648,
+      "accepted": 0.9969418960244648,
+      "false_accept": 0.010023785253143052,
+      "false_reject": 0.012232415902140673,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.5376767772041711,
+       "reject": 0.5690137441183963
+      }
+     },
+     "embed()": {
+      "items": 327,
+      "no_evidence": 0.0,
+      "eer": 0.0037376826367652065,
+      "accepted_own": 1.0,
+      "accepted": 1.0,
+      "false_accept": 0.010023785253143052,
+      "false_reject": 0.012232415902140673,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4974572704006333,
+       "reject": 0.5609065802123363
+      }
+     }
+    }
+   },
+   "2 s": {
+    "clean": {
+     "recognizer": {
+      "items": 327,
+      "no_evidence": 0.0,
+      "eer": 0.002831577755125149,
+      "accepted_own": 1.0,
+      "accepted": 1.0,
+      "false_accept": 0.010023785253143052,
+      "false_reject": 0.012232415902140673,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.5689397155829904,
+       "reject": 0.6938716137668742
+      }
+     },
+     "embed()": {
+      "items": 327,
+      "no_evidence": 0.0,
+      "eer": 0.0002973156642881447,
+      "accepted_own": 1.0,
+      "accepted": 1.0,
+      "false_accept": 0.010023785253143052,
+      "false_reject": 0.012232415902140673,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.501408324156557,
+       "reject": 0.6352301861558695
+      }
+     }
+    }
+   }
+  },
+  "utter": {
+   "version": "0.0.6",
+   "revision": "acbbefd7acbe09185ee6b0dd5d5cd63e35ad9057"
+  }
+ }
+}

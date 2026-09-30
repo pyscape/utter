@@ -42,6 +42,8 @@ weight = 1
 default = "v0.0.4"
 speaker-evidence = "v0.0.5"
 sound-rating = "v0.0.6"
+speaker-noise = "v0.0.6"
+speaker-vctk = "v0.0.6"
 
 # A section is a page's top-level key, or the key under "result" where a page
 # nests its figures there.
@@ -178,6 +180,27 @@ speaker-evidence = [
   "result.latency",
 ]
 sound-rating = ["seconds", "result.words", "result.level", "result.sounds"]
+speaker-noise = [
+  "seconds",
+  "result.conditions",
+  "result.speakers",
+  "result.rooms",
+  "result.room_draws",
+  "result.enrolment",
+  "result.enrolled",
+  "result.probes",
+  "result.table",
+]
+speaker-vctk = [
+  "seconds",
+  "result.conditions",
+  "result.speakers",
+  "result.evidence_seconds",
+  "result.enrolment",
+  "result.enrolled",
+  "result.probes",
+  "result.table",
+]
 
 # ------------------------------------------------- before the general rules
 
@@ -1361,5 +1384,62 @@ note = "the example rule's confusion; which cell is right depends on the event r
 [[rule]]
 page = "sound-rating"
 path = ["result", "{words,level,sounds}", "**"]
+tol = 0.01
+weight = 1
+
+# ------------------------------------------- speaker-noise and speaker-vctk
+# "speaker-[nv]*" is the two condition pages, not speaker-evidence.
+
+[[rule]]
+page = "speaker-[nv]*"
+path = [
+  "result",
+  "{conditions,speakers,rooms,room_draws,evidence_seconds}",
+  "**",
+]
+kind = "input"
+
+[[rule]]
+page = "speaker-[nv]*"
+path = ["result", "table", "**", "gate", "*"]
+kind = "ignore"
+note = "fitted thresholds"
+
+[[rule]]
+page = "speaker-[nv]*"
+path = ["result", "table", "**", "eer"]
+better = "down"
+tol = 0.005
+weight = 6
+
+[[rule]]
+page = "speaker-[nv]*"
+path = ["result", "table", "**", "accepted*"]
+better = "up"
+tol = 0.01
+weight = 6
+
+[[rule]]
+page = "speaker-[nv]*"
+path = ["result", "table", "**", "no_evidence"]
+better = "down"
+tol = 0.005
+weight = 5
+
+[[rule]]
+page = "speaker-[nv]*"
+path = [
+  "result",
+  "table",
+  "**",
+  "{band_own,band_other,false_accept,false_reject}",
+]
+better = "down"
+tol = 0.01
+weight = 3
+
+[[rule]]
+page = "speaker-[nv]*"
+path = ["result", "{enrolment,enrolled,probes,table}", "**"]
 tol = 0.01
 weight = 1

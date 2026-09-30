@@ -1,0 +1,611 @@
+{
+ "provenance": {
+  "date": "2026-09-30 09:18:40Z",
+  "utter_revision": "ca5450e",
+  "source_dirty": false,
+  "docs_dirty": false,
+  "wheel_path": "python/utterpy/__init__.py",
+  "wheel_revision": "f07e6b4bdfda51c1ddbb1001746c37806a763ad8",
+  "wheel_matches_head": false,
+  "engines": {
+   "numpy": "2.5.3"
+  },
+  "model": "vosk-model-small-en-us-0.15",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
+  "python": "3.14.4",
+  "block_ms": 40
+ },
+ "args": {
+  "set": "noise",
+  "model": "vosk-model-small-en-us-0.15",
+  "titanet": "titanet-small",
+  "lib": "libutter-v0.0.6.so",
+  "out": "docs/benchmarks/speaker-noise",
+  "enroll": 10,
+  "probes": 10,
+  "streams": 3,
+  "limit_speakers": 0,
+  "block_ms": 40,
+  "seed": 14,
+  "data": "speech_commands_v0.02",
+  "min_clips": 20
+ },
+ "seconds": 234.9391474830045,
+ "result": {
+  "speakers": 210,
+  "enrolled": {
+   "recognizer": 210,
+   "embed()": 210
+  },
+  "enrolment": {
+   "words": 2037,
+   "with_evidence": 1835
+  },
+  "probes": {
+   "clean": {
+    "words": 2043,
+    "with_evidence": 1833
+   },
+   "20 dB": {
+    "words": 1981,
+    "with_evidence": 1758
+   },
+   "10 dB": {
+    "words": 1722,
+    "with_evidence": 1481
+   },
+   "5 dB": {
+    "words": 1330,
+    "with_evidence": 1097
+   }
+  },
+  "rooms": {
+   "doing_the_dishes": 95.183125,
+   "dude_miaowing": 61.8056875,
+   "exercise_bike": 61.253875,
+   "pink_noise": 60.0,
+   "running_tap": 61.1555,
+   "white_noise": 60.0
+  },
+  "room_draws": {
+   "doing_the_dishes": 357,
+   "dude_miaowing": 381,
+   "exercise_bike": 356,
+   "pink_noise": 363,
+   "running_tap": 323,
+   "white_noise": 320
+  },
+  "conditions": [
+   "clean",
+   "20 dB",
+   "10 dB",
+   "5 dB"
+  ],
+  "table": {
+   "one word": {
+    "clean": {
+     "recognizer": {
+      "items": 2043,
+      "no_evidence": 0.1027900146842878,
+      "eer": 0.04788473937410109,
+      "accepted_own": 0.7767988252569751,
+      "accepted": 0.7767988252569751,
+      "false_accept": 0.010000078309148858,
+      "false_reject": 0.010365521003818877,
+      "band_own": 0.12384069830878341,
+      "band_other": 0.20575989892899188,
+      "gate": {
+       "accept": 0.4162303648867559,
+       "reject": 0.21153053072944392
+      }
+     },
+     "embed()": {
+      "items": 2043,
+      "no_evidence": 0.1027900146842878,
+      "eer": 0.04788473937410109,
+      "accepted_own": 0.7767988252569751,
+      "accepted": 0.7767988252569751,
+      "false_accept": 0.010000078309148858,
+      "false_reject": 0.010365521003818877,
+      "band_own": 0.12384069830878341,
+      "band_other": 0.20575989892899188,
+      "gate": {
+       "accept": 0.41623040142869827,
+       "reject": 0.21153028253947254
+      }
+     }
+    },
+    "20 dB": {
+     "recognizer": {
+      "items": 1981,
+      "no_evidence": 0.11256940938919738,
+      "eer": 0.07849829351535834,
+      "accepted_own": 0.6355376072690561,
+      "accepted": 0.6052498738011105,
+      "false_accept": 0.0076206650663270025,
+      "false_reject": 0.030147895335608646,
+      "band_own": 0.28782707622298065,
+      "band_other": 0.17516370821562127,
+      "gate": {
+       "accept": 0.4162303648867559,
+       "reject": 0.21153053072944392
+      }
+     },
+     "embed()": {
+      "items": 1981,
+      "no_evidence": 0.11256940938919738,
+      "eer": 0.07849829351535834,
+      "accepted_own": 0.6355376072690561,
+      "accepted": 0.6047450782433115,
+      "false_accept": 0.007617943400231886,
+      "false_reject": 0.030147895335608646,
+      "band_own": 0.2883959044368601,
+      "band_other": 0.17513921322076523,
+      "gate": {
+       "accept": 0.41623040142869827,
+       "reject": 0.21153028253947254
+      }
+     }
+    },
+    "10 dB": {
+     "recognizer": {
+      "items": 1722,
+      "no_evidence": 0.13995354239256677,
+      "eer": 0.11411208642808912,
+      "accepted_own": 0.483739837398374,
+      "accepted": 0.40127758420441345,
+      "false_accept": 0.004942994032869295,
+      "false_reject": 0.08777852802160702,
+      "band_own": 0.44564483457123566,
+      "band_other": 0.14701691925473864,
+      "gate": {
+       "accept": 0.4162303648867559,
+       "reject": 0.21153053072944392
+      }
+     },
+     "embed()": {
+      "items": 1722,
+      "no_evidence": 0.13995354239256677,
+      "eer": 0.11411208642808912,
+      "accepted_own": 0.483739837398374,
+      "accepted": 0.40127758420441345,
+      "false_accept": 0.0049462247479234575,
+      "false_reject": 0.08777852802160702,
+      "band_own": 0.44564483457123566,
+      "band_other": 0.14700722710957617,
+      "gate": {
+       "accept": 0.41623040142869827,
+       "reject": 0.21153028253947254
+      }
+     }
+    },
+    "5 dB": {
+     "recognizer": {
+      "items": 1330,
+      "no_evidence": 0.17518796992481203,
+      "eer": 0.13596454881298714,
+      "accepted_own": 0.3593984962406015,
+      "accepted": 0.24812030075187969,
+      "false_accept": 0.0034151426465392786,
+      "false_reject": 0.14585232452142205,
+      "band_own": 0.5533272561531449,
+      "band_other": 0.12643006372315974,
+      "gate": {
+       "accept": 0.4162303648867559,
+       "reject": 0.21153053072944392
+      }
+     },
+     "embed()": {
+      "items": 1330,
+      "no_evidence": 0.17518796992481203,
+      "eer": 0.13594055994382243,
+      "accepted_own": 0.3593984962406015,
+      "accepted": 0.24812030075187969,
+      "false_accept": 0.00341950425911468,
+      "false_reject": 0.14676390154968094,
+      "band_own": 0.5524156791248861,
+      "band_other": 0.12640825566028271,
+      "gate": {
+       "accept": 0.41623040142869827,
+       "reject": 0.21153028253947254
+      }
+     }
+    }
+   },
+   "0.5 s": {
+    "clean": {
+     "recognizer": {
+      "items": 627,
+      "no_evidence": 0.0,
+      "eer": 0.028708133971291884,
+      "accepted_own": 0.9298245614035088,
+      "accepted": 0.9298245614035088,
+      "false_accept": 0.010004349717268378,
+      "false_reject": 0.011164274322169059,
+      "band_own": 0.05901116427432217,
+      "band_other": 0.05499721465473165,
+      "gate": {
+       "accept": 0.44150478091005096,
+       "reject": 0.3325090999765916
+      }
+     },
+     "embed()": {
+      "items": 627,
+      "no_evidence": 0.0,
+      "eer": 0.027113237639553426,
+      "accepted_own": 0.9425837320574163,
+      "accepted": 0.9425837320574163,
+      "false_accept": 0.010004349717268378,
+      "false_reject": 0.011164274322169059,
+      "band_own": 0.046251993620414676,
+      "band_other": 0.05133429484978213,
+      "gate": {
+       "accept": 0.4267173534703639,
+       "reject": 0.3217126741524
+      }
+     }
+    },
+    "20 dB": {
+     "recognizer": {
+      "items": 624,
+      "no_evidence": 0.0,
+      "eer": 0.04824944792050054,
+      "accepted_own": 0.8285256410256411,
+      "accepted": 0.8157051282051282,
+      "false_accept": 0.008434547908232119,
+      "false_reject": 0.04326923076923077,
+      "band_own": 0.14102564102564102,
+      "band_other": 0.04560790087105877,
+      "gate": {
+       "accept": 0.44150478091005096,
+       "reject": 0.3325090999765916
+      }
+     },
+     "embed()": {
+      "items": 624,
+      "no_evidence": 0.0,
+      "eer": 0.037207857931542146,
+      "accepted_own": 0.8846153846153846,
+      "accepted": 0.8413461538461539,
+      "false_accept": 0.0076370997423629,
+      "false_reject": 0.027243589743589744,
+      "band_own": 0.13141025641025642,
+      "band_other": 0.039297325481536007,
+      "gate": {
+       "accept": 0.4267173534703639,
+       "reject": 0.3217126741524
+      }
+     }
+    },
+    "10 dB": {
+     "recognizer": {
+      "items": 612,
+      "no_evidence": 0.0,
+      "eer": 0.07046470900960063,
+      "accepted_own": 0.7712418300653595,
+      "accepted": 0.6830065359477124,
+      "false_accept": 0.005003596334865685,
+      "false_reject": 0.10784313725490197,
+      "band_own": 0.20915032679738563,
+      "band_other": 0.03500953810551334,
+      "gate": {
+       "accept": 0.44150478091005096,
+       "reject": 0.3325090999765916
+      }
+     },
+     "embed()": {
+      "items": 612,
+      "no_evidence": 0.0,
+      "eer": 0.05842871438846669,
+      "accepted_own": 0.7859477124183006,
+      "accepted": 0.684640522875817,
+      "false_accept": 0.004847233949401132,
+      "false_reject": 0.09313725490196079,
+      "band_own": 0.2222222222222222,
+      "band_other": 0.02969321699971855,
+      "gate": {
+       "accept": 0.4267173534703639,
+       "reject": 0.3217126741524
+      }
+     }
+    },
+    "5 dB": {
+     "recognizer": {
+      "items": 576,
+      "no_evidence": 0.0,
+      "eer": 0.08854166666666666,
+      "accepted_own": 0.6545138888888888,
+      "accepted": 0.5,
+      "false_accept": 0.0036632775119617225,
+      "false_reject": 0.19444444444444445,
+      "band_own": 0.3055555555555556,
+      "band_other": 0.028691520467836257,
+      "gate": {
+       "accept": 0.44150478091005096,
+       "reject": 0.3325090999765916
+      }
+     },
+     "embed()": {
+      "items": 576,
+      "no_evidence": 0.0,
+      "eer": 0.07801701222753854,
+      "accepted_own": 0.6822916666666666,
+      "accepted": 0.5121527777777778,
+      "false_accept": 0.0036798910154173313,
+      "false_reject": 0.18055555555555555,
+      "band_own": 0.3072916666666667,
+      "band_other": 0.02340011961722488,
+      "gate": {
+       "accept": 0.4267173534703639,
+       "reject": 0.3217126741524
+      }
+     }
+    }
+   },
+   "1 s": {
+    "clean": {
+     "recognizer": {
+      "items": 624,
+      "no_evidence": 0.0,
+      "eer": 0.016025641025641052,
+      "accepted_own": 0.9791666666666666,
+      "accepted": 0.9791666666666666,
+      "false_accept": 0.01000644092749356,
+      "false_reject": 0.01282051282051282,
+      "band_own": 0.008012820512820512,
+      "band_other": 0.025272972641393693,
+      "gate": {
+       "accept": 0.468241806331035,
+       "reject": 0.3994968194443234
+      }
+     },
+     "embed()": {
+      "items": 624,
+      "no_evidence": 0.0,
+      "eer": 0.01583394675499941,
+      "accepted_own": 0.9791666666666666,
+      "accepted": 0.9791666666666666,
+      "false_accept": 0.01000644092749356,
+      "false_reject": 0.011217948717948718,
+      "band_own": 0.009615384615384616,
+      "band_other": 0.007506747638326585,
+      "gate": {
+       "accept": 0.43140356680937775,
+       "reject": 0.40326673826343323
+      }
+     }
+    },
+    "20 dB": {
+     "recognizer": {
+      "items": 621,
+      "no_evidence": 0.0,
+      "eer": 0.022544283413848627,
+      "accepted_own": 0.9339774557165862,
+      "accepted": 0.9210950080515298,
+      "false_accept": 0.008020710537873009,
+      "false_reject": 0.02254428341384863,
+      "band_own": 0.05636070853462158,
+      "band_other": 0.019593339959472683,
+      "gate": {
+       "accept": 0.468241806331035,
+       "reject": 0.3994968194443234
+      }
+     },
+     "embed()": {
+      "items": 621,
+      "no_evidence": 0.0,
+      "eer": 0.020933977455716575,
+      "accepted_own": 0.9677938808373591,
+      "accepted": 0.9404186795491143,
+      "false_accept": 0.006888102997942815,
+      "false_reject": 0.028985507246376812,
+      "band_own": 0.030595813204508857,
+      "band_other": 0.004391743522178305,
+      "gate": {
+       "accept": 0.43140356680937775,
+       "reject": 0.40326673826343323
+      }
+     }
+    },
+    "10 dB": {
+     "recognizer": {
+      "items": 606,
+      "no_evidence": 0.0,
+      "eer": 0.04455445544554457,
+      "accepted_own": 0.8498349834983498,
+      "accepted": 0.7871287128712872,
+      "false_accept": 0.005179465314952548,
+      "false_reject": 0.0891089108910891,
+      "band_own": 0.12376237623762376,
+      "band_other": 0.014788320937356894,
+      "gate": {
+       "accept": 0.468241806331035,
+       "reject": 0.3994968194443234
+      }
+     },
+     "embed()": {
+      "items": 606,
+      "no_evidence": 0.0,
+      "eer": 0.03776430274606409,
+      "accepted_own": 0.8811881188118812,
+      "accepted": 0.7854785478547854,
+      "false_accept": 0.004224106621188435,
+      "false_reject": 0.1485148514851485,
+      "band_own": 0.066006600660066,
+      "band_other": 0.0031187329259241715,
+      "gate": {
+       "accept": 0.43140356680937775,
+       "reject": 0.40326673826343323
+      }
+     }
+    },
+    "5 dB": {
+     "recognizer": {
+      "items": 540,
+      "no_evidence": 0.0,
+      "eer": 0.052148679780258736,
+      "accepted_own": 0.7666666666666667,
+      "accepted": 0.6037037037037037,
+      "false_accept": 0.003189792663476874,
+      "false_reject": 0.18888888888888888,
+      "band_own": 0.2074074074074074,
+      "band_other": 0.011235158603579657,
+      "gate": {
+       "accept": 0.468241806331035,
+       "reject": 0.3994968194443234
+      }
+     },
+     "embed()": {
+      "items": 540,
+      "no_evidence": 0.0,
+      "eer": 0.04304891015417332,
+      "accepted_own": 0.8240740740740741,
+      "accepted": 0.6814814814814815,
+      "false_accept": 0.003065745171008329,
+      "false_reject": 0.24259259259259258,
+      "band_own": 0.07592592592592592,
+      "band_other": 0.0024986709197235514,
+      "gate": {
+       "accept": 0.43140356680937775,
+       "reject": 0.40326673826343323
+      }
+     }
+    }
+   },
+   "2 s": {
+    "clean": {
+     "recognizer": {
+      "items": 618,
+      "no_evidence": 0.0,
+      "eer": 0.00647249190938513,
+      "accepted_own": 0.9983818770226537,
+      "accepted": 0.9983818770226537,
+      "false_accept": 0.010002942041776994,
+      "false_reject": 0.011326860841423949,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4981554036872324,
+       "reject": 0.5838995189864966
+      }
+     },
+     "embed()": {
+      "items": 618,
+      "no_evidence": 0.0,
+      "eer": 0.009708737864077667,
+      "accepted_own": 0.9902912621359223,
+      "accepted": 0.9902912621359223,
+      "false_accept": 0.010002942041776994,
+      "false_reject": 0.011326860841423949,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4297941888095848,
+       "reject": 0.44615238258265333
+      }
+     }
+    },
+    "20 dB": {
+     "recognizer": {
+      "items": 606,
+      "no_evidence": 0.0,
+      "eer": 0.013343439607118621,
+      "accepted_own": 0.9818481848184818,
+      "accepted": 0.9785478547854786,
+      "false_accept": 0.007887630868349992,
+      "false_reject": 0.11221122112211221,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4981554036872324,
+       "reject": 0.5838995189864966
+      }
+     },
+     "embed()": {
+      "items": 606,
+      "no_evidence": 0.0,
+      "eer": 0.015222574889067857,
+      "accepted_own": 0.976897689768977,
+      "accepted": 0.9653465346534653,
+      "false_accept": 0.005842689532111106,
+      "false_reject": 0.04455445544554455,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4297941888095848,
+       "reject": 0.44615238258265333
+      }
+     }
+    },
+    "10 dB": {
+     "recognizer": {
+      "items": 528,
+      "no_evidence": 0.0,
+      "eer": 0.015609141655792365,
+      "accepted_own": 0.9545454545454546,
+      "accepted": 0.9147727272727273,
+      "false_accept": 0.004993112947658402,
+      "false_reject": 0.3125,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4981554036872324,
+       "reject": 0.5838995189864966
+      }
+     },
+     "embed()": {
+      "items": 528,
+      "no_evidence": 0.0,
+      "eer": 0.018527076989995624,
+      "accepted_own": 0.9583333333333334,
+      "accepted": 0.9071969696969697,
+      "false_accept": 0.0035885167464114833,
+      "false_reject": 0.11363636363636363,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4297941888095848,
+       "reject": 0.44615238258265333
+      }
+     }
+    },
+    "5 dB": {
+     "recognizer": {
+      "items": 318,
+      "no_evidence": 0.0,
+      "eer": 0.030965062742619846,
+      "accepted_own": 0.8805031446540881,
+      "accepted": 0.7735849056603774,
+      "false_accept": 0.002964099786344076,
+      "false_reject": 0.5754716981132075,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4981554036872324,
+       "reject": 0.5838995189864966
+      }
+     },
+     "embed()": {
+      "items": 318,
+      "no_evidence": 0.0,
+      "eer": 0.019033432638199288,
+      "accepted_own": 0.9559748427672956,
+      "accepted": 0.8050314465408805,
+      "false_accept": 0.0028136378682555446,
+      "false_reject": 0.2389937106918239,
+      "band_own": 0.0,
+      "band_other": 0.0,
+      "gate": {
+       "accept": 0.4297941888095848,
+       "reject": 0.44615238258265333
+      }
+     }
+    }
+   }
+  },
+  "utter": {
+   "version": "0.0.6",
+   "revision": "acbbefd7acbe09185ee6b0dd5d5cd63e35ad9057"
+  }
+ }
+}
