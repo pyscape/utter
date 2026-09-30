@@ -24,6 +24,30 @@ is the reference.
   small models share the layout and are expected to work; each is to be
   checked against the wheel and its result recorded.
 
+### Speed
+
+On the Speech Commands page's steady state, three runs a side against
+0.0.5, 0.0.6's real-time factor is within the spread between runs,
+0.01062 to 0.01069. The median block is 3.2% slower, 0.0428 to 0.0442
+ms, and the 99th percentile block 0.068 ms slower, 2.678 to 2.746 ms
+(+2.5%); every 0.0.6 run is slower than every 0.0.5 run on both. No
+speaker model is set, so three changes are on this path: TD-17's keys,
+the float input's history (TD-13) and the heap kept back to the
+current utterance. TD-17 measured its keys at 6 to 8.5 µs a block and
+0.015 ms at the 99th percentile on its own streams,
+`[[rr:TD-17#What it costs]]`; the 99th percentile here moved about four
+times that.
+
+- [ ] Find where the 99th percentile's 0.068 ms goes: the rows TD-17
+  computes when a result is read, results about three times larger
+  than 0.0.5's (0.54 to 1.70 KiB a block on the speaker page), the
+  float history, the heap trimming, or something else on the block
+  that runs a network chunk.
+- [ ] Bring the median and 99th percentile blocks back to 0.0.5's on
+  the steady state, three runs a side, with the keys on:
+  `bench_compare.py run --only speech-commands:steady_state.utterpy
+  --baseline v0.0.5 --reps 3`.
+
 ### Direct audio input from a speaker extractor
 
 We will accept the companion library's reconstructed waveform directly
