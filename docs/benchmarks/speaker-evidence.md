@@ -1,6 +1,6 @@
 # Speaker evidence on short commands
 
-Run 2026-09-30 00:32:39Z, utter 0.0.5 from 6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a-dirty through its C ABI (checkout 6fa97d0), vosk 0.3.45, sherpa-onnx 1.13.4, numpy 2.5.3, model vosk-model-small-en-us-0.15, speaker models vosk-model-spk-0.4, nemo_en_titanet_small.onnx and wespeaker_en_voxceleb_CAM++.onnx, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4, blocks of 40 ms.
+Run 2026-09-30 04:48:11Z, utter 0.0.5 from 2fd0366ba052f516037344ecf4f8e3a04d480690-dirty through its C ABI (checkout 2fd0366), vosk 0.3.45, sherpa-onnx 1.13.4, numpy 2.5.3, model vosk-model-small-en-us-0.15, speaker models vosk-model-spk-0.4, nemo_en_titanet_small.onnx and wespeaker_en_voxceleb_CAM++.onnx, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4, blocks of 40 ms.
 
 A host that gates commands per word needs to know, word by word, whose voice it is, and whether the evidence is there when the word is. This page measures that on the test split of Speech Commands: 205 speakers with at least 20 clips (5 more had no profile under some engine but the wheel), each enrolled from 10 clips, with 1980 probe words scored against every profile (probe clips whose final had no word are left out: 70). The wheel's half-second floor left 14 of the speakers with no profile at all: their words count as no evidence for the wheel, and they are no rival to anyone else's.
 
@@ -100,24 +100,24 @@ The game streams again, 2004 s of audio, through each engine and setup in rotati
 
 | engine | recognizer's thread, real-time factor | per block, ms p50 / p95 / p99 / max | closing blocks, ms p50 / max | TitaNet thread, real-time factor | result text per block | parsing, ms p50 / p99 |
 |---|---|---|---|---|---|---|
-| utter | 0.0126 | 0.065 / 2.68 / 3.55 / 22.1 | 2.40 / 15.5 |  | 1.70 KiB | 0.010 / 0.068 |
-| utter, x-vector set | 0.0207 | 0.086 / 3.03 / 3.85 / 22.8 | 2.58 / 12.0 |  | 5.16 KiB | 0.033 / 0.175 |
-| utter, TitaNet-small, single-threaded | 0.0173 | 0.070 / 2.78 / 3.85 / 24.8 | 2.51 / 16.3 |  | 4.49 KiB | 0.023 / 0.195 |
-| utter, TitaNet-small, multi-threaded | 0.0177 | 0.135 / 3.15 / 6.01 / 35.0 | 2.83 / 35.0 | 0.0085 | 5.10 KiB | 0.026 / 0.203 |
-| utter, 3 readings | 0.0139 | 0.072 / 2.78 / 4.56 / 28.5 | 2.52 / 18.7 |  | 3.90 KiB | 0.020 / 0.101 |
-| utter, 3 readings, x-vector set | 0.0218 | 0.099 / 3.15 / 4.57 / 25.8 | 2.70 / 16.7 |  | 14.56 KiB | 0.078 / 0.518 |
-| utter, TitaNet-small, single-threaded, 3 readings | 0.0184 | 0.079 / 2.90 / 4.56 / 28.3 | 2.65 / 16.8 |  | 14.81 KiB | 0.071 / 0.650 |
-| utter, TitaNet-small, multi-threaded, 3 readings | 0.0175 | 0.146 / 3.20 / 5.05 / 25.1 | 2.93 / 24.5 | 0.0083 | 16.69 KiB | 0.075 / 0.586 |
-| utter, 8 dB floor margin | 0.0130 | 0.066 / 2.72 / 4.00 / 25.0 | 2.44 / 17.2 |  | 1.70 KiB | 0.010 / 0.065 |
-| utter, 8 dB floor margin, x-vector set | 0.0223 | 0.120 / 3.11 / 4.54 / 30.7 | 2.62 / 23.6 |  | 5.10 KiB | 0.032 / 0.162 |
-| utter, TitaNet-small, single-threaded, 8 dB floor margin, span as reported | 0.0178 | 0.070 / 2.80 / 4.17 / 28.9 | 2.53 / 26.8 |  | 4.49 KiB | 0.023 / 0.191 |
-| utter, TitaNet-small, multi-threaded, 8 dB floor margin, span as reported | 0.0173 | 0.133 / 3.13 / 5.37 / 32.0 | 2.81 / 29.9 | 0.0085 | 5.10 KiB | 0.025 / 0.189 |
-| vosk | 0.0145 | 0.058 / 3.21 / 4.47 / 45.7 | 3.31 / 16.2 |  | 0.12 KiB | 0.001 / 0.006 |
-| vosk, speaker model set | 0.0207 | 0.084 / 3.27 / 15.73 / 150.0 | 16.53 / 150.0 |  | 0.13 KiB | 0.001 / 0.012 |
+| utter | 0.0114 | 0.062 / 2.49 / 2.74 / 5.0 | 2.20 / 5.0 |  | 1.70 KiB | 0.009 / 0.055 |
+| utter, x-vector set | 0.0191 | 0.081 / 2.85 / 3.14 / 6.7 | 2.42 / 6.7 |  | 5.16 KiB | 0.031 / 0.140 |
+| utter, TitaNet-small, single-threaded | 0.0158 | 0.066 / 2.59 / 2.81 / 5.0 | 2.37 / 5.0 |  | 4.49 KiB | 0.022 / 0.162 |
+| utter, TitaNet-small, multi-threaded | 0.0149 | 0.139 / 2.94 / 3.18 / 7.0 | 2.69 / 5.4 | 0.0078 | 5.10 KiB | 0.025 / 0.168 |
+| utter, 3 readings | 0.0117 | 0.067 / 2.53 / 2.79 / 5.1 | 2.29 / 5.1 |  | 3.90 KiB | 0.019 / 0.092 |
+| utter, 3 readings, x-vector set | 0.0194 | 0.092 / 2.93 / 3.27 / 6.7 | 2.55 / 6.7 |  | 14.56 KiB | 0.069 / 0.419 |
+| utter, TitaNet-small, single-threaded, 3 readings | 0.0162 | 0.074 / 2.65 / 2.89 / 5.2 | 2.46 / 5.2 |  | 14.81 KiB | 0.070 / 0.521 |
+| utter, TitaNet-small, multi-threaded, 3 readings | 0.0153 | 0.149 / 3.01 / 3.26 / 5.7 | 2.78 / 5.7 | 0.0078 | 16.69 KiB | 0.072 / 0.554 |
+| utter, 8 dB floor margin | 0.0114 | 0.063 / 2.49 / 2.73 / 4.9 | 2.20 / 4.9 |  | 1.70 KiB | 0.010 / 0.054 |
+| utter, 8 dB floor margin, x-vector set | 0.0197 | 0.106 / 2.88 / 3.21 / 6.6 | 2.46 / 6.6 |  | 5.10 KiB | 0.031 / 0.140 |
+| utter, TitaNet-small, single-threaded, 8 dB floor margin, span as reported | 0.0158 | 0.066 / 2.59 / 2.81 / 5.2 | 2.36 / 5.2 |  | 4.49 KiB | 0.022 / 0.163 |
+| utter, TitaNet-small, multi-threaded, 8 dB floor margin, span as reported | 0.0148 | 0.137 / 2.95 / 3.20 / 6.0 | 2.69 / 6.0 | 0.0078 | 5.10 KiB | 0.025 / 0.171 |
+| vosk | 0.0130 | 0.055 / 2.93 / 3.40 / 8.6 | 3.05 / 6.9 |  | 0.12 KiB | 0.001 / 0.005 |
+| vosk, speaker model set | 0.0192 | 0.082 / 3.03 / 15.25 / 42.5 | 15.80 / 42.5 |  | 0.13 KiB | 0.001 / 0.012 |
 
 With a speaker model set, none of utter's 452052 results differ from the same setup's results without one once the four speaker keys are removed: the evidence moves no word, partial or final to a later block.
 
-Compute per second of speech embedded by the offline engines: TitaNet-small 10.5 ms, CAM++ 13.5 ms, utter's embed(), TitaNet-small 7.0 ms, x-vector (Kaldi) 6.1 ms (the Kaldi figure is a batch through three processes). The utter's embed(), TitaNet-small row and every in-crate TitaNet row run titanet-small as scripts/titanet_convert.py writes it.
+Compute per second of speech embedded by the offline engines: TitaNet-small 9.9 ms, CAM++ 12.7 ms, utter's embed(), TitaNet-small 6.9 ms, x-vector (Kaldi) 5.9 ms (the Kaldi figure is a batch through three processes). The utter's embed(), TitaNet-small row and every in-crate TitaNet row run titanet-small as scripts/titanet_convert.py writes it.
 
 ## Caveats
 
