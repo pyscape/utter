@@ -298,6 +298,8 @@ each paired against the stock Vosk wheel on identical audio, live in
 | [quiet-onsets.md](docs/benchmarks/quiet-onsets.md) | What an endpoint bound does to a word whose first frames sit near the floor, and what the floor margin costs there |
 | [word-times.md](docs/benchmarks/word-times.md) | Whether the word times on finals are the wheel's: every word paired across the engines, exact and within one 30 ms frame |
 | [speaker-evidence.md](docs/benchmarks/speaker-evidence.md) | Whether one spoken word names its speaker: utter's per-word evidence against the Vosk wheel's vector and two 16 kHz models, by word length, as speech accumulates, and how soon a partial carries it |
+| [speaker-noise.md](docs/benchmarks/speaker-noise.md) | How far TitaNet-small's speaker evidence moves when a room is laid under the words at 20, 10 and 5 dB, against a profile enrolled in the quiet, for one word and pooled to 2 s |
+| [speaker-vctk.md](docs/benchmarks/speaker-vctk.md) | The same evidence on VCTK, where every speaker read into one microphone, so a profile cannot lean on the device |
 
 Headline figures from the Speech Commands page:
 

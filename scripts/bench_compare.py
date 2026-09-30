@@ -200,6 +200,12 @@ def sound_rating(c: Ctx) -> list[Step]:
     return [Step("sound_rating.py", argv + pick(c.quick, ["--limit", "2000", "--level-clips", "200"]), "sound-rating")]
 
 
+def speaker_conditions(c: Ctx, which: str) -> list[Step]:
+    assert c.side.lib is not None
+    argv = [which, "--model", str(MODEL), "--lib", str(c.side.lib), "--out", str(c.prefix)]
+    return [Step("speaker_conditions.py", argv + pick(c.quick, ["--limit-speakers", "40"]), f"speaker-{which}")]
+
+
 # In the order a full run takes them: decoder-diagnostics reads the two pages before it.
 PAGES = {
     p.name: p
@@ -218,6 +224,8 @@ PAGES = {
         Page("partial-states", "wheel", (36, 10), partial_states),
         Page("speaker-evidence", "lib", (27, 6), speaker_evidence),
         Page("sound-rating", "lib", (5, 1), sound_rating),
+        Page("speaker-noise", "lib", (5, 1), lambda c: speaker_conditions(c, "noise")),
+        Page("speaker-vctk", "lib", (4, 1), lambda c: speaker_conditions(c, "vctk")),
     )
 }
 
