@@ -171,7 +171,6 @@ speaker-evidence = [
   "result.engines",
   "result.word",
   "result.after_end",
-  "result.readings",
   "result.partials",
   "result.curve",
   "result.agreement",
@@ -1238,14 +1237,14 @@ weight = 5
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "word", "utter, TitaNet-small", "eer"]
+path = ["result", "word", "utter, TitaNet-small, *-threaded", "eer"]
 better = "down"
 tol = 0.005
 weight = 7
 
 [[rule]]
 page = "speaker-evidence"
-path = ["result", "word", "utter, TitaNet-small", "accepted"]
+path = ["result", "word", "utter, TitaNet-small, *-threaded", "accepted"]
 better = "up"
 tol = 0.01
 weight = 6
