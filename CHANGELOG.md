@@ -4,6 +4,72 @@ Notable changes to the crate, newest first. The project follows semantic
 versioning; release dates are recorded by the git tags and the GitHub
 releases.
 
+## 0.0.6
+
+### Added
+
+- TitaNet-small speaker evidence. SpeakerModel::open and
+  utter_spk_model_new also open a TitaNet-small directory converted by
+  scripts/titanet_convert.py; set on a recognizer, it embeds each
+  word's span on a thread of the recognizer's own, the best path's
+  open word included, and the word's entry carries spk, spk_frames,
+  spk_start and spk_end from the first result read after one more
+  40 ms of audio, on every machine. Partials and finals carry no
+  top-level evidence with TitaNet. Only TitaNet-small opens. Needs
+  audio at 16 kHz or faster. The recognizer's own thread costs about
+  what it costs with no speaker model, and a word's evidence arrives
+  a median 200 ms after it ends. set_spk_threads(false),
+  utter_recognizer_set_spk_threads, embeds closed spans in budgeted
+  slices between decoder advances instead: the 99th percentile block
+  is 2.60 ms against 2.91 for 0.0.5 with the x-vector, the real-time
+  factor 0.0134 against 0.0171, and evidence arrives a median 420 ms
+  after the word; a host that advances the decoder on every accept
+  gets none. On the speaker page, one word clears a gate at 1% false
+  accept 81.2% of the time, against 41.6% with the x-vector. TD-15,
+  TD-16.
+- The acoustic model's certainty and the sound outside words, on every
+  partial and final, always on. certainty_words and
+  certainty_outside are 1 minus the normalised entropy of the
+  network's output over the frames decoded since the previous result,
+  split by the path into frames in words and outside them, counted in
+  words_frames and outside_frames; neither moves with the grammar or
+  the path. band_db, band_sd_db, rise_start_sample, rise_ms and
+  rise_db describe the frames in no named word: each mel band's level
+  over its own floor, how steady it is, and the loudest rise. Every
+  word entry carries certainty over its own span, and partial_result's
+  [sil] and [speech] entries carry the sound over theirs. With the
+  keys taken out every result is 0.0.5's byte for byte. Against 0.0.5
+  they cost up to 0.9% in real-time factor and 0.015 ms at the 99th
+  percentile block on TD-17's streams; on the Speech Commands steady
+  state, three runs a side, the median block is 3.2% slower and the
+  99th percentile 0.068 ms, 2.5%, with the real-time factor within the
+  spread between runs. A sound-rating benchmark page measures what
+  they tell apart. TD-17.
+- Embedding any span from a speaker model of either layout:
+  SpeakerModel embed, utter_spk_model_embed and utter_spk_model_dim.
+- Normalized float input: Recognizer::accept_f32 takes samples in
+  -1.0..=1.0 and refuses a block with any other value whole, leaving
+  the recognizer as it was. A 16-bit sample s gives what accept gives
+  for s as f32 / 32768.0, and the two calls may be interleaved. Rust
+  only. TD-13.
+- A small-models gate page: German, French, Spanish and Russian small
+  models against the stock wheel on Common Voice single words. Each
+  passes: partials per block 98.9 to 99.9%, segments equal 95.7 to
+  98.8%.
+
+### Fixed
+
+- A stream's heap no longer grows with its length. Every per-frame and
+  per-sample buffer is kept back to the current utterance: at 20
+  minutes without a speaker model, 17.9 MiB where 0.0.5 held 246 MiB.
+  A speaker model set mid-stream starts at the current utterance, its
+  mean normalisation afresh there. TD-14 amended.
+- The benchmark preflight opens each engine in a process of its own.
+  The engine opened second no longer shows about 20 ms on its first
+  recognizer that was not its own.
+- speech_commands.py sends grammars as unescaped JSON, so the stock
+  wheel keeps non-ASCII words.
+
 ## 0.0.5
 
 ### Added
