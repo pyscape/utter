@@ -359,6 +359,8 @@ def run_page(page: Page, ctx: Ctx, logs: Path) -> tuple[bool, float, str]:
     ctx.prefix.parent.mkdir(parents=True, exist_ok=True)
     spent = 0.0
     for step in page.steps(ctx):
+        if "--out" in step.argv:
+            Path(step.argv[step.argv.index("--out") + 1]).parent.mkdir(parents=True, exist_ok=True)
         wait_for_load(MAX_LOAD)
         start = time.monotonic()
         log = logs / f"{ctx.side.label}-{step.log}.log"
