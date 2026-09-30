@@ -1,6 +1,6 @@
 # Certainty and the sound outside words
 
-Run 2026-09-28 22:46:57Z, utter 0.0.5 from 4313af5781777702cd67b1c6e1214643dc328a21 through its C ABI (checkout 4313af5), model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4, blocks of 40 ms, the Speech Commands page's grammar of 92 words.
+Run 2026-09-30 00:38:59Z, utter 0.0.5 from 6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a-dirty through its C ABI (checkout 6fa97d0), model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4, blocks of 40 ms, the Speech Commands page's grammar of 92 words.
 
 Every partial and final carries the acoustic model's certainty over the frames decoded since the previous result, in words and outside them, and what the sound outside words is like; every word entry carries the certainty over its own span, `[[rr:TD-17]]`. This page asks whether they do what they are for, on public audio.
 

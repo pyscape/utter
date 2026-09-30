@@ -1,12 +1,12 @@
 {
  "provenance": {
-  "date": "2026-09-28 22:46:57Z",
-  "utter_revision": "4313af5",
+  "date": "2026-09-30 00:38:59Z",
+  "utter_revision": "6fa97d0",
   "source_dirty": false,
-  "docs_dirty": false,
-  "wheel_path": "site-packages/utterpy/__init__.py",
-  "wheel_revision": "08de39f4777c2751991427f9ae8a81596df86928",
-  "wheel_matches_head": false,
+  "docs_dirty": true,
+  "wheel_path": "6fa97d06ece9/utterpy/__init__.py",
+  "wheel_revision": "6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a",
+  "wheel_matches_head": true,
   "engines": {
    "numpy": "2.5.3"
   },
@@ -18,18 +18,18 @@
  "args": {
   "data": "speech_commands_v0.02",
   "model": "vosk-model-small-en-us-0.15",
-  "lib": "libutter-td17-4313af5.so",
-  "out": "docs/benchmarks/sound-rating",
+  "lib": "libutter-6fa97d0.so",
+  "out": "sound-rating",
   "limit": 0,
   "level_clips": 1000,
   "block_ms": 40,
   "seed": 17
  },
- "seconds": 269.9078675850001,
+ "seconds": 259.8674333579984,
  "result": {
   "utter": {
    "version": "0.0.5",
-   "revision": "4313af5781777702cd67b1c6e1214643dc328a21"
+   "revision": "6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a-dirty"
   },
   "words": {
    "clips": 11005,

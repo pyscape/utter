@@ -1,6 +1,6 @@
 # Quiet onsets: what a bound does to a word it can barely see
 
-Run 2026-09-24 07:14:33Z, utter 765482d, utterpy 0.0.5, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `site-765482d/utterpy/__init__.py` built from utter 765482d7b70a6d3f5c4071e56e280b7d5df7b598, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
+Run 2026-09-29 21:38:12Z, utter 6fa97d0, utterpy 0.0.5, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `6fa97d06ece9/utterpy/__init__.py` built from utter 6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
 
 The [states page](partial-states.md) measures the endpoint bound on words that sit 15 dB and more over the gap floor, so their first frames clear any floor margin at once. A microphone's do not. Here its pause streams are built again with every word's onset held a few dB over the -50 dBFS gap floor for its first 200 ms and rising to the word's own level over the next 200, pauses of 400-800 ms between words, and decoded by each engine in turn. The bound rows are spelled as the states page spells them, `MS/NATS` and, after a second slash, the floor margin in dB (`[[rr:TD-12#Decision outcome]]`).
 

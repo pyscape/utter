@@ -1,11 +1,11 @@
 {
  "provenance": {
-  "date": "2026-09-24 07:37:34Z",
-  "utter_revision": "765482d",
+  "date": "2026-09-30 02:17:23Z",
+  "utter_revision": "2fd0366",
   "source_dirty": false,
-  "docs_dirty": true,
-  "wheel_path": "site-765482d/utterpy/__init__.py",
-  "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
+  "docs_dirty": false,
+  "wheel_path": "2fd0366ba052/utterpy/__init__.py",
+  "wheel_revision": "2fd0366ba052f516037344ecf4f8e3a04d480690",
   "wheel_matches_head": true,
   "engines": {
    "utterpy": "0.0.5",
@@ -20,7 +20,7 @@
   "data": "speech_commands_v0.02",
   "model": "vosk-model-small-en-us-0.15",
   "engine": "utterpy",
-  "out": "docs/benchmarks/partial-states",
+  "out": "partial-states",
   "words": 2200,
   "utterances": 10,
   "block_ms": 40,
@@ -36,7 +36,7 @@
   "no_streams": false,
   "bound_runs": "b100.json,b300.json,b300-4.json,b300-8.json,b300-8-8.json"
  },
- "wheel": "site-765482d/utterpy/__init__.py",
+ "wheel": "2fd0366ba052/utterpy/__init__.py",
  "grammar_size": 92,
  "seed": 20260912,
  "alternatives": 8,
@@ -96,7 +96,7 @@
    "minutes": 78.57144583333334
   }
  },
- "decode_seconds": 184.47051691397792,
+ "decode_seconds": 186.87643700301123,
  "fit": {
   "bound_ms": 500,
   "sil_delta": -8.0,
@@ -9793,7 +9793,7 @@
    "words": 2208,
    "lost": 47,
    "restarted": 6,
-   "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
+   "wheel_revision": "2fd0366ba052f516037344ecf4f8e3a04d480690",
    "same_streams": true
   },
   "utterpy@300": {
@@ -9848,7 +9848,7 @@
    "words": 2208,
    "lost": 49,
    "restarted": 6,
-   "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
+   "wheel_revision": "2fd0366ba052f516037344ecf4f8e3a04d480690",
    "same_streams": true
   },
   "utterpy@300/4": {
@@ -9903,7 +9903,7 @@
    "words": 2208,
    "lost": 49,
    "restarted": 6,
-   "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
+   "wheel_revision": "2fd0366ba052f516037344ecf4f8e3a04d480690",
    "same_streams": true
   },
   "utterpy@300/8": {
@@ -9958,7 +9958,7 @@
    "words": 2208,
    "lost": 48,
    "restarted": 6,
-   "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
+   "wheel_revision": "2fd0366ba052f516037344ecf4f8e3a04d480690",
    "same_streams": true
   },
   "utterpy@300/8/8": {
@@ -10013,7 +10013,7 @@
    "words": 2208,
    "lost": 49,
    "restarted": 6,
-   "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
+   "wheel_revision": "2fd0366ba052f516037344ecf4f8e3a04d480690",
    "same_streams": true
   }
  },

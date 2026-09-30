@@ -288,16 +288,24 @@ class UtterLib:
             ("utter_recognizer_set_alternatives", None, [vp, ci]),
             ("utter_recognizer_set_max_alternatives", None, [vp, ci]),
             ("utter_recognizer_set_spk_model", ci, [vp, vp]),
-            ("utter_recognizer_set_spk_threads", None, [vp, ci]),
             ("utter_recognizer_set_endpoint_floor_margin", None, [vp, cf]),
             ("utter_recognizer_accept_waveform_s", ci, [vp, cp, ci]),
             ("utter_recognizer_partial_result", cp, [vp]),
             ("utter_recognizer_result", cp, [vp]),
             ("utter_recognizer_final_result", cp, [vp]),
             ("utter_recognizer_free", None, [vp]),
+        ]:
+            fn = getattr(lib, name)
+            fn.restype = res
+            fn.argtypes = args
+        # A release before 0.0.6 has none of these, and runs the page without its in-crate TitaNet rows.
+        titanet = [
+            ("utter_recognizer_set_spk_threads", None, [vp, ci]),
             ("utter_spk_model_dim", ci, [vp]),
             ("utter_spk_model_embed", ci, [vp, ctypes.POINTER(cf), ci, cf, ctypes.POINTER(cf), ci]),
-        ]:
+        ]
+        self.titanet = all(hasattr(lib, name) for name, _, _ in titanet)
+        for name, res, args in titanet if self.titanet else []:
             fn = getattr(lib, name)
             fn.restype = res
             fn.argtypes = args
@@ -313,8 +321,8 @@ class UtterLib:
     def open(self, model_dir: str, spk_dir: Path, tn_dir: Path) -> None:
         self.model = self.lib.utter_model_new(model_dir.encode())
         self.spk = self.lib.utter_spk_model_new(str(spk_dir).encode())
-        self.tn = self.lib.utter_spk_model_new(str(tn_dir).encode())
-        if not self.model or not self.spk or not self.tn:
+        self.tn = self.lib.utter_spk_model_new(str(tn_dir).encode()) if self.titanet else None
+        if not self.model or not self.spk or (self.titanet and not self.tn):
             raise SystemExit("utter could not open the model or a speaker model")
 
     def embed(self, pcm: bytes) -> Vec | None:
@@ -622,6 +630,8 @@ def latency_pass(u: UtterLib, wheel: "Wheel", grammar: Sequence[str], streams: S
         VOSK: (VOSK, BARE),
         f"{VOSK}, speaker model set": (VOSK, PLAIN),
     }
+    if not u.titanet:
+        variants = {k: (e, s) for k, (e, s) in variants.items() if s.speaker != "titanet"}
     bare_of = {s: k for k, (e, s) in variants.items() if e == UTTER and s.speaker is None}
     acc: dict[str, dict[str, list[float]]] = {
         k: dict(t=[], closing=[], size=[], parse=[], spk_cpu=[]) for k in variants
@@ -820,16 +830,14 @@ def run(a: argparse.Namespace) -> Json:
         probe_clips[s] = [Clip(k, s, sc.read_pcm(data / k)) for k in keys[a.enroll : a.enroll + a.probes]]
     sc.note(f"{len(names)} speakers, {a.enroll} enrollment and up to {a.probes} probe clips each")
 
-    engines = (
-        [UTTER, UTTER_MARGIN, UTTER_COLD, *UTTER_TNS, UTTER_TN_EMBED, VOSK]
-        + ([KALDI] if a.kaldi else [])
-        + [TITANET, CAMPP]
-    )
+    u = UtterLib(a.lib)
+    u.open(a.model, spk_dir, Path(a.titanet))
+    tns = [*UTTER_TNS, UTTER_TN_EMBED] if u.titanet else []
+    setups = {e: s for e, s in SETUPS.items() if u.titanet or s.speaker != "titanet"}
+    engines = [UTTER, UTTER_MARGIN, UTTER_COLD, *tns, VOSK] + ([KALDI] if a.kaldi else []) + [TITANET, CAMPP]
     wheel = Wheel(a.model, spk_dir, grammar)
     sherpa = {e: Sherpa(models / f) for e, f in SHERPA_FILES.items()}
     kaldi = KaldiXvector(Path(a.kaldi), spk_dir) if a.kaldi else None
-    u = UtterLib(a.lib)
-    u.open(a.model, spk_dir, Path(a.titanet))
 
     # The wheel decodes every clip: its vector, and the span the offline engines are given.
     clip_vecs: dict[str, dict[str, Vec | None]] = {e: {} for e in engines}
@@ -843,8 +851,9 @@ def run(a: argparse.Namespace) -> Json:
     for e, sh in sherpa.items():
         for k, pcm in spans.items():
             clip_vecs[e][k] = sh.embed(pcm)
-    for k, pcm in spans.items():
-        clip_vecs[UTTER_TN_EMBED][k] = u.embed(pcm)
+    if u.titanet:
+        for k, pcm in spans.items():
+            clip_vecs[UTTER_TN_EMBED][k] = u.embed(pcm)
     if kaldi:
         clip_vecs[KALDI].update(kaldi.embed_all(spans))
     sc.note("offline engines embedded the spans")
@@ -888,12 +897,12 @@ def run(a: argparse.Namespace) -> Json:
     games = [order[i : i + 2] for i in range(0, len(order) - 1, 2)]
     if len(order) % 2 and games:
         games[-1].append(order[-1])
-    game_words: dict[str, dict[str, Json]] = {e: {} for e in SETUPS}
+    game_words: dict[str, dict[str, Json]] = {e: {} for e in setups}
     streams: list[bytes] = []
     for g in games:
         lists = [probe_clips[s] for s in g]
         turns = [x[i] for i in range(max(len(x) for x in lists)) for x in lists if i < len(x)]
-        for e, setup in SETUPS.items():
+        for e, setup in setups.items():
             game_words[e].update(utter_game(u, grammar, turns, a.block_ms, setup))
         streams.append(b"".join(c.pcm for c in turns))
     utter_words = game_words[UTTER]
@@ -920,7 +929,11 @@ def run(a: argparse.Namespace) -> Json:
             probes.append(p)
     tables = draw_tables(probes, kept, TABLE_SIZES, rng)
     word = {e: score(probes, e, profiles[e], tables, WORD_BINS) for e in engines}
-    after = {e: after_end(probes, e, game_words[e], profiles[e], word[e]["threshold"]) for e in (UTTER, *UTTER_TNS)}
+    after = {
+        e: after_end(probes, e, game_words[e], profiles[e], word[e]["threshold"])
+        for e in (UTTER, *UTTER_TNS)
+        if e in setups
+    }
 
     # Utter's partials: when a probe word's evidence first appears, and whether it names the
     # speaker then as the final does.
@@ -966,7 +979,8 @@ def run(a: argparse.Namespace) -> Json:
     for n, items in joined.items():
         for p in items:
             p.vectors[VOSK] = Wheel.vector(wheel.decode(p.pcm))
-            p.vectors[UTTER_TN_EMBED] = u.embed(p.pcm)
+            if u.titanet:
+                p.vectors[UTTER_TN_EMBED] = u.embed(p.pcm)
             for e, sh in sherpa.items():
                 v = sh.embed(p.pcm)
                 p.vectors[e] = v - centre[e] if v is not None and e in centre else v
