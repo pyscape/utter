@@ -2,16 +2,16 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries. 10 readings asked for on the partial and on the final.
 
-Run 2026-09-24 07:22:16Z, utter 765482d, vosk 0.3.45, utterpy 0.0.5, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `site-765482d/utterpy/__init__.py` built from utter 765482d7b70a6d3f5c4071e56e280b7d5df7b598, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
+Run 2026-09-29 21:58:17Z, utter 6fa97d0, utterpy 0.0.5, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `6fa97d06ece9/utterpy/__init__.py` built from utter 6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
 
 ## Engines
 
-Each engine opened the model and decoded a clip before the run began; a model an engine cannot decode stops the run here rather than part-way through a pass. The first recognizer is timed right after each engine's model loads, in the order listed and in one process, and an engine opened after another pays about 20 ms more on it, in either order: the column is a check that the engine runs, not what a recognizer costs to build, which the Speech Commands page's compute section times over every clip.
+Each engine opened the model and decoded a clip before the run began; a model an engine cannot decode stops the run here rather than part-way through a pass. The first recognizer is timed right after each engine's model loads, in a process that loads only that engine: the column is a check that the engine runs, not what a recognizer costs to build, which the Speech Commands page's compute section times over every clip.
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
-| vosk | 0.17 | 0.4 |
-| utterpy | 0.14 | 21.3 |
+| utterpy | 0.14 | 2.2 |
+| vosk | 0.20 | 0.4 |
 
 ## Oracle in the beam: was the word there at all
 
@@ -21,12 +21,12 @@ At the first partial that carried a word, and in the final, with n-best asked fo
 
 | engine | n = 1 | n = 5 | n = 10 | rank 0 | rank 1 | rank 2 and below | median rank |
 |---|---|---|---|---|---|---|---|
-| vosk | 7921 / 11005 (72.0%) | - | - | 7921 | - | - | - |
 | utterpy | 7936 / 11005 (72.1%) | 8978 / 11005 (81.6%) | 9117 / 11005 (82.8%) | 7936 | 539 | 642 | 0 |
+| vosk | 7925 / 11005 (72.0%) | - | - | 7925 | - | - | - |
 
-| n | vosk | utterpy | only vosk | only utterpy | McNemar p |
+| n | utterpy | vosk | only utterpy | only vosk | McNemar p |
 |---|---|---|---|---|---|
-| 1 | 7921 | 7936 | 41 | 56 | 0.155 |
+| 1 | 7936 | 7925 | 54 | 43 | 0.31 |
 
 Paired over the 11005 clips both engines read, with an exact McNemar test on the clips they differ about. Only n = 1 is paired here, because vosk offers one reading on a partial.
 
@@ -34,14 +34,14 @@ Paired over the 11005 clips both engines read, with an exact McNemar test on the
 
 | engine | n = 1 | n = 5 | n = 10 | rank 0 | rank 1 | rank 2 and below | median rank |
 |---|---|---|---|---|---|---|---|
-| vosk | 10071 / 11005 (91.5%) | 10328 / 11005 (93.8%) | 10329 / 11005 (93.9%) | 10071 | 211 | 47 | 0 |
 | utterpy | 10102 / 11005 (91.8%) | 10526 / 11005 (95.6%) | 10558 / 11005 (95.9%) | 10102 | 292 | 164 | 0 |
+| vosk | 10073 / 11005 (91.5%) | 10318 / 11005 (93.8%) | 10318 / 11005 (93.8%) | 10073 | 205 | 40 | 0 |
 
-| n | vosk | utterpy | only vosk | only utterpy | McNemar p |
+| n | utterpy | vosk | only utterpy | only vosk | McNemar p |
 |---|---|---|---|---|---|
-| 1 | 10071 | 10102 | 18 | 49 | 0.000194 |
-| 5 | 10328 | 10526 | 7 | 205 | 1.09e-51 |
-| 10 | 10329 | 10558 | 7 | 236 | 1.33e-60 |
+| 1 | 10102 | 10073 | 47 | 18 | 0.000422 |
+| 5 | 10526 | 10318 | 213 | 5 | 1.9e-56 |
+| 10 | 10558 | 10318 | 245 | 5 | 8.82e-66 |
 
 Paired over the 11005 clips both engines read, with an exact McNemar test on the clips they differ about.
 
@@ -51,8 +51,8 @@ Rank 0 at the stock search against the finals `speech-commands.clips.jsonl` carr
 
 | engine | rank 0 equals the recorded final |
 |---|---|
-| vosk | 10984 / 11005 (99.81%) |
 | utterpy | 11005 / 11005 (100.00%) |
+| vosk | 10980 / 11005 (99.77%) |
 
 ## Beam sensitivity: the clips a wider search moves
 
@@ -63,8 +63,8 @@ The same clips through a sibling model directory: `am/`, `graph/` and `ivector/`
 
 | engine | final changed | became right | became wrong | wrong to wrong | accuracy stock | accuracy wide |
 |---|---|---|---|---|---|---|
-| vosk | 16 / 11005 (0.15%) | 7 | 5 | 4 | 10071 / 11005 (91.51%) | 10073 / 11005 (91.53%) |
 | utterpy | 0 / 11005 (0.00%) | 0 | 0 | 0 | 10102 / 11005 (91.79%) | 10102 / 11005 (91.79%) |
+| vosk | 26 / 11005 (0.24%) | 10 | 9 | 7 | 10073 / 11005 (91.53%) | 10074 / 11005 (91.54%) |
 
 A changed final is the search reaching a different answer, not the search having erred before.
 
@@ -72,8 +72,8 @@ A changed final is the search reaching a different answer, not the search having
 
 | engine | RTF stock | RTF wide | per-block ms p50 stock / wide | p95 stock / wide |
 |---|---|---|---|---|
-| vosk | 0.0122 | 0.0152 | 0.048 / 0.053 | 2.81 / 3.57 |
-| utterpy | 0.0103 | 0.0118 | 0.042 / 0.043 | 2.35 / 2.73 |
+| utterpy | 0.0115 | 0.0138 | 0.045 / 0.046 | 2.61 / 3.22 |
+| vosk | 0.0133 | 0.0167 | 0.050 / 0.055 | 3.05 / 3.96 |
 
 One recognizer over 295 s of clips joined end to end at each setting, the same pass the Speech Commands page reports compute with.
 
@@ -83,8 +83,8 @@ Every beam over the same 800 clips, each in its own sibling directory at `max-ac
 
 | engine | beam 0.5 | beam 2 | beam 5 | beam 13 | beam 18 |
 |---|---|---|---|---|---|
-| vosk | 1 / 800 | 1 / 800 | 1 / 800 | 0 / 800 | 0 / 800 |
 | utterpy | 0 / 800 | 0 / 800 | 0 / 800 | 0 / 800 | 0 / 800 |
+| vosk | 0 / 800 | 1 / 800 | 1 / 800 | 0 / 800 | 0 / 800 |
 
 ### The sibling directory is read
 
@@ -92,15 +92,15 @@ A sibling built the same way but with `acoustic-scale` 1.0 to 0.1, over 200 clip
 
 | engine | finals changed against stock |
 |---|---|
-| vosk | 193 / 200 (96%) |
 | utterpy | 192 / 200 (96%) |
+| vosk | 192 / 200 (96%) |
 
 ### The word among the readings at the wider search
 
 | engine | sighting, n = 10 | final, n = 1 | final, n = 10 |
 |---|---|---|---|
-| vosk | - | 10073 / 11005 (91.5%) | 10331 / 11005 (93.9%) |
 | utterpy | 9117 / 11005 (82.8%) | 10102 / 11005 (91.8%) | 10559 / 11005 (95.9%) |
+| vosk | - | 10074 / 11005 (91.5%) | 10329 / 11005 (93.9%) |
 
 ## Where the replacing word was when the first word appeared
 

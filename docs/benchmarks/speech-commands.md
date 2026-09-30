@@ -2,66 +2,66 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-24 06:37:57Z, utter 765482d, vosk 0.3.45, utterpy 0.0.5, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `site-765482d/utterpy/__init__.py` built from utter 765482d7b70a6d3f5c4071e56e280b7d5df7b598, the checkout's HEAD. Pages under `docs` were modified at the time of the run.
+Run 2026-09-29 20:36:30Z, utter 6fa97d0, utterpy 0.0.5, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `6fa97d06ece9/utterpy/__init__.py` built from utter 6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a, the checkout's HEAD.
 
 ## Engines
 
-Each engine opened the model and decoded a clip before the run began; a model an engine cannot decode stops the run here rather than part-way through a pass. The first recognizer is timed right after each engine's model loads, in the order listed and in one process, and an engine opened after another pays about 20 ms more on it, in either order: the column is a check that the engine runs, not what a recognizer costs to build, which the Speech Commands page's compute section times over every clip.
+Each engine opened the model and decoded a clip before the run began; a model an engine cannot decode stops the run here rather than part-way through a pass. The first recognizer is timed right after each engine's model loads, in a process that loads only that engine: the column is a check that the engine runs, not what a recognizer costs to build, which the Speech Commands page's compute section times over every clip.
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
+| utterpy | 0.13 | 2.1 |
 | vosk | 0.18 | 0.4 |
-| utterpy | 0.14 | 24.3 |
 
 ## Full grammar: accuracy
 
 | engine | correct | accuracy | never in a partial | first appearance after the clip's energy end p50 / p90 | first word shown later changed |
 |---|---|---|---|---|---|
-| vosk | 10069 / 11005 | 91.49% | 2451 | 40 / 250 ms over 8554 | 1137 / 9218 (12.3%) |
 | utterpy | 10102 / 11005 | 91.79% | 2432 | 40 / 250 ms over 8573 | 1147 / 9230 (12.4%) |
+| vosk | 10070 / 11005 | 91.50% | 2445 | 40 / 250 ms over 8560 | 1138 / 9220 (12.3%) |
 
 The last column counts the first word shown against the final, which a host feels as two different things. A partial overtaken by another partial is a flicker on the screen; a partial that stands through every later partial and is replaced only by the final is not a flicker at all, and no amount of waiting on partials would have caught it. The two columns below do not sum to that one: a partial can be overtaken and then come back, which the last column does not count and the first of these does. The lag is the gap between the two partials, and it decides whether a flicker is visible or too brief to see.
 
 | engine | first word shown | overtaken by a later partial | stood, then changed by the final | revision lag p50 / p90 | lag min / max |
 |---|---|---|---|---|---|
-| vosk | 9218 | 688 (7.5%) | 456 (4.9%) | 240 / 240 ms | 240 / 480 ms |
 | utterpy | 9230 | 691 (7.5%) | 462 (5.0%) | 240 / 240 ms | 240 / 480 ms |
+| vosk | 9220 | 690 (7.5%) | 455 (4.9%) | 240 / 240 ms | 240 / 480 ms |
 
 Compute, one recognizer per clip:
 
 | engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |
 |---|---|---|---|---|---|
-| vosk | 0.32 | 0.299 | 0.299 | 0.0172 | 0.0175 |
-| utterpy | 2.44 | 0.028 | 0.028 | 0.0141 | 0.0142 |
+| utterpy | 2.14 | 0.024 | 0.024 | 0.0140 | 0.0140 |
+| vosk | 0.38 | 0.289 | 0.289 | 0.0168 | 0.0171 |
 
-| word | vosk | utterpy |
+| word | utterpy | vosk |
 |---|---|---|
 | yes | 387 / 419 | 387 / 419 |
 | no | 395 / 405 | 395 / 405 |
-| up | 348 / 425 | 348 / 425 |
-| down | 377 / 406 | 377 / 406 |
-| left | 387 / 412 | 389 / 412 |
-| right | 360 / 396 | 361 / 396 |
-| on | 363 / 396 | 362 / 396 |
-| off | 340 / 402 | 341 / 402 |
-| stop | 401 / 411 | 402 / 411 |
-| go | 377 / 402 | 382 / 402 |
-| zero | 382 / 418 | 388 / 418 |
+| up | 348 / 425 | 347 / 425 |
+| down | 377 / 406 | 378 / 406 |
+| left | 389 / 412 | 387 / 412 |
+| right | 361 / 396 | 360 / 396 |
+| on | 362 / 396 | 363 / 396 |
+| off | 341 / 402 | 341 / 402 |
+| stop | 402 / 411 | 401 / 411 |
+| go | 382 / 402 | 377 / 402 |
+| zero | 388 / 418 | 382 / 418 |
 | one | 368 / 399 | 368 / 399 |
-| two | 400 / 424 | 403 / 424 |
-| three | 354 / 405 | 356 / 405 |
-| four | 361 / 400 | 360 / 400 |
-| five | 424 / 445 | 425 / 445 |
-| six | 367 / 394 | 368 / 394 |
-| seven | 388 / 406 | 389 / 406 |
-| eight | 313 / 408 | 322 / 408 |
-| nine | 392 / 408 | 394 / 408 |
+| two | 403 / 424 | 399 / 424 |
+| three | 356 / 405 | 355 / 405 |
+| four | 360 / 400 | 361 / 400 |
+| five | 425 / 445 | 423 / 445 |
+| six | 368 / 394 | 367 / 394 |
+| seven | 389 / 406 | 388 / 406 |
+| eight | 322 / 408 | 315 / 408 |
+| nine | 394 / 408 | 392 / 408 |
 | backward | 152 / 165 | 152 / 165 |
-| forward | 133 / 155 | 135 / 155 |
+| forward | 135 / 155 | 133 / 155 |
 | follow | 163 / 172 | 163 / 172 |
 | learn | 137 / 161 | 137 / 161 |
-| visual | 141 / 165 | 138 / 165 |
-| bed | 190 / 207 | 191 / 207 |
+| visual | 138 / 165 | 141 / 165 |
+| bed | 191 / 207 | 190 / 207 |
 | bird | 175 / 185 | 175 / 185 |
 | cat | 177 / 194 | 177 / 194 |
 | dog | 206 / 220 | 206 / 220 |
@@ -70,37 +70,37 @@ Compute, one recognizer per clip:
 | marvin | 180 / 195 | 180 / 195 |
 | sheila | 198 / 212 | 198 / 212 |
 | tree | 171 / 193 | 171 / 193 |
-| wow | 189 / 206 | 189 / 206 |
+| wow | 189 / 206 | 188 / 206 |
 
-Most frequent confusions, vosk: up -> (nothing) (66); eight -> a (51); off -> o (35); three -> tree (28); eight -> (nothing) (25); four -> forward (21); forward -> four (17); down -> (nothing) (16); cat -> (nothing) (15); on -> (nothing) (14)
 Most frequent confusions, utterpy: up -> (nothing) (65); eight -> a (48); off -> o (31); three -> tree (29); eight -> (nothing) (25); four -> forward (20); on -> (nothing) (18); down -> (nothing) (16); cat -> (nothing) (15); off -> (nothing) (14)
+Most frequent confusions, vosk: up -> (nothing) (67); eight -> a (50); off -> o (34); three -> tree (27); eight -> (nothing) (25); four -> forward (20); forward -> four (17); down -> (nothing) (16); cat -> (nothing) (15); on -> (nothing) (14)
 
 ## Agreement with the oracle
 
-The contract is to reproduce vosk's output, which the accuracy above cannot measure: two engines are at parity when they are right equally often, and that is compatible with their being right about different clips. This counts the clips whose finals are identical word for word. Every clip is in `speech-commands.clips.jsonl` with both readings, so the ones that differ can be listed rather than only counted.
+The contract is to reproduce utterpy's output, which the accuracy above cannot measure: two engines are at parity when they are right equally often, and that is compatible with their being right about different clips. This counts the clips whose finals are identical word for word. Every clip is in `speech-commands.clips.jsonl` with both readings, so the ones that differ can be listed rather than only counted.
 
 | pair | finals identical | differ |
 |---|---|---|
-| vosk vs utterpy | 10913 / 11005 (99.16%) | 92 |
+| utterpy vs vosk | 10912 / 11005 (99.15%) | 93 |
 
-Of the 92 that differ, vosk reads the label and utterpy does not on 17, utterpy and not vosk on 50, and neither on 25.
+Of the 93 that differ, utterpy reads the label and vosk does not on 51, vosk and not utterpy on 19, and neither on 23.
 
 | engine | empty finals | empty here, a word from the other |
 |---|---|---|
-| vosk | 411 (3.73%) | 5 |
-| utterpy | 412 (3.74%) | 6 |
+| utterpy | 412 (3.74%) | 5 |
+| vosk | 414 (3.76%) | 7 |
 
 The last column is the directional one. Equal totals in the middle column can still hide two engines falling silent on different clips, and an excess in one direction is the signature of a decoder dropping a reading the other keeps.
 
 ## Where the engines differ
 
-Paired over the same clips: `vosk only` counts clips vosk got right and utterpy did not, `utterpy only` the reverse. The p-value is a two-sided exact McNemar test on those two counts; a large one means the split is what chance would produce.
+Paired over the same clips: `utterpy only` counts clips utterpy got right and vosk did not, `vosk only` the reverse. The p-value is a two-sided exact McNemar test on those two counts; a large one means the split is what chance would produce.
 
-| scope | vosk only | utterpy only | p | Holm |
+| scope | utterpy only | vosk only | p | Holm |
 |---|---|---|---|---|
-| all words | 17 | 50 | 0.000 | |
-| eight | 0 | 9 | 0.004 | 0.137 |
-| zero | 0 | 6 | 0.031 | 1.000 |
+| all words | 51 | 19 | 0.000 | |
+| zero | 6 | 0 | 0.031 | 1.000 |
+| eight | 8 | 1 | 0.039 | 1.000 |
 
 35 words were tested, so about two would fall below 0.05 by chance; the last column is the Holm-Bonferroni adjustment for that. No word survives it.
 
@@ -108,10 +108,10 @@ When one engine reads a clip the other misses, the miss is almost always a diffe
 
 | direction | other read a different word | other read silence |
 |---|---|---|
-| vosk only | 14 | 3 |
-| utterpy only | 47 | 3 |
+| utterpy only | 46 | 5 |
+| vosk only | 17 | 2 |
 
-Silence is 3 clips one way and 3 the other, so neither engine falls silent where the other reads a word more than the reverse; the difference is word against word, the near ties `[[rr:TD-6]]` leaves in the acoustics. Over the whole corpus the two read almost the same number of clips as silence, 411 and 412.
+Silence is 5 clips one way and 2 the other, so neither engine falls silent where the other reads a word more than the reverse; the difference is word against word, the near ties `[[rr:TD-6]]` leaves in the acoustics. Over the whole corpus the two read almost the same number of clips as silence, 412 and 414.
 
 ## Determinism
 
@@ -119,8 +119,8 @@ Silence is 3 clips one way and 3 the other, so neither engine falls silent where
 
 | engine | clips | partials and readings | finals |
 |---|---|---|---|
-| vosk | 11005 | 0 | 0 |
 | utterpy | 11005 | 0 | 0 |
+| vosk | 11005 | 0 | 0 |
 
 Every clip read the same way both times.
 
@@ -134,15 +134,15 @@ A bound shorter than one decoding advance does not thereby fire at the first adv
 
 | engine | endpointed | after the clip's energy end p50 / p90 / p99 | never within the silence |
 |---|---|---|---|
-| vosk | 781 / 800 | 870 / 1010 / 1150 ms over 781 | 19 |
 | utterpy | 781 / 800 | 870 / 1010 / 1150 ms over 781 | 19 |
+| vosk | 781 / 800 | 870 / 1010 / 1150 ms over 781 | 19 |
 | utterpy@100 | 781 / 800 | 470 / 620 / 790 ms over 781 | 19 |
 | utterpy@300 | 781 / 800 | 660 / 800 / 930 ms over 781 | 19 |
 | utterpy@300/4 | 781 / 800 | 660 / 810 / 940 ms over 781 | 19 |
 | utterpy@300/8 | 781 / 800 | 670 / 820 / 960 ms over 781 | 19 |
 | utterpy@300/8/8 | 781 / 800 | 670 / 820 / 960 ms over 781 | 19 |
 
-Both engines endpointed on 781 of the 800, at the same block on 765 (97.95%). Endpointing is a second surface the contract covers, and one the accuracy figures do not touch: a host that agreed on every word would still feel a difference here.
+Both engines endpointed on 781 of the 800, at the same block on 767 (98.21%). Endpointing is a second surface the contract covers, and one the accuracy figures do not touch: a host that agreed on every word would still feel a difference here.
 
 ### What the bound costs in words
 
@@ -166,16 +166,16 @@ Nothing here separates one bound from another or from the stock rules, the bound
 
 | block ms | engine | accuracy | first appearance p50 / p90 | same instant as the finest block | RTF, decode only |
 |---|---|---|---|---|---|
-| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0170 |
-| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0138 |
-| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0168 |
-| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0137 |
-| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0167 |
-| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0136 |
-| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0165 |
-| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0145 |
-| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 316, up to 60 ms later | 0.0166 |
-| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0138 |
+| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0142 |
+| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0179 |
+| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0141 |
+| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0172 |
+| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0140 |
+| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0171 |
+| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0138 |
+| 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0169 |
+| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0139 |
+| 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 317, up to 60 ms later | 0.0168 |
 
 The column that carries the result is the per-clip one, not the quantiles: two block sizes can produce the same p50 by luck, and only a clip-by-clip comparison against the finest block (10 ms) shows whether the word actually appeared at the same instant.
 
@@ -185,8 +185,8 @@ One recognizer over 295 s of the clips joined end to end.
 
 | engine | RTF | per-block compute ms p50 / p95 / p99 |
 |---|---|---|
-| vosk | 0.0121 | 0.048 / 2.78 / 3.17 |
-| utterpy | 0.0104 | 0.042 / 2.36 / 2.57 |
+| utterpy | 0.0111 | 0.043 / 2.52 / 2.84 |
+| vosk | 0.0122 | 0.049 / 2.80 / 3.25 |
 
 ## Accuracy against noise
 
@@ -194,47 +194,47 @@ One recognizer over 295 s of the clips joined end to end.
 
 | engine | 20 dB | 10 dB | 5 dB | 0 dB | clean |
 |---|---|---|---|---|---|
-| vosk | 699 (87.4%) | 634 (79.2%) | 558 (69.8%) | 399 (49.9%) | 729 (91.1%) |
 | utterpy | 702 (87.8%) | 634 (79.2%) | 560 (70.0%) | 400 (50.0%) | 730 (91.2%) |
+| vosk | 699 (87.4%) | 634 (79.2%) | 558 (69.8%) | 399 (49.9%) | 729 (91.1%) |
 
-Paired at each level, as above: `vosk only`, `utterpy only`, and the exact McNemar p.
+Paired at each level, as above: `utterpy only`, `vosk only`, and the exact McNemar p.
 
-| level | vosk only | utterpy only | p |
+| level | utterpy only | vosk only | p |
 |---|---|---|---|
-| 20 dB | 2 | 5 | 0.453 |
+| 20 dB | 5 | 2 | 0.453 |
 | 10 dB | 6 | 6 | 1.000 |
-| 5 dB | 6 | 8 | 0.791 |
-| 0 dB | 7 | 8 | 1.000 |
-| clean | 1 | 2 | 1.000 |
+| 5 dB | 8 | 6 | 0.791 |
+| 0 dB | 8 | 7 | 1.000 |
+| clean | 2 | 1 | 1.000 |
 
 ## Grammar size
 
 400 clips, the 35 dataset words plus filler up to each size, so every clip stays decidable at every size. The runtime refuses 300 distinct words or more; the sweep stops at 246, the filler this model's table knows.
 
-| entries | vosk accuracy | vosk first ms | vosk later ms | vosk RTF | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF |
+| entries | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF | vosk accuracy | vosk first ms | vosk later ms | vosk RTF |
 |---|---|---|---|---|---|---|---|---|
-| 35 | 94.0% | 0.22 | 0.182 | 0.0150 | 94.5% | 0.90 | 0.017 | 0.0142 |
-| 60 | 92.5% | 0.29 | 0.216 | 0.0162 | 92.8% | 1.51 | 0.020 | 0.0136 |
-| 92 | 92.0% | 0.37 | 0.275 | 0.0167 | 92.2% | 2.38 | 0.028 | 0.0136 |
-| 150 | 91.0% | 0.46 | 0.373 | 0.0172 | 92.0% | 3.64 | 0.041 | 0.0138 |
-| 200 | 90.2% | 0.54 | 0.450 | 0.0177 | 91.5% | 5.04 | 0.048 | 0.0139 |
-| 246 | 89.0% | 0.61 | 0.510 | 0.0183 | 89.8% | 6.13 | 0.058 | 0.0139 |
+| 35 | 94.5% | 0.85 | 0.017 | 0.0143 | 94.0% | 0.29 | 0.196 | 0.0154 |
+| 60 | 92.8% | 1.53 | 0.022 | 0.0138 | 92.5% | 0.34 | 0.232 | 0.0166 |
+| 92 | 92.2% | 2.38 | 0.030 | 0.0137 | 92.0% | 0.38 | 0.287 | 0.0168 |
+| 150 | 92.0% | 3.74 | 0.044 | 0.0137 | 91.0% | 0.55 | 0.387 | 0.0174 |
+| 200 | 91.5% | 5.17 | 0.052 | 0.0138 | 90.5% | 0.58 | 0.465 | 0.0179 |
+| 246 | 89.8% | 6.11 | 0.061 | 0.0140 | 88.8% | 0.67 | 0.577 | 0.0198 |
 
 ## Twelve-class: ten commands plus the unknown-word symbol
 
 | engine | commands correct | fillers and digits read as unknown | fillers and digits read as a command | noise minutes | silence finals per minute |
 |---|---|---|---|---|---|
-| vosk | 3917 / 4074 (96.15%) | 5769 / 6931 (83.23%) | 679 (9.80%) | 6.7 | 0.0 |
 | utterpy | 3920 / 4074 (96.22%) | 5815 / 6931 (83.90%) | 633 (9.13%) | 6.7 | 0.0 |
+| vosk | 3915 / 4074 (96.10%) | 5769 / 6931 (83.23%) | 672 (9.70%) | 6.7 | 0.0 |
 
 ## Background noise under the full grammar
 
 | engine | grammar | noise minutes | partial blocks | blocks with a word at rank 0 | silence finals per minute | word blocks with a wordless reading among the rivals |
 |---|---|---|---|---|---|---|
-| vosk | full | 6.7 | 9932 | 0 (0.00%) | 1.1 | no alternatives |
-| vosk | full + [unk] | 6.7 | 9931 | 0 (0.00%) | 0.9 | no alternatives |
 | utterpy | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 | utterpy | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
+| vosk | full | 6.7 | 9931 | 0 (0.00%) | 0.9 | no alternatives |
+| vosk | full + [unk] | 6.7 | 9931 | 0 (0.00%) | 0.9 | no alternatives |
 | utterpy@100 | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 | utterpy@100 | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 | utterpy@300 | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
@@ -256,16 +256,6 @@ The recordings scaled so their floor sits at each level, and digital silence of 
 
 | floor | condition | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
 |---|---|---|---|---|---|---|---|---|
-| digital silence | cold | vosk | 6.7 | 9911 | 0.00 | no alternatives | 0.00 | 0 |
-| digital silence | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
-| -70 dBFS | cold | vosk | 6.7 | 9953 | 0.00 | no alternatives | 2.25 | 0 |
-| -70 dBFS | after a word | vosk | 7.2 | 10786 | 0.56 | no alternatives | 0.00 | 4 |
-| -60 dBFS | cold | vosk | 6.7 | 9955 | 0.00 | no alternatives | 2.25 | 0 |
-| -60 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
-| -50 dBFS | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| -50 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
-| -40 dBFS | cold | vosk | 6.7 | 9950 | 0.00 | no alternatives | 1.95 | 0 |
-| -40 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
 | digital silence | cold | utterpy | 6.7 | 9911 | 0.00 | 0.0 | 0.00 | 0 |
 | digital silence | after a word | utterpy | 7.2 | 10787 | 0.56 | 0.6 | 0.00 | 4 |
 | -70 dBFS | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
@@ -276,9 +266,19 @@ The recordings scaled so their floor sits at each level, and digital silence of 
 | -50 dBFS | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
 | -40 dBFS | cold | utterpy | 6.7 | 9950 | 0.90 | 0.9 | 1.95 | 6 |
 | -40 dBFS | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
+| digital silence | cold | vosk | 6.7 | 9911 | 0.00 | no alternatives | 0.00 | 0 |
+| digital silence | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
+| -70 dBFS | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.40 | 0 |
+| -70 dBFS | after a word | vosk | 7.2 | 10786 | 0.56 | no alternatives | 0.00 | 4 |
+| -60 dBFS | cold | vosk | 6.7 | 9955 | 0.00 | no alternatives | 2.25 | 0 |
+| -60 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
+| -50 dBFS | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| -50 dBFS | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
+| -40 dBFS | cold | vosk | 6.7 | 9950 | 0.00 | no alternatives | 1.95 | 0 |
+| -40 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
 
-Paired over the same samples at -50 dBFS, cold, a sample carrying any rank-0 word: vosk only 0, utterpy only 0, exact two-sided p = 1.
-Paired over the same samples at -50 dBFS, after a word, a sample carrying any rank-0 word: vosk only 0, utterpy only 0, exact two-sided p = 1.
+Paired over the same samples at -50 dBFS, cold, a sample carrying any rank-0 word: utterpy only 0, vosk only 0, exact two-sided p = 1.
+Paired over the same samples at -50 dBFS, after a word, a sample carrying any rank-0 word: utterpy only 0, vosk only 0, exact two-sided p = 1.
 
 ### By grammar size
 
@@ -286,30 +286,30 @@ At a -50 dBFS floor, the 35 dataset words plus filler up to each size.
 
 | entries | condition | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
 |---|---|---|---|---|---|---|---|---|
-| 35 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| 35 | after a word | vosk | 7.2 | 10786 | 0.00 | no alternatives | 0.14 | 0 |
 | 35 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 35 | after a word | utterpy | 7.2 | 10787 | 0.00 | 0.0 | 0.14 | 0 |
-| 60 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| 60 | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
+| 35 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 35 | after a word | vosk | 7.2 | 10786 | 0.00 | no alternatives | 0.14 | 0 |
 | 60 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 60 | after a word | utterpy | 7.2 | 10787 | 0.56 | 0.6 | 0.00 | 4 |
-| 92 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| 92 | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
+| 60 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 60 | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
 | 92 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 92 | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
-| 150 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| 150 | after a word | vosk | 7.2 | 10788 | 3.06 | no alternatives | 0.14 | 22 |
+| 92 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 92 | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
 | 150 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 150 | after a word | utterpy | 7.2 | 10788 | 3.06 | 3.1 | 0.14 | 22 |
-| 200 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| 200 | after a word | vosk | 7.2 | 10788 | 3.06 | no alternatives | 0.14 | 22 |
+| 150 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 150 | after a word | vosk | 7.2 | 10788 | 3.06 | no alternatives | 0.14 | 22 |
 | 200 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 200 | after a word | utterpy | 7.2 | 10788 | 3.06 | 3.1 | 0.14 | 22 |
-| 246 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| 246 | after a word | vosk | 7.2 | 10788 | 4.72 | no alternatives | 0.28 | 22 |
+| 200 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 200 | after a word | vosk | 7.2 | 10788 | 3.06 | no alternatives | 0.14 | 22 |
 | 246 | cold | utterpy | 6.7 | 9954 | 2.70 | 2.7 | 2.40 | 18 |
 | 246 | after a word | utterpy | 7.2 | 10789 | 3.89 | 3.1 | 0.28 | 22 |
+| 246 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| 246 | after a word | vosk | 7.2 | 10788 | 4.72 | no alternatives | 0.28 | 22 |
 
 ### The unknown-word symbol
 
@@ -317,10 +317,10 @@ At the same floor and the full grammar, `[unk]` admitted at each cost the privat
 
 | `[unk]` cost | condition | engine | non-speech minutes | blocks | word at rank 0 /min | word among the rivals /min | finals with a word /min | longest run of blocks |
 |---|---|---|---|---|---|---|---|---|
-| stock | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| stock | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
 | stock | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | stock | after a word | utterpy | 7.2 | 10789 | 0.00 | 0.0 | 0.00 | 0 |
+| stock | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
+| stock | after a word | vosk | 7.2 | 10789 | 0.56 | no alternatives | 0.00 | 4 |
 | 8 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 8 | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
 | 4 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |

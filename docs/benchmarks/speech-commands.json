@@ -6,115 +6,115 @@
   "clips": 400,
   "sizes": {
    "35": {
-    "vosk": {
-     "correct": 376,
-     "accuracy": 94.0,
-     "ctor_first_ms": 0.2208660007454455,
-     "ctor_rest_ms": 0.18244416057307244,
-     "decode_rtf": 0.015019963401731352
-    },
     "utterpy": {
      "correct": 378,
      "accuracy": 94.5,
-     "ctor_first_ms": 0.9049159998539835,
-     "ctor_rest_ms": 0.016840237852496404,
-     "decode_rtf": 0.014211645905608876
+     "ctor_first_ms": 0.8466680010315031,
+     "ctor_rest_ms": 0.017164583813357063,
+     "decode_rtf": 0.014301462125268
+    },
+    "vosk": {
+     "correct": 376,
+     "accuracy": 94.0,
+     "ctor_first_ms": 0.2917349920608103,
+     "ctor_rest_ms": 0.19643675419356077,
+     "decode_rtf": 0.015439447033310008
     }
    },
    "60": {
-    "vosk": {
-     "correct": 370,
-     "accuracy": 92.5,
-     "ctor_first_ms": 0.2878520026570186,
-     "ctor_rest_ms": 0.21627028380814745,
-     "decode_rtf": 0.01617396958506358
-    },
     "utterpy": {
      "correct": 371,
      "accuracy": 92.75,
-     "ctor_first_ms": 1.5059930010465905,
-     "ctor_rest_ms": 0.02025609764790998,
-     "decode_rtf": 0.013617697378077958
+     "ctor_first_ms": 1.5261939988704398,
+     "ctor_rest_ms": 0.022218403138598443,
+     "decode_rtf": 0.013844294940069085
+    },
+    "vosk": {
+     "correct": 370,
+     "accuracy": 92.5,
+     "ctor_first_ms": 0.34149299608543515,
+     "ctor_rest_ms": 0.23239060125038272,
+     "decode_rtf": 0.016618454514094612
     }
    },
    "92": {
-    "vosk": {
-     "correct": 368,
-     "accuracy": 92.0,
-     "ctor_first_ms": 0.36778800131287426,
-     "ctor_rest_ms": 0.27488904544455756,
-     "decode_rtf": 0.016684046722274665
-    },
     "utterpy": {
      "correct": 369,
      "accuracy": 92.25,
-     "ctor_first_ms": 2.3830150021240115,
-     "ctor_rest_ms": 0.027775909838600454,
-     "decode_rtf": 0.013624010385140894
+     "ctor_first_ms": 2.3795930028427392,
+     "ctor_rest_ms": 0.03047914057211451,
+     "decode_rtf": 0.013747055991461376
+    },
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "ctor_first_ms": 0.3778120008064434,
+     "ctor_rest_ms": 0.2874615916574985,
+     "decode_rtf": 0.016849655041991162
     }
    },
    "150": {
-    "vosk": {
-     "correct": 364,
-     "accuracy": 91.0,
-     "ctor_first_ms": 0.4575810016831383,
-     "ctor_rest_ms": 0.37343479189053086,
-     "decode_rtf": 0.017236462766001857
-    },
     "utterpy": {
      "correct": 368,
      "accuracy": 92.0,
-     "ctor_first_ms": 3.6357369972392917,
-     "ctor_rest_ms": 0.04136706790670911,
-     "decode_rtf": 0.013767487643443944
+     "ctor_first_ms": 3.738418992725201,
+     "ctor_rest_ms": 0.04421336621420696,
+     "decode_rtf": 0.013749231721299403
+    },
+    "vosk": {
+     "correct": 364,
+     "accuracy": 91.0,
+     "ctor_first_ms": 0.5458790110424161,
+     "ctor_rest_ms": 0.3871921430424178,
+     "decode_rtf": 0.017356251466857847
     }
    },
    "200": {
-    "vosk": {
-     "correct": 361,
-     "accuracy": 90.25,
-     "ctor_first_ms": 0.5401880043791607,
-     "ctor_rest_ms": 0.4502344262502611,
-     "decode_rtf": 0.017743860201087605
-    },
     "utterpy": {
      "correct": 366,
      "accuracy": 91.5,
-     "ctor_first_ms": 5.040087999077514,
-     "ctor_rest_ms": 0.047522839145643876,
-     "decode_rtf": 0.013859934759063343
+     "ctor_first_ms": 5.169563009985723,
+     "ctor_rest_ms": 0.05191675661438679,
+     "decode_rtf": 0.013823163885561218
+    },
+    "vosk": {
+     "correct": 362,
+     "accuracy": 90.5,
+     "ctor_first_ms": 0.5757699982495978,
+     "ctor_rest_ms": 0.46529552615848707,
+     "decode_rtf": 0.01789765109808694
     }
    },
    "246": {
-    "vosk": {
-     "correct": 356,
-     "accuracy": 89.0,
-     "ctor_first_ms": 0.6062790052965283,
-     "ctor_rest_ms": 0.5101738266753649,
-     "decode_rtf": 0.01825663875161835
-    },
     "utterpy": {
      "correct": 359,
      "accuracy": 89.75,
-     "ctor_first_ms": 6.128014007117599,
-     "ctor_rest_ms": 0.05758734063109976,
-     "decode_rtf": 0.013871341017128284
+     "ctor_first_ms": 6.113918992923573,
+     "ctor_rest_ms": 0.06131741610258808,
+     "decode_rtf": 0.013956348186966023
+    },
+    "vosk": {
+     "correct": 355,
+     "accuracy": 88.75,
+     "ctor_first_ms": 0.6724029954057187,
+     "ctor_rest_ms": 0.5770043460410065,
+     "decode_rtf": 0.01983900068607533
     }
    }
   }
  },
- "out": "docs/benchmarks/speech-commands",
+ "out": "/home/jared/Repos/utter/docs/benchmarks/speech-commands",
  "provenance": {
-  "date": "2026-09-24 06:37:57Z",
-  "utter_revision": "765482d",
+  "date": "2026-09-29 20:36:30Z",
+  "utter_revision": "6fa97d0",
   "source_dirty": false,
-  "docs_dirty": true,
-  "wheel_path": "site-765482d/utterpy/__init__.py",
-  "wheel_revision": "765482d7b70a6d3f5c4071e56e280b7d5df7b598",
+  "docs_dirty": false,
+  "wheel_path": "6fa97d06ece9/utterpy/__init__.py",
+  "wheel_revision": "6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a",
   "wheel_matches_head": true,
   "engines": {
-   "vosk": "0.3.45",
-   "utterpy": "0.0.5"
+   "utterpy": "0.0.5",
+   "vosk": "0.3.45"
   },
   "model": "vosk-model-small-en-us-0.15",
   "cpu": "12th Gen Intel(R) Core(TM) i7-12700F",
@@ -122,103 +122,103 @@
   "block_ms": 40
  },
  "preflight": {
-  "vosk": {
-   "ok": true,
-   "model_load_s": 0.1784677429968724,
-   "first_ctor_ms": 0.37809200875926763
-  },
   "utterpy": {
    "ok": true,
-   "model_load_s": 0.13770152399956714,
-   "first_ctor_ms": 24.264073988888413
+   "model_load_s": 0.13160100200911984,
+   "first_ctor_ms": 2.1146189974388108
+  },
+  "vosk": {
+   "ok": true,
+   "model_load_s": 0.17711117600265425,
+   "first_ctor_ms": 0.37589299608953297
   }
  },
  "agreement": {
   "pair": [
-   "vosk",
-   "utterpy"
+   "utterpy",
+   "vosk"
   ],
   "total": 11005,
-  "identical": 10913,
-  "differ": 92,
-  "differ_a_right": 17,
-  "differ_b_right": 50,
-  "differ_neither": 25,
+  "identical": 10912,
+  "differ": 93,
+  "differ_a_right": 51,
+  "differ_b_right": 19,
+  "differ_neither": 23,
   "empty": {
-   "vosk": 411,
-   "utterpy": 412
+   "utterpy": 412,
+   "vosk": 414
   },
   "empty_one_way": {
-   "vosk": 5,
-   "utterpy": 6
+   "utterpy": 5,
+   "vosk": 7
   }
  },
  "significance": {
   "all words": {
-   "only_a": 17,
-   "only_b": 50,
-   "p": 6.737973666915315e-05,
+   "only_a": 51,
+   "only_b": 19,
+   "p": 0.00016604182060301842,
    "holm": null,
-   "vosk_split": {
-    "word": 14,
-    "silence": 3
-   },
    "utterpy_split": {
-    "word": 47,
-    "silence": 3
+    "word": 46,
+    "silence": 5
+   },
+   "vosk_split": {
+    "word": 17,
+    "silence": 2
    }
   },
-  "eight": {
-   "only_a": 0,
-   "only_b": 9,
-   "p": 0.00390625,
-   "holm": 0.13671875
-  },
   "zero": {
-   "only_a": 0,
-   "only_b": 6,
+   "only_a": 6,
+   "only_b": 0,
    "p": 0.031250000000000014,
    "holm": 1.0
   },
+  "eight": {
+   "only_a": 8,
+   "only_b": 1,
+   "p": 0.03906249999999996,
+   "holm": 1.0
+  },
   "go": {
-   "only_a": 0,
-   "only_b": 5,
+   "only_a": 5,
+   "only_b": 0,
    "p": 0.0625,
    "holm": 1.0
   },
   "two": {
-   "only_a": 0,
-   "only_b": 3,
-   "p": 0.25000000000000006,
+   "only_a": 4,
+   "only_b": 0,
+   "p": 0.125,
    "holm": 1.0
   },
   "visual": {
-   "only_a": 3,
-   "only_b": 0,
+   "only_a": 0,
+   "only_b": 3,
    "p": 0.25000000000000006,
    "holm": 1.0
   },
   "left": {
-   "only_a": 0,
-   "only_b": 2,
+   "only_a": 2,
+   "only_b": 0,
    "p": 0.5,
    "holm": 1.0
   },
-  "three": {
-   "only_a": 0,
-   "only_b": 2,
+  "five": {
+   "only_a": 2,
+   "only_b": 0,
    "p": 0.5,
    "holm": 1.0
   },
   "nine": {
-   "only_a": 0,
-   "only_b": 2,
+   "only_a": 2,
+   "only_b": 0,
    "p": 0.5,
    "holm": 1.0
   },
   "forward": {
-   "only_a": 1,
-   "only_b": 3,
+   "only_a": 3,
+   "only_b": 1,
    "p": 0.6249999999999994,
    "holm": 1.0
   },
@@ -235,38 +235,38 @@
    "holm": 1.0
   },
   "up": {
-   "only_a": 1,
+   "only_a": 2,
    "only_b": 1,
    "p": 1.0,
    "holm": 1.0
   },
   "down": {
    "only_a": 1,
-   "only_b": 1,
+   "only_b": 2,
    "p": 1.0,
    "holm": 1.0
   },
   "right": {
-   "only_a": 2,
-   "only_b": 3,
+   "only_a": 3,
+   "only_b": 2,
    "p": 1.0,
    "holm": 1.0
   },
   "on": {
-   "only_a": 1,
-   "only_b": 0,
+   "only_a": 0,
+   "only_b": 1,
    "p": 1.0,
    "holm": 1.0
   },
   "off": {
-   "only_a": 3,
+   "only_a": 4,
    "only_b": 4,
    "p": 1.0,
    "holm": 1.0
   },
   "stop": {
-   "only_a": 0,
-   "only_b": 1,
+   "only_a": 1,
+   "only_b": 0,
    "p": 1.0,
    "holm": 1.0
   },
@@ -276,27 +276,27 @@
    "p": 1.0,
    "holm": 1.0
   },
-  "four": {
+  "three": {
    "only_a": 2,
    "only_b": 1,
    "p": 1.0,
    "holm": 1.0
   },
-  "five": {
+  "four": {
    "only_a": 1,
    "only_b": 2,
    "p": 1.0,
    "holm": 1.0
   },
   "six": {
-   "only_a": 0,
-   "only_b": 1,
+   "only_a": 1,
+   "only_b": 0,
    "p": 1.0,
    "holm": 1.0
   },
   "seven": {
-   "only_a": 0,
-   "only_b": 1,
+   "only_a": 1,
+   "only_b": 0,
    "p": 1.0,
    "holm": 1.0
   },
@@ -319,8 +319,8 @@
    "holm": 1.0
   },
   "bed": {
-   "only_a": 0,
-   "only_b": 1,
+   "only_a": 1,
+   "only_b": 0,
    "p": 1.0,
    "holm": 1.0
   },
@@ -374,282 +374,12 @@
   },
   "wow": {
    "only_a": 1,
-   "only_b": 1,
+   "only_b": 0,
    "p": 1.0,
    "holm": 1.0
   }
  },
  "full": {
-  "vosk": {
-   "correct": 10069,
-   "total": 11005,
-   "confusions": [
-    [
-     [
-      "up",
-      "(nothing)"
-     ],
-     66
-    ],
-    [
-     [
-      "eight",
-      "a"
-     ],
-     51
-    ],
-    [
-     [
-      "off",
-      "o"
-     ],
-     35
-    ],
-    [
-     [
-      "three",
-      "tree"
-     ],
-     28
-    ],
-    [
-     [
-      "eight",
-      "(nothing)"
-     ],
-     25
-    ],
-    [
-     [
-      "four",
-      "forward"
-     ],
-     21
-    ],
-    [
-     [
-      "forward",
-      "four"
-     ],
-     17
-    ],
-    [
-     [
-      "down",
-      "(nothing)"
-     ],
-     16
-    ],
-    [
-     [
-      "cat",
-      "(nothing)"
-     ],
-     15
-    ],
-    [
-     [
-      "on",
-      "(nothing)"
-     ],
-     14
-    ],
-    [
-     [
-      "off",
-      "(nothing)"
-     ],
-     14
-    ],
-    [
-     [
-      "six",
-      "c"
-     ],
-     14
-    ],
-    [
-     [
-      "four",
-      "(nothing)"
-     ],
-     13
-    ],
-    [
-     [
-      "learn",
-      "(nothing)"
-     ],
-     13
-    ],
-    [
-     [
-      "right",
-      "ray"
-     ],
-     12
-    ]
-   ],
-   "per_word": {
-    "yes": [
-     387,
-     419
-    ],
-    "no": [
-     395,
-     405
-    ],
-    "up": [
-     348,
-     425
-    ],
-    "down": [
-     377,
-     406
-    ],
-    "left": [
-     387,
-     412
-    ],
-    "right": [
-     360,
-     396
-    ],
-    "on": [
-     363,
-     396
-    ],
-    "off": [
-     340,
-     402
-    ],
-    "stop": [
-     401,
-     411
-    ],
-    "go": [
-     377,
-     402
-    ],
-    "zero": [
-     382,
-     418
-    ],
-    "one": [
-     368,
-     399
-    ],
-    "two": [
-     400,
-     424
-    ],
-    "three": [
-     354,
-     405
-    ],
-    "four": [
-     361,
-     400
-    ],
-    "five": [
-     424,
-     445
-    ],
-    "six": [
-     367,
-     394
-    ],
-    "seven": [
-     388,
-     406
-    ],
-    "eight": [
-     313,
-     408
-    ],
-    "nine": [
-     392,
-     408
-    ],
-    "backward": [
-     152,
-     165
-    ],
-    "forward": [
-     133,
-     155
-    ],
-    "follow": [
-     163,
-     172
-    ],
-    "learn": [
-     137,
-     161
-    ],
-    "visual": [
-     141,
-     165
-    ],
-    "bed": [
-     190,
-     207
-    ],
-    "bird": [
-     175,
-     185
-    ],
-    "cat": [
-     177,
-     194
-    ],
-    "dog": [
-     206,
-     220
-    ],
-    "happy": [
-     192,
-     203
-    ],
-    "house": [
-     181,
-     191
-    ],
-    "marvin": [
-     180,
-     195
-    ],
-    "sheila": [
-     198,
-     212
-    ],
-    "tree": [
-     171,
-     193
-    ],
-    "wow": [
-     189,
-     206
-    ]
-   },
-   "latency_ms_p50": 40.000000000000036,
-   "latency_ms_p90": 250.0,
-   "latency_n": 8554,
-   "never_in_partial": 2451,
-   "first_shown": 9218,
-   "first_changed": 1137,
-   "first_revised": 688,
-   "first_flushed": 456,
-   "rev_lag_ms_p50": 240.0,
-   "rev_lag_ms_p90": 240.0,
-   "rev_lag_ms_min": 240.0,
-   "rev_lag_ms_max": 480.0,
-   "rtf": 0.017545490318014386,
-   "decode_rtf": 0.01724078935015998,
-   "ctor_ms": 0.29948985796808514,
-   "ctor_first_ms": 0.31697400845587254,
-   "ctor_rest_ms": 0.2994882690776373
-  },
   "utterpy": {
    "correct": 10102,
    "total": 11005,
@@ -914,22 +644,292 @@
    "rev_lag_ms_p90": 240.0,
    "rev_lag_ms_min": 240.0,
    "rev_lag_ms_max": 480.0,
-   "rtf": 0.014162749727816228,
-   "decode_rtf": 0.014134529627835327,
-   "ctor_ms": 0.02773746927893987,
-   "ctor_first_ms": 2.4398759996984154,
-   "ctor_rest_ms": 0.027518263669123483
+   "rtf": 0.014047120863991224,
+   "decode_rtf": 0.014022891932180532,
+   "ctor_ms": 0.0238145595591605,
+   "ctor_first_ms": 2.1401220001280308,
+   "ctor_rest_ms": 0.023622237908799824
+  },
+  "vosk": {
+   "correct": 10070,
+   "total": 11005,
+   "confusions": [
+    [
+     [
+      "up",
+      "(nothing)"
+     ],
+     67
+    ],
+    [
+     [
+      "eight",
+      "a"
+     ],
+     50
+    ],
+    [
+     [
+      "off",
+      "o"
+     ],
+     34
+    ],
+    [
+     [
+      "three",
+      "tree"
+     ],
+     27
+    ],
+    [
+     [
+      "eight",
+      "(nothing)"
+     ],
+     25
+    ],
+    [
+     [
+      "four",
+      "forward"
+     ],
+     20
+    ],
+    [
+     [
+      "forward",
+      "four"
+     ],
+     17
+    ],
+    [
+     [
+      "down",
+      "(nothing)"
+     ],
+     16
+    ],
+    [
+     [
+      "cat",
+      "(nothing)"
+     ],
+     15
+    ],
+    [
+     [
+      "on",
+      "(nothing)"
+     ],
+     14
+    ],
+    [
+     [
+      "off",
+      "(nothing)"
+     ],
+     14
+    ],
+    [
+     [
+      "six",
+      "c"
+     ],
+     14
+    ],
+    [
+     [
+      "four",
+      "(nothing)"
+     ],
+     13
+    ],
+    [
+     [
+      "learn",
+      "(nothing)"
+     ],
+     13
+    ],
+    [
+     [
+      "right",
+      "ray"
+     ],
+     12
+    ]
+   ],
+   "per_word": {
+    "yes": [
+     387,
+     419
+    ],
+    "no": [
+     395,
+     405
+    ],
+    "up": [
+     347,
+     425
+    ],
+    "down": [
+     378,
+     406
+    ],
+    "left": [
+     387,
+     412
+    ],
+    "right": [
+     360,
+     396
+    ],
+    "on": [
+     363,
+     396
+    ],
+    "off": [
+     341,
+     402
+    ],
+    "stop": [
+     401,
+     411
+    ],
+    "go": [
+     377,
+     402
+    ],
+    "zero": [
+     382,
+     418
+    ],
+    "one": [
+     368,
+     399
+    ],
+    "two": [
+     399,
+     424
+    ],
+    "three": [
+     355,
+     405
+    ],
+    "four": [
+     361,
+     400
+    ],
+    "five": [
+     423,
+     445
+    ],
+    "six": [
+     367,
+     394
+    ],
+    "seven": [
+     388,
+     406
+    ],
+    "eight": [
+     315,
+     408
+    ],
+    "nine": [
+     392,
+     408
+    ],
+    "backward": [
+     152,
+     165
+    ],
+    "forward": [
+     133,
+     155
+    ],
+    "follow": [
+     163,
+     172
+    ],
+    "learn": [
+     137,
+     161
+    ],
+    "visual": [
+     141,
+     165
+    ],
+    "bed": [
+     190,
+     207
+    ],
+    "bird": [
+     175,
+     185
+    ],
+    "cat": [
+     177,
+     194
+    ],
+    "dog": [
+     206,
+     220
+    ],
+    "happy": [
+     192,
+     203
+    ],
+    "house": [
+     181,
+     191
+    ],
+    "marvin": [
+     180,
+     195
+    ],
+    "sheila": [
+     198,
+     212
+    ],
+    "tree": [
+     171,
+     193
+    ],
+    "wow": [
+     188,
+     206
+    ]
+   },
+   "latency_ms_p50": 40.000000000000036,
+   "latency_ms_p90": 250.0,
+   "latency_n": 8560,
+   "never_in_partial": 2445,
+   "first_shown": 9220,
+   "first_changed": 1138,
+   "first_revised": 690,
+   "first_flushed": 455,
+   "rev_lag_ms_p50": 240.0,
+   "rev_lag_ms_p90": 240.0,
+   "rev_lag_ms_min": 240.0,
+   "rev_lag_ms_max": 480.0,
+   "rtf": 0.017054304220529413,
+   "decode_rtf": 0.01676016609998141,
+   "ctor_ms": 0.2891076604259907,
+   "ctor_first_ms": 0.38177000533323735,
+   "ctor_rest_ms": 0.28909923963855816
   }
  },
  "determinism": {
-  "vosk": {
+  "utterpy": {
    "fresh_processes": {
     "partials": [],
     "finals": [],
     "compared": 11005
    }
   },
-  "utterpy": {
+  "vosk": {
    "fresh_processes": {
     "partials": [],
     "finals": [],
@@ -941,7 +941,7 @@
   "clips": 800,
   "pad_ms": 2000,
   "engines": {
-   "vosk": {
+   "utterpy": {
     "endpointed": 781,
     "never": 19,
     "ms_p50": 870.0000000000001,
@@ -949,7 +949,7 @@
     "ms_p99": 1150.0000000000002,
     "n": 781
    },
-   "utterpy": {
+   "vosk": {
     "endpointed": 781,
     "never": 19,
     "ms_p50": 870.0000000000001,
@@ -1000,7 +1000,7 @@
   },
   "agreement": {
    "both": 781,
-   "same": 765
+   "same": 767
   },
   "bound_words": {
    "utterpy@100": {
@@ -1065,17 +1065,6 @@
   "finest_ms": 10,
   "sizes": {
    "10": {
-    "vosk": {
-     "correct": 368,
-     "accuracy": 92.0,
-     "latency_ms_p50": 30.00000000000003,
-     "latency_ms_p90": 240.0,
-     "latency_n": 317,
-     "same_as_finest": 317,
-     "compared_to_finest": 317,
-     "max_shift_ms": 0,
-     "decode_rtf": 0.016971178798672725
-    },
     "utterpy": {
      "correct": 369,
      "accuracy": 92.25,
@@ -1085,21 +1074,21 @@
      "same_as_finest": 319,
      "compared_to_finest": 319,
      "max_shift_ms": 0,
-     "decode_rtf": 0.013816402803245652
+     "decode_rtf": 0.01417230483243432
+    },
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 317,
+     "same_as_finest": 317,
+     "compared_to_finest": 317,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.017903409972553824
     }
    },
    "20": {
-    "vosk": {
-     "correct": 368,
-     "accuracy": 92.0,
-     "latency_ms_p50": 30.00000000000003,
-     "latency_ms_p90": 240.0,
-     "latency_n": 317,
-     "same_as_finest": 317,
-     "compared_to_finest": 317,
-     "max_shift_ms": 0,
-     "decode_rtf": 0.01675814010725462
-    },
     "utterpy": {
      "correct": 369,
      "accuracy": 92.25,
@@ -1109,21 +1098,21 @@
      "same_as_finest": 319,
      "compared_to_finest": 319,
      "max_shift_ms": 0,
-     "decode_rtf": 0.013720538963240452
+     "decode_rtf": 0.014093203500260628
+    },
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 317,
+     "same_as_finest": 317,
+     "compared_to_finest": 317,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.01718188888265993
     }
    },
    "40": {
-    "vosk": {
-     "correct": 368,
-     "accuracy": 92.0,
-     "latency_ms_p50": 30.00000000000003,
-     "latency_ms_p90": 240.0,
-     "latency_n": 317,
-     "same_as_finest": 317,
-     "compared_to_finest": 317,
-     "max_shift_ms": 0,
-     "decode_rtf": 0.016664774863026522
-    },
     "utterpy": {
      "correct": 369,
      "accuracy": 92.25,
@@ -1133,21 +1122,21 @@
      "same_as_finest": 319,
      "compared_to_finest": 319,
      "max_shift_ms": 0,
-     "decode_rtf": 0.01361313560317302
+     "decode_rtf": 0.01404802156886765
+    },
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 317,
+     "same_as_finest": 317,
+     "compared_to_finest": 317,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.01711073110994319
     }
    },
    "80": {
-    "vosk": {
-     "correct": 368,
-     "accuracy": 92.0,
-     "latency_ms_p50": 30.00000000000003,
-     "latency_ms_p90": 240.0,
-     "latency_n": 317,
-     "same_as_finest": 317,
-     "compared_to_finest": 317,
-     "max_shift_ms": 0,
-     "decode_rtf": 0.016515083445553
-    },
     "utterpy": {
      "correct": 369,
      "accuracy": 92.25,
@@ -1157,21 +1146,21 @@
      "same_as_finest": 319,
      "compared_to_finest": 319,
      "max_shift_ms": 0,
-     "decode_rtf": 0.014533923928539992
-    }
-   },
-   "100": {
+     "decode_rtf": 0.01382903725870788
+    },
     "vosk": {
      "correct": 368,
      "accuracy": 92.0,
-     "latency_ms_p50": 79.99999999999996,
-     "latency_ms_p90": 280.0,
-     "latency_n": 316,
-     "same_as_finest": 26,
-     "compared_to_finest": 316,
-     "max_shift_ms": 60,
-     "decode_rtf": 0.016579456119354873
-    },
+     "latency_ms_p50": 30.00000000000003,
+     "latency_ms_p90": 240.0,
+     "latency_n": 317,
+     "same_as_finest": 317,
+     "compared_to_finest": 317,
+     "max_shift_ms": 0,
+     "decode_rtf": 0.01686575336646834
+    }
+   },
+   "100": {
     "utterpy": {
      "correct": 368,
      "accuracy": 92.0,
@@ -1181,24 +1170,35 @@
      "same_as_finest": 26,
      "compared_to_finest": 319,
      "max_shift_ms": 60,
-     "decode_rtf": 0.013802281535784914
+     "decode_rtf": 0.013889343662596563
+    },
+    "vosk": {
+     "correct": 368,
+     "accuracy": 92.0,
+     "latency_ms_p50": 79.99999999999996,
+     "latency_ms_p90": 280.0,
+     "latency_n": 317,
+     "same_as_finest": 26,
+     "compared_to_finest": 317,
+     "max_shift_ms": 60,
+     "decode_rtf": 0.016796306060551755
     }
    }
   }
  },
  "steady_state": {
-  "vosk": {
-   "rtf": 0.012095749855009566,
-   "ms_p50": 0.048349000280722976,
-   "ms_p95": 2.7822140109492466,
-   "ms_p99": 3.1744600128149614,
+  "utterpy": {
+   "rtf": 0.01109584529753155,
+   "ms_p50": 0.043473002733662724,
+   "ms_p95": 2.52452700806316,
+   "ms_p99": 2.8429810045054182,
    "seconds": 295.3100625
   },
-  "utterpy": {
-   "rtf": 0.010361337067547046,
-   "ms_p50": 0.04190900654066354,
-   "ms_p95": 2.3625949979759753,
-   "ms_p99": 2.5652290059952065,
+  "vosk": {
+   "rtf": 0.012189463883687694,
+   "ms_p50": 0.04850499681197107,
+   "ms_p95": 2.7958840073551983,
+   "ms_p99": 3.25212899770122,
    "seconds": 295.3100625
   }
  },
@@ -1211,25 +1211,25 @@
    0
   ],
   "results": {
-   "vosk": {
-    "20": 699,
-    "10": 634,
-    "5": 558,
-    "0": 399,
-    "clean": 729
-   },
    "utterpy": {
     "20": 702,
     "10": 634,
     "5": 560,
     "0": 400,
     "clean": 730
+   },
+   "vosk": {
+    "20": 699,
+    "10": 634,
+    "5": 558,
+    "0": 399,
+    "clean": 729
    }
   },
   "paired": {
    "20": {
-    "only_a": 2,
-    "only_b": 5,
+    "only_a": 5,
+    "only_b": 2,
     "p": 0.453125
    },
    "10": {
@@ -1238,32 +1238,23 @@
     "p": 1.0
    },
    "5": {
-    "only_a": 6,
-    "only_b": 8,
+    "only_a": 8,
+    "only_b": 6,
     "p": 0.7905273437500022
    },
    "0": {
-    "only_a": 7,
-    "only_b": 8,
+    "only_a": 8,
+    "only_b": 7,
     "p": 0.9999999999999999
    },
    "clean": {
-    "only_a": 1,
-    "only_b": 2,
+    "only_a": 2,
+    "only_b": 1,
     "p": 1.0
    }
   }
  },
  "twelve": {
-  "vosk": {
-   "cmd_ok": 3917,
-   "cmd_total": 4074,
-   "other_unk": 5769,
-   "other_cmd": 679,
-   "other_total": 6931,
-   "noise_minutes": 6.656636458333334,
-   "silence_finals": 0
-  },
   "utterpy": {
    "cmd_ok": 3920,
    "cmd_total": 4074,
@@ -1272,23 +1263,18 @@
    "other_total": 6931,
    "noise_minutes": 6.656636458333334,
    "silence_finals": 0
+  },
+  "vosk": {
+   "cmd_ok": 3915,
+   "cmd_total": 4074,
+   "other_unk": 5769,
+   "other_cmd": 672,
+   "other_total": 6931,
+   "noise_minutes": 6.656636458333334,
+   "silence_finals": 0
   }
  },
  "noise": {
-  "vosk/full": {
-   "minutes": 6.656636458333334,
-   "blocks": 9932,
-   "word_blocks": 0,
-   "sil_rival": 0,
-   "silence_finals": 7
-  },
-  "vosk/full + [unk]": {
-   "minutes": 6.656636458333334,
-   "blocks": 9931,
-   "word_blocks": 0,
-   "sil_rival": 0,
-   "silence_finals": 6
-  },
   "utterpy/full": {
    "minutes": 6.656636458333334,
    "blocks": 9932,
@@ -1299,6 +1285,20 @@
   "utterpy/full + [unk]": {
    "minutes": 6.656636458333334,
    "blocks": 9932,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "vosk/full": {
+   "minutes": 6.656636458333334,
+   "blocks": 9931,
+   "word_blocks": 0,
+   "sil_rival": 0,
+   "silence_finals": 6
+  },
+  "vosk/full + [unk]": {
+   "minutes": 6.656636458333334,
+   "blocks": 9931,
    "word_blocks": 0,
    "sil_rival": 0,
    "silence_finals": 6
@@ -1379,24 +1379,6 @@
   "base_floor_dbfs": -50.0,
   "floor": {
    "digital silence": {
-    "cold/vosk": {
-     "blocks": 9911,
-     "word_blocks": 0,
-     "rival_blocks": 0,
-     "finals": 82,
-     "phantom_finals": 0,
-     "longest_run": 0,
-     "minutes": 6.656636458333334
-    },
-    "after a word/vosk": {
-     "blocks": 10787,
-     "word_blocks": 4,
-     "rival_blocks": 0,
-     "finals": 197,
-     "phantom_finals": 0,
-     "longest_run": 4,
-     "minutes": 7.199759375
-    },
     "cold/utterpy": {
      "blocks": 9911,
      "word_blocks": 0,
@@ -1414,27 +1396,27 @@
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    }
-   },
-   "-70 dBFS": {
+    },
     "cold/vosk": {
-     "blocks": 9953,
+     "blocks": 9911,
      "word_blocks": 0,
      "rival_blocks": 0,
-     "finals": 40,
-     "phantom_finals": 15,
+     "finals": 82,
+     "phantom_finals": 0,
      "longest_run": 0,
      "minutes": 6.656636458333334
     },
     "after a word/vosk": {
-     "blocks": 10786,
+     "blocks": 10787,
      "word_blocks": 4,
      "rival_blocks": 0,
-     "finals": 198,
+     "finals": 197,
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    },
+    }
+   },
+   "-70 dBFS": {
     "cold/utterpy": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1452,27 +1434,27 @@
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    }
-   },
-   "-60 dBFS": {
+    },
     "cold/vosk": {
-     "blocks": 9955,
+     "blocks": 9954,
      "word_blocks": 0,
      "rival_blocks": 0,
-     "finals": 38,
-     "phantom_finals": 15,
+     "finals": 39,
+     "phantom_finals": 16,
      "longest_run": 0,
      "minutes": 6.656636458333334
     },
     "after a word/vosk": {
-     "blocks": 10788,
+     "blocks": 10786,
      "word_blocks": 4,
      "rival_blocks": 0,
-     "finals": 196,
+     "finals": 198,
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    },
+    }
+   },
+   "-60 dBFS": {
     "cold/utterpy": {
      "blocks": 9955,
      "word_blocks": 0,
@@ -1490,14 +1472,12 @@
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    }
-   },
-   "-50 dBFS": {
+    },
     "cold/vosk": {
-     "blocks": 9954,
+     "blocks": 9955,
      "word_blocks": 0,
      "rival_blocks": 0,
-     "finals": 39,
+     "finals": 38,
      "phantom_finals": 15,
      "longest_run": 0,
      "minutes": 6.656636458333334
@@ -1510,7 +1490,9 @@
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    },
+    }
+   },
+   "-50 dBFS": {
     "cold/utterpy": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1528,27 +1510,27 @@
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    }
-   },
-   "-40 dBFS": {
+    },
     "cold/vosk": {
-     "blocks": 9950,
+     "blocks": 9954,
      "word_blocks": 0,
      "rival_blocks": 0,
-     "finals": 43,
-     "phantom_finals": 13,
+     "finals": 39,
+     "phantom_finals": 15,
      "longest_run": 0,
      "minutes": 6.656636458333334
     },
     "after a word/vosk": {
-     "blocks": 10788,
+     "blocks": 10787,
      "word_blocks": 4,
      "rival_blocks": 0,
-     "finals": 196,
+     "finals": 197,
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    },
+    }
+   },
+   "-40 dBFS": {
     "cold/utterpy": {
      "blocks": 9950,
      "word_blocks": 6,
@@ -1562,6 +1544,24 @@
      "blocks": 10788,
      "word_blocks": 4,
      "rival_blocks": 4,
+     "finals": 196,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/vosk": {
+     "blocks": 9950,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 43,
+     "phantom_finals": 13,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 4,
+     "rival_blocks": 0,
      "finals": 196,
      "phantom_finals": 0,
      "longest_run": 4,
@@ -1583,6 +1583,24 @@
   },
   "grammar": {
    "35": {
+    "cold/utterpy": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/utterpy": {
+     "blocks": 10787,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 197,
+     "phantom_finals": 1,
+     "longest_run": 0,
+     "minutes": 7.199759375
+    },
     "cold/vosk": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1600,45 +1618,9 @@
      "phantom_finals": 1,
      "longest_run": 0,
      "minutes": 7.199759375
-    },
-    "cold/utterpy": {
-     "blocks": 9954,
-     "word_blocks": 0,
-     "rival_blocks": 0,
-     "finals": 39,
-     "phantom_finals": 15,
-     "longest_run": 0,
-     "minutes": 6.656636458333334
-    },
-    "after a word/utterpy": {
-     "blocks": 10787,
-     "word_blocks": 0,
-     "rival_blocks": 0,
-     "finals": 197,
-     "phantom_finals": 1,
-     "longest_run": 0,
-     "minutes": 7.199759375
     }
    },
    "60": {
-    "cold/vosk": {
-     "blocks": 9954,
-     "word_blocks": 0,
-     "rival_blocks": 0,
-     "finals": 39,
-     "phantom_finals": 15,
-     "longest_run": 0,
-     "minutes": 6.656636458333334
-    },
-    "after a word/vosk": {
-     "blocks": 10787,
-     "word_blocks": 4,
-     "rival_blocks": 0,
-     "finals": 197,
-     "phantom_finals": 0,
-     "longest_run": 4,
-     "minutes": 7.199759375
-    },
     "cold/utterpy": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1652,6 +1634,24 @@
      "blocks": 10787,
      "word_blocks": 4,
      "rival_blocks": 4,
+     "finals": 197,
+     "phantom_finals": 0,
+     "longest_run": 4,
+     "minutes": 7.199759375
+    },
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10787,
+     "word_blocks": 4,
+     "rival_blocks": 0,
      "finals": 197,
      "phantom_finals": 0,
      "longest_run": 4,
@@ -1659,24 +1659,6 @@
     }
    },
    "92": {
-    "cold/vosk": {
-     "blocks": 9954,
-     "word_blocks": 0,
-     "rival_blocks": 0,
-     "finals": 39,
-     "phantom_finals": 15,
-     "longest_run": 0,
-     "minutes": 6.656636458333334
-    },
-    "after a word/vosk": {
-     "blocks": 10788,
-     "word_blocks": 4,
-     "rival_blocks": 0,
-     "finals": 196,
-     "phantom_finals": 0,
-     "longest_run": 4,
-     "minutes": 7.199759375
-    },
     "cold/utterpy": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1694,9 +1676,7 @@
      "phantom_finals": 0,
      "longest_run": 4,
      "minutes": 7.199759375
-    }
-   },
-   "150": {
+    },
     "cold/vosk": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1707,14 +1687,16 @@
      "minutes": 6.656636458333334
     },
     "after a word/vosk": {
-     "blocks": 10788,
-     "word_blocks": 22,
+     "blocks": 10787,
+     "word_blocks": 4,
      "rival_blocks": 0,
-     "finals": 196,
-     "phantom_finals": 1,
-     "longest_run": 22,
+     "finals": 197,
+     "phantom_finals": 0,
+     "longest_run": 4,
      "minutes": 7.199759375
-    },
+    }
+   },
+   "150": {
     "cold/utterpy": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1728,6 +1710,24 @@
      "blocks": 10788,
      "word_blocks": 22,
      "rival_blocks": 22,
+     "finals": 196,
+     "phantom_finals": 1,
+     "longest_run": 22,
+     "minutes": 7.199759375
+    },
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10788,
+     "word_blocks": 22,
+     "rival_blocks": 0,
      "finals": 196,
      "phantom_finals": 1,
      "longest_run": 22,
@@ -1735,24 +1735,6 @@
     }
    },
    "200": {
-    "cold/vosk": {
-     "blocks": 9954,
-     "word_blocks": 0,
-     "rival_blocks": 0,
-     "finals": 39,
-     "phantom_finals": 15,
-     "longest_run": 0,
-     "minutes": 6.656636458333334
-    },
-    "after a word/vosk": {
-     "blocks": 10788,
-     "word_blocks": 22,
-     "rival_blocks": 0,
-     "finals": 196,
-     "phantom_finals": 1,
-     "longest_run": 22,
-     "minutes": 7.199759375
-    },
     "cold/utterpy": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1770,9 +1752,7 @@
      "phantom_finals": 1,
      "longest_run": 22,
      "minutes": 7.199759375
-    }
-   },
-   "246": {
+    },
     "cold/vosk": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1784,13 +1764,15 @@
     },
     "after a word/vosk": {
      "blocks": 10788,
-     "word_blocks": 34,
+     "word_blocks": 22,
      "rival_blocks": 0,
      "finals": 196,
-     "phantom_finals": 2,
+     "phantom_finals": 1,
      "longest_run": 22,
      "minutes": 7.199759375
-    },
+    }
+   },
+   "246": {
     "cold/utterpy": {
      "blocks": 9954,
      "word_blocks": 18,
@@ -1808,11 +1790,7 @@
      "phantom_finals": 2,
      "longest_run": 22,
      "minutes": 7.199759375
-    }
-   }
-  },
-  "unknown_cost": {
-   "stock": {
+    },
     "cold/vosk": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1824,13 +1802,17 @@
     },
     "after a word/vosk": {
      "blocks": 10788,
-     "word_blocks": 4,
+     "word_blocks": 34,
      "rival_blocks": 0,
      "finals": 196,
-     "phantom_finals": 0,
-     "longest_run": 4,
+     "phantom_finals": 2,
+     "longest_run": 22,
      "minutes": 7.199759375
-    },
+    }
+   }
+  },
+  "unknown_cost": {
+   "stock": {
     "cold/utterpy": {
      "blocks": 9954,
      "word_blocks": 0,
@@ -1847,6 +1829,24 @@
      "finals": 195,
      "phantom_finals": 0,
      "longest_run": 0,
+     "minutes": 7.199759375
+    },
+    "cold/vosk": {
+     "blocks": 9954,
+     "word_blocks": 0,
+     "rival_blocks": 0,
+     "finals": 39,
+     "phantom_finals": 15,
+     "longest_run": 0,
+     "minutes": 6.656636458333334
+    },
+    "after a word/vosk": {
+     "blocks": 10789,
+     "word_blocks": 4,
+     "rival_blocks": 0,
+     "finals": 195,
+     "phantom_finals": 0,
+     "longest_run": 4,
      "minutes": 7.199759375
     }
    },
