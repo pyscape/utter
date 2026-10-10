@@ -78,7 +78,7 @@ jobs:
             tar -czf "${{ matrix.name }}.tar.gz" "${{ matrix.name }}"
           fi
       - if: "!matrix.test_only"
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ matrix.name }}
           path: |
@@ -111,7 +111,7 @@ jobs:
           cp third_party/Vosk-Rust/LICENSE utter-macos-universal/LICENSE-Apache-2.0
           cp third_party/Vosk-Rust/NOTICE utter-macos-universal/NOTICE
           tar -czf utter-macos-universal.tar.gz utter-macos-universal
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: utter-macos-universal
           path: utter-macos-universal.tar.gz
