@@ -47,6 +47,10 @@ use std::sync::Arc;
 /// two share one future, so the differences hold for every extension of the winner.
 struct Kept {
     link: Option<Rc<Link>>,
+    /// The record the losing arc would have added on top of `link`, held here rather than
+    /// allocated: its word and the phone it starts, 0 for none.
+    word: Label,
+    starts: i32,
     cost: f32,
     graph: f32,
     /// The phone it was in at the merge, where the winner's may differ.
@@ -556,6 +560,8 @@ impl<'g> Decoder<'g> {
                         ) {
                             let kept = Kept {
                                 link: lost.link,
+                                word: 0,
+                                starts: 0,
                                 cost: lost.cost - won.cost,
                                 graph: lost.graph - won.graph,
                                 phone: lost.phone,
@@ -574,19 +580,10 @@ impl<'g> Decoder<'g> {
                         &mut self.scratch,
                     ) {
                         let phone = self.tid2phone[a.ilabel as usize];
-                        let link = if a.olabel != 0 || phone != tok.phone {
-                            Some(Rc::new(Link {
-                                prev: tok.link.clone(),
-                                frame,
-                                word: a.olabel,
-                                phone: if phone != tok.phone { phone } else { 0 },
-                                join: 0,
-                            }))
-                        } else {
-                            tok.link.clone()
-                        };
                         let kept = Kept {
-                            link,
+                            link: tok.link.clone(),
+                            word: a.olabel,
+                            starts: if phone != tok.phone { phone } else { 0 },
                             cost: tot - won.cost,
                             graph: tok.graph + a.weight - won.graph,
                             phone,
@@ -682,6 +679,8 @@ impl<'g> Decoder<'g> {
                         ) {
                             let kept = Kept {
                                 link: lost.link,
+                                word: 0,
+                                starts: 0,
                                 cost: lost.cost - won.cost,
                                 graph: lost.graph - won.graph,
                                 phone: lost.phone,
@@ -700,19 +699,10 @@ impl<'g> Decoder<'g> {
                         &self.joins,
                         &mut self.scratch,
                     ) {
-                        let link = if a.olabel != 0 {
-                            Some(Rc::new(Link {
-                                prev: tok.link.clone(),
-                                frame,
-                                word: a.olabel,
-                                phone: 0,
-                                join: 0,
-                            }))
-                        } else {
-                            tok.link.clone()
-                        };
                         let kept = Kept {
-                            link,
+                            link: tok.link.clone(),
+                            word: a.olabel,
+                            starts: 0,
                             cost: tot - won.cost,
                             graph: tok.graph + a.weight - won.graph,
                             phone: tok.phone,
@@ -1053,7 +1043,11 @@ impl<'g> Decoder<'g> {
                 words.push(r.word);
             }
             l = if r.join != 0 && route.contains(&r.join) {
-                self.joins.get(r.join).kept.link.as_deref()
+                let kept = &self.joins.get(r.join).kept;
+                if kept.word != 0 {
+                    words.push(kept.word);
+                }
+                kept.link.as_deref()
             } else {
                 r.prev.as_deref()
             };
@@ -1092,8 +1086,9 @@ impl<'g> Decoder<'g> {
                 let join = self.joins.get(j);
                 let k = &join.kept;
                 [
-                    Some(self.way(join.node.prev.as_deref(), 0.0, 0.0, false)),
-                    (k.cost <= margin).then(|| self.way(k.link.as_deref(), k.cost, k.graph, true)),
+                    Some(self.way(0, join.node.prev.as_deref(), 0.0, 0.0, false)),
+                    (k.cost <= margin)
+                        .then(|| self.way(k.word, k.link.as_deref(), k.cost, k.graph, true)),
                 ]
             });
             let mut missing = false;
@@ -1146,15 +1141,28 @@ impl<'g> Decoder<'g> {
         }
     }
 
-    /// The way from `l` down to the next join.
-    fn way(&self, mut l: Option<&Link>, cost: f32, graph: f32, takes_kept: bool) -> Way {
+    /// The way from `l`, with `word` on top when that is not 0, down to the next join.
+    fn way(
+        &self,
+        word: Label,
+        mut l: Option<&Link>,
+        cost: f32,
+        graph: f32,
+        takes_kept: bool,
+    ) -> Way {
         let (mut hash, mut shift, mut len) = (0u64, 1u64, 0);
+        let mut add = |w: Label| {
+            hash = hash.wrapping_add(u64::from(w.cast_unsigned()).wrapping_mul(shift));
+            shift = shift.wrapping_mul(HASH_BASE);
+            len += 1;
+        };
+        if word != 0 {
+            add(word);
+        }
         let mut next = 0;
         while let Some(r) = l {
             if r.word != 0 {
-                hash = hash.wrapping_add(u64::from(r.word.cast_unsigned()).wrapping_mul(shift));
-                shift = shift.wrapping_mul(HASH_BASE);
-                len += 1;
+                add(r.word);
             } else if r.join != 0 {
                 next = r.join;
                 break;
@@ -1225,6 +1233,9 @@ impl<'g> Decoder<'g> {
                     && !changes_there
                 {
                     records.push((resumes, 0, join.phone));
+                }
+                if kept.word != 0 || kept.starts != 0 {
+                    records.push((r.frame, kept.word, kept.starts));
                 }
                 l = kept.link.as_deref();
                 continue;
