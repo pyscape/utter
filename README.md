@@ -57,6 +57,18 @@ Commands measurements](docs/benchmarks/speech-commands.md#full-grammar-accuracy)
 show that latency; the [design measurements](docs/td/0002-the-streaming-runtime-for-vosk-models.md#context-and-problem-statement)
 put streaming ONNX models under the same grammar at about half a second.
 
+### Keep the reading a near tie would drop
+
+Where two readings with different words meet in the search, the
+cheaper one carries on and the other is gone, even when it was a
+fraction of a nat behind. With `SetMergeMargin(nats)` utter keeps such
+a reading when it was within that margin of the one that beat it, and
+lists it among the readings and the final's alternatives like any
+other, so a host that settles close calls with knowledge of its own
+still sees both sides. Off by default; the best path and every decision
+stay as they are. [TD-18](docs/td/0018-a-merge-keeps-the-readings-it-overwrites-within-a-margin.md)
+has the design and what it costs.
+
 ### Know when speech falls outside your phrase list
 
 Vosk phrase lists can include `[unk]`, giving speech outside the list a
