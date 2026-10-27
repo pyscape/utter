@@ -124,14 +124,23 @@ impl Joins {
     }
 }
 
-/// A path from a join down to the start: its words, start first, what it costs over the path
-/// the join sits on, and the joins whose kept history it takes.
+/// A path from a join down to the start: its words as a hash and a count, what it costs over
+/// the path the join sits on, and the joins whose kept history it takes. Its words are read off
+/// the route only if it is listed.
 #[derive(Clone)]
 struct Below {
-    words: Vec<Label>,
+    hash: u64,
+    len: usize,
     cost: f32,
     graph: f32,
     route: Vec<u32>,
+}
+
+/// A word sequence's hash, extended one word at a time from the start.
+fn extend_hash(h: u64, words: impl Iterator<Item = Label>) -> u64 {
+    words.fold(h, |h, w| {
+        (h.rotate_left(5) ^ u64::from(w.cast_unsigned())).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95)
+    })
 }
 
 pub struct Link {
@@ -939,7 +948,7 @@ impl<'g> Decoder<'g> {
         // reading costs more than the path it rides on, so neither can any kept below that path.
         let bound = own.get(listed - 1).map_or(f32::INFINITY, |g| g.rank);
         let mut below: StateMap<Vec<Below>> = StateMap::default();
-        let mut kept: HashMap<Vec<Label>, Group<'_>> = HashMap::new();
+        let mut kept: HashMap<(u64, usize), Group<'_>> = HashMap::new();
         for (&(join, ref above), &(rank, cost, token)) in &heads {
             if join == 0 || (!any_final && rank >= bound) {
                 continue;
@@ -955,20 +964,22 @@ impl<'g> Decoder<'g> {
                 if r >= bound {
                     continue;
                 }
-                let mut words = b.words.clone();
-                words.extend(above.iter().rev());
+                let key = (
+                    extend_hash(b.hash, above.iter().rev().copied()),
+                    b.len + above.len(),
+                );
                 let g = Group {
-                    words,
+                    words: Vec::new(),
                     rank: r,
                     cost: cost + b.cost,
                     token,
                     route: b.route.clone(),
                 };
-                match kept.get_mut(&g.words) {
+                match kept.get_mut(&key) {
                     Some(k) if read_order(k, &g).is_lt() => {}
                     Some(k) => *k = g,
                     None => {
-                        kept.insert(g.words.clone(), g);
+                        kept.insert(key, g);
                     }
                 }
             }
@@ -976,15 +987,16 @@ impl<'g> Decoder<'g> {
         let mut own = own.into_iter();
         let mut v: Vec<Group<'_>> = own.next().into_iter().collect();
         let mut rest: HashMap<Vec<Label>, Group<'_>> = own.map(|g| (g.words.clone(), g)).collect();
-        for (words, g) in kept {
-            if v.first().is_some_and(|f| f.words == words) {
+        for (_, mut g) in kept {
+            g.words = self.route_words(g.token, &g.route);
+            if v.first().is_some_and(|f| f.words == g.words) {
                 continue;
             }
-            match rest.get_mut(&words) {
+            match rest.get_mut(&g.words) {
                 Some(r) if read_order(r, &g).is_lt() => {}
                 Some(r) => *r = g,
                 None => {
-                    rest.insert(words, g);
+                    rest.insert(g.words.clone(), g);
                 }
             }
         }
@@ -992,6 +1004,24 @@ impl<'g> Decoder<'g> {
         rest.sort_by(read_order);
         v.extend(rest);
         v
+    }
+
+    /// The words of a token's path along `route`, from the start.
+    fn route_words(&self, tok: &Token, route: &[u32]) -> Vec<Label> {
+        let mut words = Vec::new();
+        let mut l = tok.link.as_deref();
+        while let Some(r) = l {
+            if r.word != 0 {
+                words.push(r.word);
+            }
+            l = if r.join != 0 && route.contains(&r.join) {
+                self.joins.get(r.join).kept.link.as_deref()
+            } else {
+                r.prev.as_deref()
+            };
+        }
+        words.reverse();
+        words
     }
 
     /// The words of the path a join sits on, from the start to the join.
@@ -1051,7 +1081,8 @@ impl<'g> Decoder<'g> {
             }
             stack.pop();
             let start = [Below {
-                words: Vec::new(),
+                hash: 0,
+                len: 0,
                 cost: 0.0,
                 graph: 0.0,
                 route: Vec::new(),
@@ -1064,14 +1095,13 @@ impl<'g> Decoder<'g> {
                     if c > margin {
                         continue;
                     }
-                    let mut w = b.words.clone();
-                    w.extend(words.iter().rev());
                     let mut route = b.route.clone();
                     if takes {
                         route.push(j);
                     }
                     out.push(Below {
-                        words: w,
+                        hash: extend_hash(b.hash, words.iter().rev().copied()),
+                        len: b.len + words.len(),
                         cost: c,
                         graph: graph + b.graph,
                         route,
@@ -1085,7 +1115,7 @@ impl<'g> Decoder<'g> {
                 if cheapest.len() == cap {
                     break;
                 }
-                if !cheapest.iter().any(|c| c.words == b.words) {
+                if !cheapest.iter().any(|c| c.hash == b.hash && c.len == b.len) {
                     cheapest.push(b);
                 }
             }
