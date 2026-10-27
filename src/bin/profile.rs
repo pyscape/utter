@@ -128,4 +128,13 @@ fn main() {
             t.elapsed().as_secs_f64() * 10.0
         }
     );
+    let t = Instant::now();
+    let groups = dec.grouped(false).len();
+    let grouped_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let t = Instant::now();
+    let readings = dec.readings(false, 10).len();
+    println!(
+        "readings at the end: {groups} groups in {grouped_ms:.3} ms, {readings} with what is kept in {:.3} ms",
+        t.elapsed().as_secs_f64() * 1000.0
+    );
 }

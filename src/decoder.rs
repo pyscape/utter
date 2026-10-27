@@ -134,10 +134,6 @@ struct Below {
     route: Vec<u32>,
 }
 
-/// The cheapest paths kept below one join. Only paths past this many cheaper ones are dropped,
-/// where many joins with near-zero differences would otherwise multiply.
-const KEPT_PER_JOIN: usize = 32;
-
 pub struct Link {
     pub prev: Option<Rc<Link>>,
     /// Output frame this record was created on: the frame an emitting arc consumed, or the
@@ -852,15 +848,15 @@ impl<'g> Decoder<'g> {
         v
     }
 
-    /// [`grouped`](Self::grouped) with the readings kept at joins beside the survivors'. The
-    /// survivors' first group stays first, read off its own token; every other reading takes
-    /// its cheapest copy, kept or surviving.
+    /// [`grouped`](Self::grouped) with the readings kept at joins beside the survivors', as many
+    /// of them as could be among the first `listed`. The survivors' first group stays first,
+    /// read off its own token; every other reading takes its cheapest copy, kept or surviving.
     /// `[[rr:TD-18#Kept readings are reported as readings]]`
-    pub fn readings(&self, use_final: bool) -> Vec<Group<'_>> {
+    pub fn readings(&self, use_final: bool, listed: usize) -> Vec<Group<'_>> {
         let Some(margin) = self.keep else {
             return self.grouped(use_final);
         };
-        if self.joins.is_empty() {
+        if self.joins.is_empty() || listed == 0 {
             return self.grouped(use_final);
         }
         let any_final = use_final && self.cur.keys().any(|&s| self.fst.is_final(s));
@@ -895,95 +891,128 @@ impl<'g> Decoder<'g> {
                 }
             }
         }
-        let mut below: StateMap<Vec<Below>> = StateMap::default();
-        for &(join, _) in heads.keys() {
-            if join != 0 {
-                self.fill_below(join, margin, &mut below);
-            }
-        }
-        let start = [Below {
-            words: Vec::new(),
-            cost: 0.0,
-            graph: 0.0,
-            route: Vec::new(),
-        }];
-        // Per word sequence, its cheapest copy and its cheapest surviving one.
-        let mut groups: HashMap<Vec<Label>, (Group<'_>, Option<(f32, f32, &Token)>)> =
-            HashMap::new();
-        for ((join, above), (rank, cost, token)) in heads {
-            let from: &[Below] = if join == 0 { &start } else { &below[&join] };
-            for b in from {
-                let mut words = b.words.clone();
-                words.extend(above.iter().rev());
-                let own = b.route.is_empty();
-                let g = if own {
-                    Group {
-                        words,
+        // The survivors' readings, chosen as `grouped` chooses them.
+        let mut own_words: StateMap<Vec<Label>> = StateMap::default();
+        let mut survivors: HashMap<Vec<Label>, Group<'_>> = HashMap::new();
+        for (&(join, ref above), &(rank, cost, token)) in &heads {
+            let mut words = own_words
+                .entry(join)
+                .or_insert_with(|| self.own_words(join))
+                .clone();
+            words.extend(above.iter().rev());
+            match survivors.get_mut(&words) {
+                Some(g) if g.rank < rank || (g.rank == rank && g.token.seq >= token.seq) => {}
+                Some(g) => {
+                    *g = Group {
+                        words: Vec::new(),
                         rank,
                         cost,
                         token,
                         route: Vec::new(),
-                    }
-                } else {
-                    let scaled = if any_final {
-                        (1.0 - GRAPH_SCALE) * b.graph
-                    } else {
-                        0.0
                     };
-                    Group {
+                }
+                None => {
+                    survivors.insert(
                         words,
-                        rank: rank + b.cost - scaled,
-                        cost: cost + b.cost,
-                        token,
-                        route: b.route.clone(),
-                    }
+                        Group {
+                            words: Vec::new(),
+                            rank,
+                            cost,
+                            token,
+                            route: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+        let mut own: Vec<Group<'_>> = survivors
+            .into_iter()
+            .map(|(words, g)| Group { words, ..g })
+            .collect();
+        own.sort_by(|a, b| {
+            a.rank
+                .partial_cmp(&b.rank)
+                .unwrap()
+                .then(b.token.seq.cmp(&a.token.seq))
+        });
+        // A reading ranked past the listed-th survivor cannot be listed. On a partial a kept
+        // reading costs more than the path it rides on, so neither can any kept below that path.
+        let bound = own.get(listed - 1).map_or(f32::INFINITY, |g| g.rank);
+        let mut below: StateMap<Vec<Below>> = StateMap::default();
+        let mut kept: HashMap<Vec<Label>, Group<'_>> = HashMap::new();
+        for (&(join, ref above), &(rank, cost, token)) in &heads {
+            if join == 0 || (!any_final && rank >= bound) {
+                continue;
+            }
+            self.fill_below(join, margin, listed + 1, &mut below);
+            for b in below[&join].iter().filter(|b| !b.route.is_empty()) {
+                let scaled = if any_final {
+                    (1.0 - GRAPH_SCALE) * b.graph
+                } else {
+                    0.0
                 };
-                match groups.get_mut(&g.words) {
-                    Some((best, own_best)) => {
-                        if own
-                            && own_best.is_none_or(|o| {
-                                !(o.0 < rank || (o.0 == rank && o.2.seq >= token.seq))
-                            })
-                        {
-                            *own_best = Some((rank, cost, token));
-                        }
-                        if read_order(&g, best).is_lt() {
-                            *best = g;
-                        }
-                    }
+                let r = rank + b.cost - scaled;
+                if r >= bound {
+                    continue;
+                }
+                let mut words = b.words.clone();
+                words.extend(above.iter().rev());
+                let g = Group {
+                    words,
+                    rank: r,
+                    cost: cost + b.cost,
+                    token,
+                    route: b.route.clone(),
+                };
+                match kept.get_mut(&g.words) {
+                    Some(k) if read_order(k, &g).is_lt() => {}
+                    Some(k) => *k = g,
                     None => {
-                        let own_best = own.then_some((rank, cost, token));
-                        groups.insert(g.words.clone(), (g, own_best));
+                        kept.insert(g.words.clone(), g);
                     }
                 }
             }
         }
-        let first = groups
-            .iter()
-            .filter_map(|(w, (_, o))| o.map(|o| (w, o)))
-            .min_by(|(_, a), (_, b)| a.0.partial_cmp(&b.0).unwrap().then(b.2.seq.cmp(&a.2.seq)))
-            .map(|(w, _)| w.clone());
-        let mut v: Vec<Group<'_>> = Vec::with_capacity(groups.len());
-        if let Some((words, (_, Some((rank, cost, token))))) =
-            first.and_then(|w| groups.remove_entry(&w))
-        {
-            v.push(Group {
-                words,
-                rank,
-                cost,
-                token,
-                route: Vec::new(),
-            });
+        let mut own = own.into_iter();
+        let mut v: Vec<Group<'_>> = own.next().into_iter().collect();
+        let mut rest: HashMap<Vec<Label>, Group<'_>> = own.map(|g| (g.words.clone(), g)).collect();
+        for (words, g) in kept {
+            if v.first().is_some_and(|f| f.words == words) {
+                continue;
+            }
+            match rest.get_mut(&words) {
+                Some(r) if read_order(r, &g).is_lt() => {}
+                Some(r) => *r = g,
+                None => {
+                    rest.insert(words, g);
+                }
+            }
         }
-        let mut rest: Vec<Group<'_>> = groups.into_values().map(|(g, _)| g).collect();
+        let mut rest: Vec<Group<'_>> = rest.into_values().collect();
         rest.sort_by(read_order);
         v.extend(rest);
         v
     }
 
-    /// The cheapest paths from `root` down to the start through the joins beneath it, for it
-    /// and every join on the way.
-    fn fill_below(&self, root: u32, margin: f32, memo: &mut StateMap<Vec<Below>>) {
+    /// The words of the path a join sits on, from the start to the join.
+    fn own_words(&self, join: u32) -> Vec<Label> {
+        let mut words = Vec::new();
+        if join != 0 {
+            let mut l = self.joins.get(join).node.prev.as_deref();
+            while let Some(r) = l {
+                if r.word != 0 {
+                    words.push(r.word);
+                }
+                l = r.prev.as_deref();
+            }
+        }
+        words.reverse();
+        words
+    }
+
+    /// The `cap` cheapest paths from `root` down to the start through the joins beneath it, the
+    /// join's own path first, for it and every join on the way.
+    fn fill_below(&self, root: u32, margin: f32, cap: usize, memo: &mut StateMap<Vec<Below>>) {
         // Per join, its ways down: the next join on each (0 at the start), the words before
         // it newest first, what the way costs, and whether it is the kept history.
         type Way = (u32, Vec<Label>, f32, f32, bool);
@@ -1051,9 +1080,9 @@ impl<'g> Decoder<'g> {
             }
             // Stable, so on a tie the join's own path, pushed first, stays first.
             out.sort_by(|a, b| a.cost.total_cmp(&b.cost));
-            let mut cheapest: Vec<Below> = Vec::with_capacity(out.len().min(KEPT_PER_JOIN));
+            let mut cheapest: Vec<Below> = Vec::with_capacity(out.len().min(cap));
             for b in out {
-                if cheapest.len() == KEPT_PER_JOIN {
+                if cheapest.len() == cap {
                     break;
                 }
                 if !cheapest.iter().any(|c| c.words == b.words) {

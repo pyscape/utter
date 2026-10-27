@@ -1432,7 +1432,7 @@ impl<'m> Recognizer<'m> {
             if self.readings_frames == Some(decoded) {
                 return;
             }
-            let groups = dec.readings(false);
+            let groups = dec.readings(false, n);
             // Without final costs the rank is the cost, so the best other cost is the first
             // group's, or the second's for the first group itself.
             let leads: Vec<(Vec<Label>, f32, Option<f32>, i32)> = groups
@@ -1471,7 +1471,7 @@ impl<'m> Recognizer<'m> {
         if self.readings_frames == Some(decoded) && self.readings_n == n {
             return;
         }
-        let groups = dec.readings(false);
+        let groups = dec.readings(false, n);
         let paths = dec.trace_groups(&groups, n);
         self.readings = Some(paths);
         self.readings_frames = Some(decoded);
@@ -2800,7 +2800,10 @@ impl<'m> Recognizer<'m> {
         let mut written = WrittenEvidence::default();
         if self.max_alternatives > 1 {
             out.push_str("\"alternatives\": [");
-            let alts = dec.trace_groups(&dec.readings(completed), self.max_alternatives);
+            let alts = dec.trace_groups(
+                &dec.readings(completed, self.max_alternatives),
+                self.max_alternatives,
+            );
             let mut first_rating = 0..0;
             for (i, alt) in alts.iter().enumerate() {
                 if i > 0 {

@@ -281,7 +281,7 @@ fn a_merge_keeps_the_reading_it_overwrites_within_the_margin() {
     for use_final in [false, true] {
         let survivors = plain.grouped(use_final);
         assert!(!words_of(&survivors).contains(&vec![200, 300]));
-        let readings = kept.readings(use_final);
+        let readings = kept.readings(use_final, 10);
         assert_eq!(readings[0].words, vec![100, 300]);
         assert_eq!(readings[0].cost, survivors[0].cost);
         let b = readings.iter().find(|g| g.words == [200, 300]).unwrap();
@@ -291,7 +291,7 @@ fn a_merge_keeps_the_reading_it_overwrites_within_the_margin() {
             assert!(words_of(&readings).contains(&w));
         }
     }
-    let readings = kept.readings(false);
+    let readings = kept.readings(false, 10);
     let i = readings.iter().position(|g| g.words == [200, 300]).unwrap();
     let path = &kept.trace_groups(&readings, i + 1)[i];
     assert_eq!(path.words, vec![200, 300]);
@@ -322,7 +322,7 @@ fn a_reading_past_the_margin_is_not_kept() {
         kept.advance_frame(frame);
     }
     assert_eq!(
-        words_of(&kept.readings(false)),
+        words_of(&kept.readings(false, 10)),
         words_of(&plain.grouped(false))
     );
 }
@@ -335,7 +335,7 @@ fn a_kept_reading_in_its_own_phone_at_the_merge_rejoins_the_winners_phone() {
     for frame in &MERGING_FRAMES {
         dec.advance_frame(frame);
     }
-    let readings = dec.readings(false);
+    let readings = dec.readings(false, 10);
     let i = readings.iter().position(|g| g.words == [200, 300]).unwrap();
     let path = &dec.trace_groups(&readings, i + 1)[i];
     let phones: Vec<(i32, usize, usize)> = path
@@ -383,7 +383,7 @@ fn a_reading_kept_in_the_non_emitting_pass_reaches_the_states_after_it() {
         for frame in [sil, sil, ab, ab, sil, sil] {
             dec.advance_frame(&frame);
         }
-        let readings = dec.readings(true);
+        let readings = dec.readings(true, 10);
         let words = words_of(&readings);
         assert!(
             words.contains(&vec![100]) && words.contains(&vec![200]),
@@ -391,7 +391,10 @@ fn a_reading_kept_in_the_non_emitting_pass_reaches_the_states_after_it() {
         );
         assert!((readings[1].cost - readings[0].cost - 0.6).abs() < 1e-4);
         dec.set_keep(None);
-        assert_eq!(words_of(&dec.readings(true)), words_of(&dec.grouped(true)));
+        assert_eq!(
+            words_of(&dec.readings(true, 10)),
+            words_of(&dec.grouped(true))
+        );
     }
 }
 
