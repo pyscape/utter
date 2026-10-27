@@ -1997,10 +1997,12 @@ def read_cost_pass(
         "order. Beside each engine plain, utterpy with one setting a host can turn on: partial words, "
         f"{STEADY_READINGS} readings beside every partial, {READ_ALTERNATIVES} alternatives on every final, "
         "the endpoint bound at 300 ms vetoed at 8 nats and then with an 8 dB floor margin too, the "
-        f"unknown-word symbol in the grammar as the twelve-class pass has it{margin_rows}; and every option "
+        f"unknown-word symbol added to the grammar{margin_rows}; and every option "
         f"on one recognizer, the bound with its floor margin{every_margin}. The last four columns are each "
-        "row's cost over plain utterpy: a block's time on the mean, the real-time factor, and the "
-        f"99th-percentile and the slowest block.{omitted}"
+        "setting row's cost over plain utterpy: a block's time on the mean, the real-time factor, and the "
+        "99th-percentile and the slowest block. Float input is in the Rust API alone and has no row "
+        "here, `[[rr:TD-13#The connection carries normalized waveform samples]]`."
+        f"{omitted}"
     )
     lines.append("")
     lines.append(
@@ -2009,6 +2011,7 @@ def read_cost_pass(
     )
     lines.append("|---|---|---|---|---|---|---|---|")
     out: dict[str, Json] = {}
+    plain = dict(ms_p99=quantile(best["utterpy"], 0.99), ms_max=max(best["utterpy"]))
     for label, _, _ in rows:
         v = best[label]
         r: Json = dict(
@@ -2018,11 +2021,10 @@ def read_cost_pass(
             ms_p99=quantile(v, 0.99),
             ms_max=max(v),
         )
+        cells = ["", "", "", ""]
         if label in modules:
             r.update(seconds=audio, passes=READ_PASSES)  # on the rows every binding has, as above
-        cells = ["", "", "", ""]
-        if label != "utterpy":
-            plain = out["utterpy"]
+        else:
             r["us_over_plain"], r["rtf_pct_over_plain"] = over(totals, blocks, label, "utterpy")
             r["ms_p99_over_plain"] = r["ms_p99"] - plain["ms_p99"]
             r["ms_max_over_plain"] = r["ms_max"] - plain["ms_max"]
