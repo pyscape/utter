@@ -247,6 +247,14 @@ Per 40 ms block, after `accept`:
     how steady those levels are, and the onset and length of the
     loudest rise. The library names none of these sounds; the
     application does.
+12. **The readings a near tie would drop**: where two readings of the
+    same audio meet and the slightly cheaper one carries on, the other
+    is still offered, among the readings and in a final's alternatives,
+    with its score and word times, as long as it came within a margin
+    the application sets of the reading that beat it. The application
+    weighs close readings at any word, not only the last, and settles
+    them by what it knows; a reading the decoder dropped is one it can
+    never choose. Keeping them is asked for, not a default.
 
 The final result is read for two things only: enrolment, one speaker
 vector per final, and a word the chooser takes from a final

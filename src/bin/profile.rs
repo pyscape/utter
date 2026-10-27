@@ -73,7 +73,41 @@ fn main() {
         min_active: model.conf.min_active,
         beam_delta: 0.5,
     };
+    // with a fourth argument, the decoder again with that merge margin, in alternating passes
+    let margin: Option<f32> = args.get(3).map(|m| m.parse().unwrap());
+    let passes = if margin.is_some() { 10 } else { 1 };
+    let mut ms = [Vec::new(), Vec::new()];
+    for pass in 0..passes {
+        let keep = margin.filter(|_| pass % 2 == 1);
+        let mut dec = utter::decoder::Decoder::new(
+            graph.clone(),
+            &model.tm.tid2pdf,
+            &model.tm.tid2phone,
+            cfg.clone(),
+        );
+        dec.set_keep(keep);
+        let t = Instant::now();
+        for r in &rows {
+            dec.advance_frame(r);
+        }
+        ms[usize::from(keep.is_some())]
+            .push(t.elapsed().as_secs_f64() * 1000.0 / rows.len() as f64);
+    }
+    if margin.is_some() {
+        for (name, v) in ["without the margin", "with the margin"]
+            .iter()
+            .zip(&mut ms)
+        {
+            v.sort_by(f64::total_cmp);
+            println!(
+                "decoder {name}: {:.4} ms per frame, median of {} passes",
+                v[v.len() / 2],
+                v.len()
+            );
+        }
+    }
     let mut dec = utter::decoder::Decoder::new(graph, &model.tm.tid2pdf, &model.tm.tid2phone, cfg);
+    dec.set_keep(margin);
     let t = Instant::now();
     let mut max_active = 0;
     for r in &rows {
@@ -93,5 +127,14 @@ fn main() {
             }
             t.elapsed().as_secs_f64() * 10.0
         }
+    );
+    let t = Instant::now();
+    let groups = dec.grouped(false).len();
+    let grouped_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let t = Instant::now();
+    let readings = dec.readings(false, 10).len();
+    println!(
+        "readings at the end: {groups} groups in {grouped_ms:.3} ms, {readings} with what is kept in {:.3} ms",
+        t.elapsed().as_secs_f64() * 1000.0
     );
 }

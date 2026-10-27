@@ -770,6 +770,7 @@ def main() -> None:
             [],
             held,
             args.steady_state_clips,
+            [],
         )
         compute[tag] = held.get("steady_state", {})
     beam_section(stock, wide, conf, params, compute, lines, report)

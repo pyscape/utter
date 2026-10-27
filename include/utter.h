@@ -49,6 +49,9 @@ void utter_recognizer_set_endpoint_bound(UtterRecognizer *rec, float trailing_ms
    and a rival word at the floor cannot veto it; such a final names "floor" and carries no forced
    word. 0 or less removes the margin. */
 void utter_recognizer_set_endpoint_floor_margin(UtterRecognizer *rec, float margin_db);
+/* Keep the readings a merge overwrites within nats of the path that wins it, and report them in
+   the partial's readings and the final's alternatives with the others. 0 or less removes it. */
+void utter_recognizer_set_merge_margin(UtterRecognizer *rec, float nats);
 /* Speaker evidence on every result and word entry; NULL removes it. 0 on success, -1 on a null
    recognizer or a speaker model this audio cannot feed. */
 int utter_recognizer_set_spk_model(UtterRecognizer *rec, const UtterSpkModel *spk);
