@@ -87,6 +87,16 @@ The readings are current to the last decoded frame, not to a lattice
 that trails the audio. A competitor absent from the list is unknown,
 not disproved.
 
+With `SetMergeMargin(nats)` the list also holds the readings the search
+overwrote. Where two paths with different words meet, the cheaper one
+carries on; the other is kept, at its own cost, when it was within
+nats of the one that beat it. From there the two hear the same audio,
+so the gap between them never changes, and the kept reading lasts as
+long as the path that beat it. A kept reading is listed like any other,
+with its confidence, relation, `lead_delta` and word entries, and
+nothing marks it as kept. The first reading is still the partial. Off
+by default.
+
 ## A word entry
 
 One entry of `partial_result`, of a reading's `result`, or of a
@@ -164,7 +174,7 @@ replaces `text` and `result` with a list, as Vosk does:
 
 | Key | Type | Present | Origin | Meaning |
 |---|---|---|---|---|
-| `alternatives` | array | `SetMaxAlternatives(n)` with n above 1 | Vosk | Up to n readings of the utterance, best first. |
+| `alternatives` | array | `SetMaxAlternatives(n)` with n above 1 | Vosk | Up to n readings of the utterance, best first. With `SetMergeMargin(nats)`, the readings a merge overwrote are among them as on the [partial](#a-reading); the first is the same either way. |
 | `alternatives[].confidence` | number | always | Vosk | The path score in nats. Vosk's figure comes from a lattice; utter's from the beam. |
 | `alternatives[].result` | array of [word entries](#a-word-entry) | `SetWords(True)` | Vosk | The reading's words, with the same keys as the plain shape's `result`. |
 | `alternatives[].text` | string | always | Vosk | The reading's words. |

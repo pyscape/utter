@@ -13,6 +13,8 @@ stream --model DIR --grammar JSON [--corpus DIR | WAV...] [options]
 
   --block-ms N          audio per accept, default 40
   --alternatives N      partial alternatives per block, default 0
+  --max-alternatives N  alternatives on finals, default 0 for the plain shape
+  --merge-margin F      keep the readings a merge overwrites within F nats
   --partial-words       word lists on partials
   --dither F            MFCC dither, 0 for a repeatable front end
   --unknown-cost F      add the model's unknown word at this cost
@@ -22,6 +24,7 @@ stream --model DIR --grammar JSON [--corpus DIR | WAV...] [options]
   --trace-groups        the tracker's oracle: every surviving group at every
                         network chunk, as \"group_trace\" on the take's JSON line
   --census              merge and reading-loss counters, as \"census\"
+  --census-nats F       the margin of the census's close counts, default 2
 
 A take's line carries \"take\", \"block_ms\", \"samples\", \"new_ms\",
 \"graph_states\", \"compute_us\", \"partials\" and \"segments\".
@@ -49,13 +52,19 @@ null again.
 
   \"census\": {\"merges_close\": N,        // local collisions within 2 nats
               \"readings_lost\": N,       // groups gone between two chunks
-              \"readings_lost_close\": N} // of those, within 2 nats of the leader
+              \"readings_lost_close\": N, // of those, within 2 nats of the leader
+              \"overwritten_close\": N,   // collisions whose loser was within
+                                         // 2 nats of the frame's leader
+              \"overwritten\": [{\"sample\": N, \"text\": \"...\"}]}
+                 // each utterance's sequences those collisions overwrote, at
+                 // the sample each was first overwritten
 
-Three separate quantities. A local collision is two paths meeting at a state
-with different word sequences and costs within two nats, counted whichever
-path is dropped; it is not a reading lost, since the loser's sequence may
-survive elsewhere in the beam and neither path need be near the leader. None
-of them settles what a lattice would keep, and none touches a decision.
+Separate quantities. A local collision is two paths meeting at a state with
+different word sequences and costs within two nats, counted whichever path is
+dropped; it is not a reading lost, since the loser's sequence may survive
+elsewhere in the beam and neither path need be near the leader. A collision
+overwriting a reading near the leader is counted at the merge, whether or not
+another copy of the reading lives on. None of them touches a decision.
 ";
 
 struct Run {
@@ -64,6 +73,9 @@ struct Run {
     partial_words: bool,
     trace_groups: bool,
     census: bool,
+    census_nats: f32,
+    max_alternatives: usize,
+    merge_margin: Option<f32>,
     opts: utter::recognizer::RecognizerOptions,
     endpoint_ms: Option<f32>,
     endpoint_veto: Option<f32>,
@@ -78,6 +90,9 @@ fn main() {
     let mut partial_words = false;
     let mut trace_groups = false;
     let mut census = false;
+    let mut census_nats = utter::decoder::CENSUS_NATS;
+    let mut max_alternatives = 0usize;
+    let mut merge_margin: Option<f32> = None;
     let mut dither: Option<f32> = None;
     let mut unknown_cost: Option<f32> = None;
     let mut silence_weight = utter::recognizer::SILENCE_WEIGHT;
@@ -96,6 +111,9 @@ fn main() {
             "--partial-words" => partial_words = true,
             "--trace-groups" => trace_groups = true,
             "--census" => census = true,
+            "--census-nats" => census_nats = it.next().unwrap().parse().unwrap(),
+            "--max-alternatives" => max_alternatives = it.next().unwrap().parse().unwrap(),
+            "--merge-margin" => merge_margin = Some(it.next().unwrap().parse().unwrap()),
             "--help" | "-h" => {
                 print!("{HELP}");
                 return;
@@ -135,6 +153,9 @@ fn main() {
         partial_words,
         trace_groups,
         census,
+        census_nats,
+        max_alternatives,
+        merge_margin,
         endpoint_ms,
         endpoint_veto,
         opts: utter::recognizer::RecognizerOptions {
@@ -177,7 +198,9 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run)
     rec.set_partial_words(run.partial_words);
     rec.set_alternatives(run.alternatives);
     rec.set_trace_groups(run.trace_groups);
-    rec.set_census(run.census);
+    rec.set_census(run.census, run.census_nats);
+    rec.set_max_alternatives(run.max_alternatives);
+    rec.set_merge_margin(run.merge_margin);
     let block = w.sample_rate as usize * run.block_ms / 1000;
     let mut partials: Vec<String> = Vec::new();
     let mut segments: Vec<String> = Vec::new();
@@ -240,10 +263,20 @@ fn run_take(model: &Model, grammar: &[String], wav: &std::path::Path, run: &Run)
         s.push(']');
     }
     if run.census {
-        let (merges, lost, lost_close) = rec.census_counts();
+        let c = rec.census();
         s.push_str(&format!(
-            ", \"census\": {{\"merges_close\": {merges}, \"readings_lost\": {lost}, \"readings_lost_close\": {lost_close}}}"
+            ", \"census\": {{\"merges_close\": {}, \"readings_lost\": {}, \"readings_lost_close\": {}, \"overwritten_close\": {}, \"overwritten\": [",
+            c.merges_close, c.readings_lost, c.readings_lost_close, c.overwritten_close
         ));
+        for (k, (sample, text)) in c.overwritten.iter().enumerate() {
+            if k > 0 {
+                s.push_str(", ");
+            }
+            s.push_str(&format!("{{\"sample\": {sample}, \"text\": "));
+            utter::json::write_string(&mut s, text);
+            s.push('}');
+        }
+        s.push_str("]}");
     }
     s.push('}');
     s

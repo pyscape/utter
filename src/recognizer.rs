@@ -206,6 +206,18 @@ impl FloorTracker {
     }
 }
 
+/// What `stream --census` reports of a take. `[[rr:TD-9#No lattice is added for this feature]]`
+#[doc(hidden)]
+pub struct Census {
+    pub merges_close: u64,
+    pub readings_lost: u64,
+    pub readings_lost_close: u64,
+    pub overwritten_close: u64,
+    /// Each utterance's word sequences a merge overwrote within the margin of the leader, with
+    /// the sample each was first overwritten at.
+    pub overwritten: Vec<(u64, String)>,
+}
+
 /// `[[rr:TD-9#Every reading carries its lead's motion]]`
 #[derive(Clone, Copy, Debug, Default)]
 struct Reading {
@@ -227,6 +239,7 @@ impl Reading {
 fn roll_history(
     history: &mut HashMap<Vec<Label>, Reading>,
     groups: &[(Vec<Label>, f32, Option<f32>, i32)],
+    close_nats: f32,
 ) -> (Vec<Option<f32>>, (u64, u64)) {
     let mut next: HashMap<Vec<Label>, Reading> = HashMap::with_capacity(groups.len());
     let mut deltas = Vec::with_capacity(groups.len());
@@ -244,7 +257,7 @@ fn roll_history(
     let lost = history.len() as u64;
     let close = history
         .values()
-        .filter(|h| h.lead_now.map(|l| -l < CENSUS_NATS).unwrap_or(false))
+        .filter(|h| h.lead_now.map(|l| -l < close_nats).unwrap_or(false))
         .count() as u64;
     *history = std::mem::take(&mut next);
     (deltas, (lost, close))
@@ -379,12 +392,20 @@ pub struct Recognizer<'m> {
     group_trace: Vec<String>,
     /// `[[rr:TD-9#No lattice is added for this feature]]`
     census: bool,
+    census_nats: f32,
     /// Groups that were in the beam at the previous chunk and are not at this one, and those of
-    /// them that were within `CENSUS_NATS` of the leader when last seen.
+    /// them that were within `census_nats` of the leader when last seen.
     readings_lost: u64,
     readings_lost_close: u64,
-    /// `merges_close` from decoders this recognizer has already discarded.
+    /// `merges_close` and `overwritten_close` from decoders this recognizer has already
+    /// discarded.
     merges_carried: u64,
+    overwritten_carried: u64,
+    /// The decoder's `overwritten` of every utterance closed, by the sample each was first
+    /// overwritten at.
+    overwritten: Vec<(u64, String)>,
+    /// `[[rr:TD-18#A merge keeps what it overwrites within the margin]]`
+    merge_margin: Option<f32>,
     /// The decoder's best path without final costs, the decoded frame count it was read at,
     /// and the counts the silence weighting's frame labels and the stable list were last
     /// brought up to. `[[rr:TD-7#Decision outcome]]`
@@ -858,9 +879,13 @@ impl<'m> Recognizer<'m> {
             trace_groups: false,
             group_trace: Vec::new(),
             census: false,
+            census_nats: CENSUS_NATS,
             readings_lost: 0,
             readings_lost_close: 0,
             merges_carried: 0,
+            overwritten_carried: 0,
+            overwritten: Vec::new(),
+            merge_margin: None,
             best_path: None,
             best_path_frames: None,
             sw_traceback_frames: None,
@@ -934,22 +959,67 @@ impl<'m> Recognizer<'m> {
         self.endpoint_floor_margin_db = db;
     }
 
-    /// Off by default; it never touches a decision.
+    /// Off by default; it never touches a decision. Every close count is taken within
+    /// `close_nats`.
     #[doc(hidden)]
-    pub fn set_census(&mut self, on: bool) {
+    pub fn set_census(&mut self, on: bool, close_nats: f32) {
         self.census = on;
+        self.census_nats = close_nats;
         if let Some(d) = self.decoder.as_mut() {
             d.census = on;
+            d.census_nats = close_nats;
         }
     }
 
-    /// Local close collisions, readings lost between chunks, and those of them that were
-    /// within `CENSUS_NATS` of the leader when last seen.
+    /// The census so far, the current utterance's overwritten readings included.
     #[doc(hidden)]
-    pub fn census_counts(&self) -> (u64, u64, u64) {
-        let merges =
-            self.merges_carried + self.decoder.as_ref().map(|d| d.merges_close).unwrap_or(0);
-        (merges, self.readings_lost, self.readings_lost_close)
+    pub fn census(&self) -> Census {
+        let dec = self.decoder.as_ref();
+        let mut overwritten = self.overwritten.clone();
+        if let Some(d) = dec {
+            overwritten.extend(self.overwritten_of(d));
+        }
+        Census {
+            merges_close: self.merges_carried + dec.map_or(0, |d| d.merges_close),
+            readings_lost: self.readings_lost,
+            readings_lost_close: self.readings_lost_close,
+            overwritten_close: self.overwritten_carried + dec.map_or(0, |d| d.overwritten_close),
+            overwritten,
+        }
+    }
+
+    fn overwritten_of(&self, d: &Decoder<'_>) -> Vec<(u64, String)> {
+        let mut v: Vec<(u64, String)> = d
+            .overwritten
+            .iter()
+            .map(|(words, &frame)| (self.sample_of(frame as usize), self.text_of(words, None)))
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Fold the census of the utterance the decoder is closing into the recognizer's.
+    fn close_census(&mut self) {
+        if let Some(d) = self.decoder.as_ref() {
+            let closed = self.overwritten_of(d);
+            self.overwritten.extend(closed);
+        }
+        if let Some(d) = self.decoder.as_mut() {
+            d.overwritten.clear();
+        }
+    }
+
+    /// Keep the readings a merge overwrites within `nats` of the path that wins it, and report
+    /// them beside the readings that survive, in the partial's readings and the final's
+    /// alternatives, ranked by the same cost. Rank 0 stays the best path. `None` drops them.
+    /// Keys: <https://github.com/pyscape/utter/blob/main/docs/reference/results.md#a-reading>.
+    /// `[[rr:TD-18#Decision outcome]]`
+    pub fn set_merge_margin(&mut self, nats: Option<f32>) {
+        self.merge_margin = nats;
+        if let Some(d) = self.decoder.as_mut() {
+            d.set_keep(nats);
+        }
+        self.readings_frames = None;
     }
 
     /// Record, per chunk, the readings the decoder carries and how each moved against the
@@ -1150,8 +1220,10 @@ impl<'m> Recognizer<'m> {
     }
 
     fn rebuild(&mut self) {
+        self.close_census();
         if let Some(d) = self.decoder.as_ref() {
             self.merges_carried += d.merges_close;
+            self.overwritten_carried += d.overwritten_close;
         }
         self.samples_round_start += self.samples_processed;
         self.samples_processed = 0;
@@ -1174,6 +1246,8 @@ impl<'m> Recognizer<'m> {
             cfg,
         );
         dec.census = self.census;
+        dec.census_nats = self.census_nats;
+        dec.set_keep(self.merge_margin);
         self.decoder = Some(dec);
         self.stable.clear();
         self.spk_stream = self
@@ -1189,6 +1263,7 @@ impl<'m> Recognizer<'m> {
     /// libvosk's `CleanUp`: a new utterance on the same pipeline, or a new pipeline after a
     /// final result or 20,000 frames.
     fn clean_up(&mut self) {
+        self.close_census();
         self.forget_best_path();
         self.silence_weighting = SilenceWeighting::new(
             &self.model.conf.silence_phones,
@@ -1357,7 +1432,7 @@ impl<'m> Recognizer<'m> {
             if self.readings_frames == Some(decoded) {
                 return;
             }
-            let groups = dec.grouped(false);
+            let groups = dec.readings(false);
             // Without final costs the rank is the cost, so the best other cost is the first
             // group's, or the second's for the first group itself.
             let leads: Vec<(Vec<Label>, f32, Option<f32>, i32)> = groups
@@ -1375,7 +1450,7 @@ impl<'m> Recognizer<'m> {
             let paths = dec.trace_groups(&groups, n);
             (decoded, self.sample_of(decoded), leads, paths)
         };
-        let (deltas, (lost, close)) = roll_history(&mut self.history, &groups);
+        let (deltas, (lost, close)) = roll_history(&mut self.history, &groups, self.census_nats);
         self.readings_lost += lost;
         self.readings_lost_close += close;
         if self.trace_groups {
@@ -1396,7 +1471,7 @@ impl<'m> Recognizer<'m> {
         if self.readings_frames == Some(decoded) && self.readings_n == n {
             return;
         }
-        let groups = dec.grouped(false);
+        let groups = dec.readings(false);
         let paths = dec.trace_groups(&groups, n);
         self.readings = Some(paths);
         self.readings_frames = Some(decoded);
@@ -2725,7 +2800,7 @@ impl<'m> Recognizer<'m> {
         let mut written = WrittenEvidence::default();
         if self.max_alternatives > 1 {
             out.push_str("\"alternatives\": [");
-            let alts = dec.alternatives(completed, self.max_alternatives);
+            let alts = dec.trace_groups(&dec.readings(completed), self.max_alternatives);
             let mut first_rating = 0..0;
             for (i, alt) in alts.iter().enumerate() {
                 if i > 0 {
@@ -2849,9 +2924,11 @@ impl<'m> Recognizer<'m> {
         self.last_result = self.final_json(Endpoint::Flush);
         self.close_window();
         // libvosk drops the pipeline here; the next accept rebuilds it.
+        self.close_census();
         if let Some(d) = &self.decoder {
             self.frame_offset += d.num_frames_decoded();
             self.merges_carried += d.merges_close;
+            self.overwritten_carried += d.overwritten_close;
         }
         self.pipeline = None;
         self.nnet = None;
@@ -3048,13 +3125,19 @@ mod tests {
     fn a_reading_is_born_carried_dropped_and_born_again() {
         let mut h = HashMap::new();
         let first = vec![group(&[1], 0.0, Some(2.0)), group(&[2], 2.0, Some(-2.0))];
-        assert_eq!(roll_history(&mut h, &first).0, vec![None, None]);
+        assert_eq!(
+            roll_history(&mut h, &first, CENSUS_NATS).0,
+            vec![None, None]
+        );
 
         let second = vec![group(&[1], 0.0, Some(3.0)), group(&[2], 3.0, Some(-3.0))];
-        assert_eq!(roll_history(&mut h, &second).0, vec![Some(1.0), Some(-1.0)]);
+        assert_eq!(
+            roll_history(&mut h, &second, CENSUS_NATS).0,
+            vec![Some(1.0), Some(-1.0)]
+        );
 
         let third = vec![group(&[1], 0.0, Some(1.0)), group(&[3], 1.0, Some(-1.0))];
-        let (deltas, (lost, close)) = roll_history(&mut h, &third);
+        let (deltas, (lost, close)) = roll_history(&mut h, &third, CENSUS_NATS);
         assert_eq!(deltas, vec![Some(-2.0), None]);
         // [2] was three nats behind the leader when it went, so it is lost but not close
         assert_eq!((lost, close), (1, 0));
@@ -3062,7 +3145,7 @@ mod tests {
         assert!(!h.contains_key(&vec![2]));
 
         let fourth = vec![group(&[1], 0.0, Some(1.0)), group(&[2], 1.0, Some(-1.0))];
-        let (deltas, (lost, close)) = roll_history(&mut h, &fourth);
+        let (deltas, (lost, close)) = roll_history(&mut h, &fourth, CENSUS_NATS);
         assert_eq!(deltas, vec![Some(0.0), None]);
         // [3] was one nat behind when it went
         assert_eq!((lost, close), (1, 1));
@@ -3072,20 +3155,20 @@ mod tests {
     fn one_surviving_reading_has_no_lead_and_no_delta() {
         let mut h = HashMap::new();
         assert_eq!(
-            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))]).0,
+            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))], CENSUS_NATS).0,
             vec![None]
         );
         // the lead is undefined at this end, so the delta is null on both sides of it
         assert_eq!(
-            roll_history(&mut h, &[group(&[1], 0.0, None)]).0,
+            roll_history(&mut h, &[group(&[1], 0.0, None)], CENSUS_NATS).0,
             vec![None]
         );
         assert_eq!(
-            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))]).0,
+            roll_history(&mut h, &[group(&[1], 0.0, Some(2.0))], CENSUS_NATS).0,
             vec![None]
         );
         assert_eq!(
-            roll_history(&mut h, &[group(&[1], 0.0, Some(3.0))]).0,
+            roll_history(&mut h, &[group(&[1], 0.0, Some(3.0))], CENSUS_NATS).0,
             vec![Some(1.0)]
         );
     }

@@ -214,6 +214,187 @@ fn silence_weighting_deltas() {
     assert_eq!(up, vec![3, 4, 5, 6, 7, 8]);
 }
 
+fn decoder<'a>(fst: Arc<VectorFst>, tid2pdf: &'a [i32], tid2phone: &'a [i32]) -> Decoder<'a> {
+    let cfg = DecoderConfig {
+        beam: 15.0,
+        max_active: 100,
+        min_active: 0,
+        beam_delta: 0.5,
+    };
+    Decoder::new(fst, tid2pdf, tid2phone, cfg)
+}
+
+/// Words A and B, then a word C both may precede, whose first state the two paths share; B may
+/// enter C through a phone of its own (tid 5) that A's entry (tid 4) does not share. Silence
+/// before and after.
+fn merging_graph(b_enters_by_own_phone: bool) -> (Arc<VectorFst>, Vec<i32>, Vec<i32>) {
+    let tid2pdf = vec![-1, 0, 1, 2, 3, 4];
+    let tid2phone = vec![0, 1, 2, 3, 4, 5];
+    let mut f = VectorFst::default();
+    for _ in 0..5 {
+        f.add_state();
+    }
+    f.start = 0;
+    f.add_arc(0, arc(1, 0, 0.0, 0));
+    f.add_arc(0, arc(2, 100, 0.0, 1));
+    f.add_arc(1, arc(2, 0, 0.0, 1));
+    f.add_arc(0, arc(3, 200, 0.0, 2));
+    f.add_arc(2, arc(3, 0, 0.0, 2));
+    f.add_arc(1, arc(4, 300, 0.0, 3));
+    let b_entry = if b_enters_by_own_phone { 5 } else { 4 };
+    f.add_arc(2, arc(b_entry, 300, 0.0, 3));
+    f.add_arc(3, arc(4, 0, 0.0, 3));
+    f.add_arc(3, arc(1, 0, 0.0, 4));
+    f.add_arc(4, arc(1, 0, 0.0, 4));
+    f.set_final(4, 0.0);
+    (Arc::new(f), tid2pdf, tid2phone)
+}
+
+/// Silence, two frames where A sounds 0.3 nats a frame likelier than B, C, silence.
+const MERGING_FRAMES: [[f32; 5]; 9] = [
+    [0.0, -9.0, -9.0, -9.0, -9.0],
+    [0.0, -9.0, -9.0, -9.0, -9.0],
+    [-9.0, -1.0, -1.3, -9.0, -9.0],
+    [-9.0, -1.0, -1.3, -9.0, -9.0],
+    [-9.0, -9.0, -9.0, 0.0, 0.0],
+    [-9.0, -9.0, -9.0, 0.0, -9.0],
+    [-9.0, -9.0, -9.0, 0.0, -9.0],
+    [0.0, -9.0, -9.0, -9.0, -9.0],
+    [0.0, -9.0, -9.0, -9.0, -9.0],
+];
+
+fn words_of(groups: &[utter::decoder::Group<'_>]) -> Vec<Vec<i32>> {
+    groups.iter().map(|g| g.words.clone()).collect()
+}
+
+#[test]
+fn a_merge_keeps_the_reading_it_overwrites_within_the_margin() {
+    let (fst, tid2pdf, tid2phone) = merging_graph(false);
+    let mut plain = decoder(fst.clone(), &tid2pdf, &tid2phone);
+    let mut kept = decoder(fst, &tid2pdf, &tid2phone);
+    kept.set_keep(Some(1.0));
+    kept.census = true;
+    for frame in &MERGING_FRAMES {
+        plain.advance_frame(frame);
+        kept.advance_frame(frame);
+    }
+    for use_final in [false, true] {
+        let survivors = plain.grouped(use_final);
+        assert!(!words_of(&survivors).contains(&vec![200, 300]));
+        let readings = kept.readings(use_final);
+        assert_eq!(readings[0].words, vec![100, 300]);
+        assert_eq!(readings[0].cost, survivors[0].cost);
+        let b = readings.iter().find(|g| g.words == [200, 300]).unwrap();
+        assert!((b.cost - readings[0].cost - 0.6).abs() < 1e-4);
+        // every survivor's reading is still there
+        for w in words_of(&survivors) {
+            assert!(words_of(&readings).contains(&w));
+        }
+    }
+    let readings = kept.readings(false);
+    let i = readings.iter().position(|g| g.words == [200, 300]).unwrap();
+    let path = &kept.trace_groups(&readings, i + 1)[i];
+    assert_eq!(path.words, vec![200, 300]);
+    assert_eq!(path.word_frames, vec![2, 4]);
+    let phones: Vec<(i32, usize, usize)> = path
+        .phones
+        .iter()
+        .map(|s| (s.phone, s.start, s.end))
+        .collect();
+    assert_eq!(phones, vec![(1, 0, 2), (3, 2, 4), (4, 4, 7), (1, 7, 9)]);
+    // the best path is the decoder's own
+    assert_eq!(
+        kept.best_path(false).unwrap().phones,
+        plain.best_path(false).unwrap().phones
+    );
+    assert!(kept.overwritten_close >= 1);
+    assert!(kept.overwritten.contains_key(&vec![200, 300]));
+}
+
+#[test]
+fn a_reading_past_the_margin_is_not_kept() {
+    let (fst, tid2pdf, tid2phone) = merging_graph(false);
+    let mut plain = decoder(fst.clone(), &tid2pdf, &tid2phone);
+    let mut kept = decoder(fst, &tid2pdf, &tid2phone);
+    kept.set_keep(Some(0.5));
+    for frame in &MERGING_FRAMES {
+        plain.advance_frame(frame);
+        kept.advance_frame(frame);
+    }
+    assert_eq!(
+        words_of(&kept.readings(false)),
+        words_of(&plain.grouped(false))
+    );
+}
+
+#[test]
+fn a_kept_reading_in_its_own_phone_at_the_merge_rejoins_the_winners_phone() {
+    let (fst, tid2pdf, tid2phone) = merging_graph(true);
+    let mut dec = decoder(fst, &tid2pdf, &tid2phone);
+    dec.set_keep(Some(1.0));
+    for frame in &MERGING_FRAMES {
+        dec.advance_frame(frame);
+    }
+    let readings = dec.readings(false);
+    let i = readings.iter().position(|g| g.words == [200, 300]).unwrap();
+    let path = &dec.trace_groups(&readings, i + 1)[i];
+    let phones: Vec<(i32, usize, usize)> = path
+        .phones
+        .iter()
+        .map(|s| (s.phone, s.start, s.end))
+        .collect();
+    assert_eq!(
+        phones,
+        vec![(1, 0, 2), (3, 2, 4), (5, 4, 5), (4, 5, 7), (1, 7, 9)]
+    );
+}
+
+/// A and B each end by epsilon in a state that leads by epsilon to the final state, so the
+/// merge happens in the non-emitting pass, where the winner may already have passed on its path.
+fn epsilon_merging_graph() -> (Arc<VectorFst>, Vec<i32>, Vec<i32>) {
+    let tid2pdf = vec![-1, 0, 1, 2];
+    let tid2phone = vec![0, 1, 2, 3];
+    let mut f = VectorFst::default();
+    for _ in 0..5 {
+        f.add_state();
+    }
+    f.start = 0;
+    f.add_arc(0, arc(1, 0, 0.0, 0));
+    f.add_arc(0, arc(2, 100, 0.0, 1));
+    f.add_arc(1, arc(2, 0, 0.0, 1));
+    f.add_arc(0, arc(3, 200, 0.0, 2));
+    f.add_arc(2, arc(3, 0, 0.0, 2));
+    f.add_arc(1, arc(0, 0, 0.0, 3));
+    f.add_arc(2, arc(0, 0, 0.0, 3));
+    f.add_arc(3, arc(0, 0, 0.0, 4));
+    f.add_arc(4, arc(1, 0, 0.0, 4));
+    f.set_final(4, 0.0);
+    (Arc::new(f), tid2pdf, tid2phone)
+}
+
+#[test]
+fn a_reading_kept_in_the_non_emitting_pass_reaches_the_states_after_it() {
+    for (a, b) in [(-1.0, -1.3), (-1.3, -1.0)] {
+        let (fst, tid2pdf, tid2phone) = epsilon_merging_graph();
+        let mut dec = decoder(fst, &tid2pdf, &tid2phone);
+        dec.set_keep(Some(1.0));
+        let sil = [0.0, -9.0, -9.0];
+        let ab = [-9.0, a, b];
+        for frame in [sil, sil, ab, ab, sil, sil] {
+            dec.advance_frame(&frame);
+        }
+        let readings = dec.readings(true);
+        let words = words_of(&readings);
+        assert!(
+            words.contains(&vec![100]) && words.contains(&vec![200]),
+            "{words:?}"
+        );
+        assert!((readings[1].cost - readings[0].cost - 0.6).abs() < 1e-4);
+        dec.set_keep(None);
+        assert_eq!(words_of(&dec.readings(true)), words_of(&dec.grouped(true)));
+    }
+}
+
 // What the fuzz targets reached: a count or length the file states and the reader believed, an
 // arithmetic step on a field at the end of its range, and an index the file chooses into a
 // vector the reader built.
