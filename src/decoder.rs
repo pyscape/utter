@@ -557,17 +557,16 @@ impl<'g> Decoder<'g> {
                     } else {
                         tok.link.clone()
                     };
-                    let lost = next.insert(
-                        a.nextstate,
-                        Token {
-                            cost: tot,
-                            graph: tok.graph + a.weight,
-                            link,
-                            phone,
-                            seq,
-                        },
-                    );
-                    if let (true, Some(lost)) = (KEEP, lost) {
+                    let won = Token {
+                        cost: tot,
+                        graph: tok.graph + a.weight,
+                        link,
+                        phone,
+                        seq,
+                    };
+                    if !KEEP {
+                        next.insert(a.nextstate, won);
+                    } else if let Some(lost) = next.insert(a.nextstate, won) {
                         if held - tot <= margin {
                             let won = next.get_mut(&a.nextstate).expect("the winner was inserted");
                             keep_lost(&mut self.joins, &mut self.scratch, margin, won, lost, frame);
@@ -645,17 +644,16 @@ impl<'g> Decoder<'g> {
                     } else {
                         tok.link.clone()
                     };
-                    let lost = self.cur.insert(
-                        a.nextstate,
-                        Token {
-                            cost: tot,
-                            graph: tok.graph + a.weight,
-                            link,
-                            phone: tok.phone,
-                            seq,
-                        },
-                    );
-                    if let (true, Some(lost)) = (KEEP, lost) {
+                    let won = Token {
+                        cost: tot,
+                        graph: tok.graph + a.weight,
+                        link,
+                        phone: tok.phone,
+                        seq,
+                    };
+                    if !KEEP {
+                        self.cur.insert(a.nextstate, won);
+                    } else if let Some(lost) = self.cur.insert(a.nextstate, won) {
                         if held - tot <= margin {
                             let won = self
                                 .cur
