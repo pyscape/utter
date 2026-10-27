@@ -124,22 +124,55 @@ impl Joins {
     }
 }
 
-/// A path from a join down to the start: its words as a hash and a count, what it costs over
-/// the path the join sits on, and the joins whose kept history it takes. Its words are read off
-/// the route only if it is listed.
-#[derive(Clone)]
+/// A path from a join down to the start: its words as a hash and a count, and what it costs
+/// over the path the join sits on. It takes the join's kept history or its own path down to
+/// the path `at` in the list of the next join, so its route and its words are read back only if
+/// it is listed.
+#[derive(Clone, Copy)]
 struct Below {
     hash: u64,
     len: usize,
     cost: f32,
     graph: f32,
-    route: Vec<u32>,
+    takes_kept: bool,
+    next: u32,
+    at: u32,
 }
 
-/// A word sequence's hash, extended one word at a time from the start.
-fn extend_hash(h: u64, words: impl Iterator<Item = Label>) -> u64 {
-    words.fold(h, |h, w| {
-        (h.rotate_left(5) ^ u64::from(w.cast_unsigned())).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95)
+const START: Below = Below {
+    hash: 0,
+    len: 0,
+    cost: 0.0,
+    graph: 0.0,
+    takes_kept: false,
+    next: 0,
+    at: 0,
+};
+
+/// The stretch of a path from a join down to the next join, 0 at the start: the hash of its
+/// words and the factor that shifts a hash past them, and what it costs.
+#[derive(Clone, Copy)]
+struct Way {
+    next: u32,
+    hash: u64,
+    shift: u64,
+    len: usize,
+    cost: f32,
+    graph: f32,
+    takes_kept: bool,
+}
+
+/// A word sequence's hash is the polynomial of its labels, so the hash of a sequence joined to
+/// another is the first's shifted past the second, plus the second's.
+const HASH_BASE: u64 = 0x9e37_79b9_7f4a_7c15;
+
+/// The hash of words given newest first, and the factor that shifts a hash past them.
+fn hash_newest_first(words: impl Iterator<Item = Label>) -> (u64, u64) {
+    words.fold((0, 1), |(h, shift), w| {
+        (
+            h.wrapping_add(u64::from(w.cast_unsigned()).wrapping_mul(shift)),
+            shift.wrapping_mul(HASH_BASE),
+        )
     })
 }
 
@@ -948,13 +981,16 @@ impl<'g> Decoder<'g> {
         // reading costs more than the path it rides on, so neither can any kept below that path.
         let bound = own.get(listed - 1).map_or(f32::INFINITY, |g| g.rank);
         let mut below: StateMap<Vec<Below>> = StateMap::default();
-        let mut kept: HashMap<(u64, usize), Group<'_>> = HashMap::new();
+        // Per word sequence, by hash, the cheapest kept copy: its rank and cost, its token, and
+        // where in the lists below its token's first join its path is.
+        let mut kept: HashMap<(u64, usize), (f32, f32, &Token, u32, u32)> = HashMap::new();
         for (&(join, ref above), &(rank, cost, token)) in &heads {
             if join == 0 || (!any_final && rank >= bound) {
                 continue;
             }
             self.fill_below(join, margin, listed + 1, &mut below);
-            for b in below[&join].iter().filter(|b| !b.route.is_empty()) {
+            let (above_hash, shift) = hash_newest_first(above.iter().copied());
+            for (i, b) in below[&join].iter().enumerate().skip(1) {
                 let scaled = if any_final {
                     (1.0 - GRAPH_SCALE) * b.graph
                 } else {
@@ -965,21 +1001,15 @@ impl<'g> Decoder<'g> {
                     continue;
                 }
                 let key = (
-                    extend_hash(b.hash, above.iter().rev().copied()),
+                    b.hash.wrapping_mul(shift).wrapping_add(above_hash),
                     b.len + above.len(),
                 );
-                let g = Group {
-                    words: Vec::new(),
-                    rank: r,
-                    cost: cost + b.cost,
-                    token,
-                    route: b.route.clone(),
-                };
+                let at = u32::try_from(i).expect("paths below a join fit u32");
                 match kept.get_mut(&key) {
-                    Some(k) if read_order(k, &g).is_lt() => {}
-                    Some(k) => *k = g,
+                    Some(k) if k.0 < r || (k.0 == r && k.2.seq >= token.seq) => {}
+                    Some(k) => *k = (r, cost + b.cost, token, join, at),
                     None => {
-                        kept.insert(key, g);
+                        kept.insert(key, (r, cost + b.cost, token, join, at));
                     }
                 }
             }
@@ -987,7 +1017,15 @@ impl<'g> Decoder<'g> {
         let mut own = own.into_iter();
         let mut v: Vec<Group<'_>> = own.next().into_iter().collect();
         let mut rest: HashMap<Vec<Label>, Group<'_>> = own.map(|g| (g.words.clone(), g)).collect();
-        for (_, mut g) in kept {
+        for (rank, cost, token, join, at) in kept.into_values() {
+            let route = Self::route_of(&below, join, at);
+            let mut g = Group {
+                words: Vec::new(),
+                rank,
+                cost,
+                token,
+                route,
+            };
             g.words = self.route_words(g.token, &g.route);
             if v.first().is_some_and(|f| f.words == g.words) {
                 continue;
@@ -1043,68 +1081,53 @@ impl<'g> Decoder<'g> {
     /// The `cap` cheapest paths from `root` down to the start through the joins beneath it, the
     /// join's own path first, for it and every join on the way.
     fn fill_below(&self, root: u32, margin: f32, cap: usize, memo: &mut StateMap<Vec<Below>>) {
-        // Per join, its ways down: the next join on each (0 at the start), the words before
-        // it newest first, what the way costs, and whether it is the kept history.
-        type Way = (u32, Vec<Label>, f32, f32, bool);
-        let mut pending: StateMap<Vec<Way>> = StateMap::default();
+        let mut pending: StateMap<[Option<Way>; 2]> = StateMap::default();
         let mut stack = vec![root];
         while let Some(&j) = stack.last() {
             if memo.contains_key(&j) {
                 stack.pop();
                 continue;
             }
-            let ways = match pending.remove(&j) {
-                Some(w) => w,
-                None => {
-                    let join = self.joins.get(j);
-                    let k = &join.kept;
-                    let own = std::iter::once((join.node.prev.as_deref(), 0.0, 0.0, false));
-                    let kept =
-                        (k.cost <= margin).then_some((k.link.as_deref(), k.cost, k.graph, true));
-                    own.chain(kept)
-                        .map(|(l, cost, graph, takes)| {
-                            let (next, words) = self.down_to_join(l);
-                            (next, words, cost, graph, takes)
-                        })
-                        .collect()
+            let ways = pending.remove(&j).unwrap_or_else(|| {
+                let join = self.joins.get(j);
+                let k = &join.kept;
+                [
+                    Some(self.way(join.node.prev.as_deref(), 0.0, 0.0, false)),
+                    (k.cost <= margin).then(|| self.way(k.link.as_deref(), k.cost, k.graph, true)),
+                ]
+            });
+            let mut missing = false;
+            for w in ways.iter().flatten() {
+                if w.next != 0 && !memo.contains_key(&w.next) {
+                    stack.push(w.next);
+                    missing = true;
                 }
-            };
-            let missing: Vec<u32> = ways
-                .iter()
-                .map(|w| w.0)
-                .filter(|&n| n != 0 && !memo.contains_key(&n))
-                .collect();
-            if !missing.is_empty() {
+            }
+            if missing {
                 pending.insert(j, ways);
-                stack.extend(missing);
                 continue;
             }
             stack.pop();
-            let start = [Below {
-                hash: 0,
-                len: 0,
-                cost: 0.0,
-                graph: 0.0,
-                route: Vec::new(),
-            }];
             let mut out: Vec<Below> = Vec::new();
-            for (next, words, cost, graph, takes) in ways {
-                let from: &[Below] = if next == 0 { &start } else { &memo[&next] };
-                for b in from {
-                    let c = cost + b.cost;
-                    if c > margin {
+            for w in ways.iter().flatten() {
+                let from: &[Below] = if w.next == 0 {
+                    &[START]
+                } else {
+                    &memo[&w.next]
+                };
+                for (i, b) in from.iter().enumerate() {
+                    let cost = w.cost + b.cost;
+                    if cost > margin {
                         continue;
                     }
-                    let mut route = b.route.clone();
-                    if takes {
-                        route.push(j);
-                    }
                     out.push(Below {
-                        hash: extend_hash(b.hash, words.iter().rev().copied()),
-                        len: b.len + words.len(),
-                        cost: c,
-                        graph: graph + b.graph,
-                        route,
+                        hash: b.hash.wrapping_mul(w.shift).wrapping_add(w.hash),
+                        len: b.len + w.len,
+                        cost,
+                        graph: w.graph + b.graph,
+                        takes_kept: w.takes_kept,
+                        next: w.next,
+                        at: u32::try_from(i).expect("paths below a join fit u32"),
                     });
                 }
             }
@@ -1121,6 +1144,45 @@ impl<'g> Decoder<'g> {
             }
             memo.insert(j, cheapest);
         }
+    }
+
+    /// The way from `l` down to the next join.
+    fn way(&self, mut l: Option<&Link>, cost: f32, graph: f32, takes_kept: bool) -> Way {
+        let (mut hash, mut shift, mut len) = (0u64, 1u64, 0);
+        let mut next = 0;
+        while let Some(r) = l {
+            if r.word != 0 {
+                hash = hash.wrapping_add(u64::from(r.word.cast_unsigned()).wrapping_mul(shift));
+                shift = shift.wrapping_mul(HASH_BASE);
+                len += 1;
+            } else if r.join != 0 {
+                next = r.join;
+                break;
+            }
+            l = r.prev.as_deref();
+        }
+        Way {
+            next,
+            hash,
+            shift,
+            len,
+            cost,
+            graph,
+            takes_kept,
+        }
+    }
+
+    /// The joins whose kept history the path `at` in `join`'s list takes.
+    fn route_of(memo: &StateMap<Vec<Below>>, mut join: u32, mut at: u32) -> Vec<u32> {
+        let mut route = Vec::new();
+        while join != 0 {
+            let b = memo[&join][at as usize];
+            if b.takes_kept {
+                route.push(join);
+            }
+            (join, at) = (b.next, b.at);
+        }
+        route
     }
 
     /// The first join on a path from `l` down, 0 when there is none, with the words before it,
