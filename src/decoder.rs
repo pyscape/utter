@@ -459,12 +459,31 @@ impl<'g> Decoder<'g> {
         }
     }
 
+    /// Each pass is compiled with and without the margin: one branch on it at every merge cost
+    /// the search 2% of its time with no margin set.
+    /// `[[rr:TD-18#A merge keeps what it overwrites within the margin]]`
+    fn process_emitting(&mut self, loglikes: &[f32]) -> f32 {
+        if self.keep.is_some() {
+            self.emitting::<true>(loglikes)
+        } else {
+            self.emitting::<false>(loglikes)
+        }
+    }
+
+    fn process_nonemitting(&mut self, cutoff: f32) {
+        if self.keep.is_some() {
+            self.nonemitting::<true>(cutoff);
+        } else {
+            self.nonemitting::<false>(cutoff);
+        }
+    }
+
     // Transition ids and pdf ids are non-negative; a negative one indexes past the slice and
     // panics either way.
     #[allow(clippy::cast_sign_loss)]
-    fn process_emitting(&mut self, loglikes: &[f32]) -> f32 {
+    fn emitting<const KEEP: bool>(&mut self, loglikes: &[f32]) -> f32 {
         let frame = frame_id(self.num_frames_decoded);
-        let keep = self.keep;
+        let margin = self.keep.unwrap_or(0.0);
         let (cur_cutoff, adaptive_beam, best_state) = self.get_cutoff();
         let prev = std::mem::take(&mut self.cur);
         let mut next: StateMap<Token> =
@@ -548,19 +567,17 @@ impl<'g> Decoder<'g> {
                             seq,
                         },
                     );
-                    if let (Some(margin), Some(lost)) = (keep, lost) {
+                    if let (true, Some(lost)) = (KEEP, lost) {
                         if held - tot <= margin {
                             let won = next.get_mut(&a.nextstate).expect("the winner was inserted");
                             keep_lost(&mut self.joins, &mut self.scratch, margin, won, lost, frame);
                         }
                     }
-                } else if let Some(margin) = keep {
-                    if tot - held <= margin {
-                        let won = next.get_mut(&a.nextstate).expect("the state holds a token");
-                        let arc = (a.olabel, self.tid2phone[a.ilabel as usize], a.weight);
-                        let joins = (&mut self.joins, &mut self.scratch);
-                        keep_arrival(joins, margin, won, tok, arc, tot, frame);
-                    }
+                } else if KEEP && tot - held <= margin {
+                    let won = next.get_mut(&a.nextstate).expect("the state holds a token");
+                    let arc = (a.olabel, self.tid2phone[a.ilabel as usize], a.weight);
+                    let joins = (&mut self.joins, &mut self.scratch);
+                    keep_arrival(joins, margin, won, tok, arc, tot, frame);
                 }
             }
         }
@@ -569,9 +586,9 @@ impl<'g> Decoder<'g> {
     }
 
     #[allow(clippy::cast_sign_loss)]
-    fn process_nonemitting(&mut self, cutoff: f32) {
+    fn nonemitting<const KEEP: bool>(&mut self, cutoff: f32) {
         let frame = frame_id(self.num_frames_decoded);
-        let keep = self.keep;
+        let margin = self.keep.unwrap_or(0.0);
         self.queue.clear();
         self.requeued.clear();
         for &s in self.cur.keys() {
@@ -638,7 +655,7 @@ impl<'g> Decoder<'g> {
                             seq,
                         },
                     );
-                    if let (Some(margin), Some(lost)) = (keep, lost) {
+                    if let (true, Some(lost)) = (KEEP, lost) {
                         if held - tot <= margin {
                             let won = self
                                 .cur
@@ -648,24 +665,22 @@ impl<'g> Decoder<'g> {
                         }
                     }
                     self.queue.push(a.nextstate);
-                } else if let Some(margin) = keep {
-                    if tot - held <= margin {
-                        let won = self
-                            .cur
-                            .get_mut(&a.nextstate)
-                            .expect("the state holds a token");
-                        // An epsilon arc changes no phone.
-                        let arc = (a.olabel, tok.phone, a.weight);
-                        let joins = (&mut self.joins, &mut self.scratch);
-                        // The winner may already have passed its path on; once more carries the
-                        // join after it. Only once, or a cycle would pass joins round for ever.
-                        if keep_arrival(joins, margin, won, &tok, arc, tot, frame)
-                            && self.has_eps[a.nextstate as usize]
-                            && !self.requeued.contains(&a.nextstate)
-                        {
-                            self.requeued.push(a.nextstate);
-                            self.queue.push(a.nextstate);
-                        }
+                } else if KEEP && tot - held <= margin {
+                    let won = self
+                        .cur
+                        .get_mut(&a.nextstate)
+                        .expect("the state holds a token");
+                    // An epsilon arc changes no phone.
+                    let arc = (a.olabel, tok.phone, a.weight);
+                    let joins = (&mut self.joins, &mut self.scratch);
+                    // The winner may already have passed its path on; once more carries the
+                    // join after it. Only once, or a cycle would pass joins round for ever.
+                    if keep_arrival(joins, margin, won, &tok, arc, tot, frame)
+                        && self.has_eps[a.nextstate as usize]
+                        && !self.requeued.contains(&a.nextstate)
+                    {
+                        self.requeued.push(a.nextstate);
+                        self.queue.push(a.nextstate);
                     }
                 }
             }
