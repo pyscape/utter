@@ -21,7 +21,8 @@ the letters a to z, the NATO alphabet, and red, yellow, blue, black and white. T
 - block size: 10 to 100 ms against accuracy, first-appearance latency and RTF, comparing the
   instant a word appears clip by clip against the finest block rather than only in aggregate;
 - compute: recognizer construction split into the first and every later one, decode-only RTF,
-  and per-block compute over the clips joined into one continuous stream;
+  and per-block compute over the clips joined into one continuous stream, decoding alone and
+  with the result a host reads after every block, plain and under each setting it can turn on;
 - noise: the dataset's own background recordings mixed under the clips at each --snr-db, the
   same mixed samples fed to both engines;
 - grammar size: the 35 dataset words plus filler up to each --grammar-sizes entry, which is
@@ -68,6 +69,9 @@ from typing import Any, NotRequired, TypedDict, cast
 RATE = 16000
 # Readings carried in the compute pass's readings rows.
 STEADY_READINGS = 3
+# Final alternatives asked for in the read table, and the passes each block's fastest time is from.
+READ_ALTERNATIVES = 10
+READ_PASSES = 5
 START = time.monotonic()
 
 Json = dict[str, Any]
@@ -368,6 +372,12 @@ def quantile(v: Sequence[float], q: float) -> float:
     return s[min(len(s) - 1, int(q * len(s)))]
 
 
+def signed(x: float, places: int) -> str:
+    """`x` with its sign, a figure that rounds to zero shown as +0."""
+    text = f"{x:+.{places}f}"
+    return "+" + text[1:] if float(text) == 0 else text
+
+
 def mcnemar(b: int, c: int) -> float:
     """Two-sided exact McNemar on the discordant counts: the chance of a split at least this
     lopsided if each engine were equally likely to win one. Returns 1.0 when neither differs."""
@@ -582,7 +592,13 @@ class Engine:
     def knows(self, word: str) -> bool:
         return self.find is None or all(self.find(t) >= 0 for t in word.split())
 
-    def new(self, alternatives: int = 0, merge_margin: float | None = None) -> Any:
+    def new(
+        self,
+        alternatives: int = 0,
+        merge_margin: float | None = None,
+        partial_words: bool = False,
+        max_alternatives: int = 0,
+    ) -> Any:
         if self.unknown_cost is not None:
             rec = self.mod.KaldiRecognizer(self.model, RATE, self.grammar, self.unknown_cost)
         else:
@@ -596,6 +612,10 @@ class Engine:
             rec.SetPartialAlternatives(alternatives)
         if merge_margin is not None:
             rec.SetMergeMargin(merge_margin)
+        if partial_words:
+            rec.SetPartialWords(True)
+        if max_alternatives:
+            rec.SetMaxAlternatives(max_alternatives)
         return rec
 
 
@@ -1754,15 +1774,18 @@ def steady_state_pass(
     report: Json,
     seconds: int,
     margins: Sequence[float],
+    read: bool = False,
 ) -> None:
     """Compute on continuous audio: one recognizer over the clips joined end to end, which is
-    how a host runs, rather than the fixed cost of a clip at a time."""
+    how a host runs, rather than the fixed cost of a clip at a time. With `read`, a second table
+    times the result a host reads after every block too, under each setting it can turn on."""
     if seconds <= 0:
         return
     step = max(1, len(clips) // seconds)
     joined = b"".join(read_pcm(p) for _, p in clips[::step][:seconds])
     audio = len(joined) / 2 / RATE
     block = RATE * block_ms // 1000 * 2
+    read = read and "utterpy" in modules
     # Each engine plain, then utterpy carrying readings beside every partial, without and with a
     # merge margin: a margin is read through the readings, so that is the row it is charged
     # against. [[rr:TD-18#What it costs]]
@@ -1781,14 +1804,29 @@ def steady_state_pass(
     note(f"continuous audio: {audio:.0f} s x {len(rows)} rows")
     lines.append("## Compute on continuous audio")
     lines.append("")
-    lines.append(
-        f"One recognizer over {audio:.0f} s of the clips joined end to end. A readings row carries "
-        f"{STEADY_READINGS} readings beside every partial; a margin row also keeps the readings a merge "
-        f"overwrites within that many nats.{omitted}"
-    )
+    if read:
+        lines.append(
+            f"One recognizer over {audio:.0f} s of the clips joined end to end, timed two ways. The first "
+            f"table times decoding alone: AcceptWaveform on each {block_ms} ms block, nothing read. The second "
+            "times what a host spends on every block: AcceptWaveform and then the result it reads. A row "
+            "named by its engine alone is plain; every setting a row names beyond that is off by default and "
+            "costs nothing unless a host turns it on."
+        )
+    else:
+        lines.append(
+            f"One recognizer over {audio:.0f} s of the clips joined end to end, decoding alone: "
+            f"AcceptWaveform on each {block_ms} ms block, nothing read."
+        )
     lines.append("")
+    if len(rows) > len(modules) or omitted:
+        lines.append(
+            f"A readings row carries {STEADY_READINGS} readings beside every partial; a margin row also keeps "
+            f"the readings a merge overwrites within that many nats.{omitted}"
+        )
+        lines.append("")
     lines.append("| engine | RTF | per-block compute ms p50 / p95 / p99 |")
     lines.append("|---|---|---|")
+    totals: dict[str, float] = {}
     for name, eng, readings, margin in rows:
         feed(eng.new(readings, margin), joined[: block * 50], block_ms)  # warm the code paths
         rec = eng.new(readings, margin)
@@ -1798,18 +1836,211 @@ def steady_state_pass(
             rec.AcceptWaveform(joined[i : i + block])
             per.append((time.perf_counter() - t) * 1000.0)
         rec.FinalResult()
+        totals[name] = sum(per)
         total = sum(per) / 1000.0
         out[name] = dict(
             rtf=total / audio,
             ms_p50=quantile(per, 0.5),
             ms_p95=quantile(per, 0.95),
             ms_p99=quantile(per, 0.99),
-            seconds=audio,
         )
+        # The audio is recorded on the rows every binding has: bench_compare reads an input only one
+        # side carries, from a row an older binding lacks, as the page not being comparable.
+        if name in modules:
+            out[name]["seconds"] = audio
         r = out[name]
         lines.append(f"| {name} | {r['rtf']:.4f} | {r['ms_p50']:.3f} / {r['ms_p95']:.2f} / {r['ms_p99']:.2f} |")
     lines.append("")
+    if said := setting_costs(totals, len(range(0, len(joined), block)), margins):
+        lines += ["What each setting costs on its own, on the mean:", "", *said, ""]
     report["steady_state"] = out
+    if read:
+        read_cost_pass(modules, model, joined, block_ms, grammar, lines, report, margins)
+
+
+def over(totals: Mapping[str, float], blocks: int, label: str, base: str) -> tuple[float, float]:
+    """What row `label` costs over row `base`, from each row's milliseconds over the same blocks:
+    microseconds a block on the mean, and the real-time factor's change in percent."""
+    a, b = totals[label], totals[base]
+    return (a - b) / blocks * 1000.0, (a / b - 1.0) * 100.0
+
+
+def setting_costs(totals: Mapping[str, float], blocks: int, margins: Sequence[float]) -> list[str]:
+    """A line for each setting a compute table has a row for: what it costs on its own, against the
+    row it is turned on over, with the record that decides it."""
+    readings = f"utterpy, {STEADY_READINGS} readings"
+    own: list[tuple[str, str, str, str]] = [
+        ("utterpy, partial words", "utterpy", "partial words", "TD-2#Interface"),
+        (readings, "utterpy", f"{STEADY_READINGS} readings", "TD-2#The decoder: partial alternatives"),
+        (f"utterpy, {READ_ALTERNATIVES} alternatives", "utterpy", f"{READ_ALTERNATIVES} alternatives on every final",
+         "TD-2#The decoder: finals"),
+        ("utterpy@300/8", "utterpy", "the bound at 300 ms with its veto at 8 nats",
+         "TD-8#A host may add one endpoint bound of its own, off by default"),
+        ("utterpy@300/8/8", "utterpy@300/8", "an 8 dB floor margin, over the bound alone", "TD-12#Decision outcome"),
+        ("utterpy, [unk]", "utterpy", "the unknown-word symbol", "TD-2#Silence and unknown speech announce themselves"),
+    ]  # fmt: skip
+    said = []
+    for label, base, what, record in own:
+        if label in totals and base in totals:
+            us, pct = over(totals, blocks, label, base)
+            said.append(
+                f"- {what}: {signed(us, 1)} µs a block, {signed(pct, 1)}% on the real-time factor, `[[rr:{record}]]`"
+            )
+    kept = [m for m in margins if f"{readings}, margin {m:g}" in totals]
+    if kept:
+        costs = [over(totals, blocks, f"{readings}, margin {m:g}", readings) for m in kept]
+        each = ", ".join(
+            f"{signed(us, 1)} µs a block ({signed(pct, 1)}%) at {m:g} nat{'' if m == 1 else 's'}"
+            for m, (us, pct) in zip(kept, costs, strict=True)
+        )
+        said.append(f"- a merge margin, over {STEADY_READINGS} readings alone: {each}, `[[rr:TD-18#What it costs]]`")
+    return said
+
+
+def timed_reads(rec: Any, pcm: bytes, block: int) -> list[float]:
+    """Milliseconds each block takes to feed and to read what a host reads after it: the partial,
+    or the final where the block closed one. FinalResult at the end is one more block."""
+    per = []
+    for i in range(0, len(pcm), block):
+        chunk = pcm[i : i + block]
+        t = time.perf_counter()
+        if rec.AcceptWaveform(chunk):
+            rec.Result()
+        else:
+            rec.PartialResult()
+        per.append((time.perf_counter() - t) * 1000.0)
+    t = time.perf_counter()
+    rec.FinalResult()
+    per.append((time.perf_counter() - t) * 1000.0)
+    return per
+
+
+def read_cost_pass(
+    modules: Mapping[str, ModuleType],
+    model: str | Path,
+    joined: bytes,
+    block_ms: int,
+    grammar: Sequence[str],
+    lines: list[str],
+    report: Json,
+    margins: Sequence[float],
+) -> None:
+    """The compute pass's audio with the result a host reads after every block timed with the
+    block, plain and under each setting a host can turn on, each against plain utterpy."""
+    audio = len(joined) / 2 / RATE
+    block = RATE * block_ms // 1000 * 2
+    unk = [*grammar, "[unk]"]
+    readings = f"utterpy, {STEADY_READINGS} readings"
+    every: dict[str, Any] = dict(alternatives=STEADY_READINGS, partial_words=True, max_alternatives=READ_ALTERNATIVES)
+    if margins:
+        every["merge_margin"] = max(margins)
+    # A row: its label, the engine spelling and grammar it is built on, and what Engine.new sets.
+    wanted: list[tuple[str, str, Sequence[str], dict[str, Any]]] = [
+        *[(name, name, grammar, {}) for name in modules],
+        ("utterpy, partial words", "utterpy", grammar, dict(partial_words=True)),
+        (readings, "utterpy", grammar, dict(alternatives=STEADY_READINGS)),
+        (f"utterpy, {READ_ALTERNATIVES} alternatives", "utterpy", grammar, dict(max_alternatives=READ_ALTERNATIVES)),
+        ("utterpy@300/8", "utterpy@300/8", grammar, {}),
+        ("utterpy@300/8/8", "utterpy@300/8/8", grammar, {}),
+        ("utterpy, [unk]", "utterpy", unk, {}),
+        *[
+            (f"{readings}, margin {m:g}", "utterpy", grammar, dict(alternatives=STEADY_READINGS, merge_margin=m))
+            for m in margins
+        ],
+        ("utterpy, every option", "utterpy@300/8/8", unk, every),
+    ]  # fmt: skip
+    setters = dict(
+        alternatives="SetPartialAlternatives",
+        merge_margin="SetMergeMargin",
+        partial_words="SetPartialWords",
+        max_alternatives="SetMaxAlternatives",
+    )
+    plain_engine = Engine("utterpy", modules["utterpy"], model, grammar)
+    engines = {("utterpy", tuple(grammar)): plain_engine}
+    probe = plain_engine.new()
+    rows: list[tuple[str, Engine, dict[str, Any]]] = []
+    lacking: set[str] = set()
+    for label, spelling, g, settings in wanted:
+        needs = [setters[k] for k in settings]
+        if "@" in spelling:
+            needs.append("SetEndpointBound")
+        if spelling.count("/") == 2:
+            needs.append("SetEndpointFloorMargin")
+        if missing := [m for m in needs if not hasattr(probe, m)]:
+            lacking.update(missing)
+            continue
+        key = (spelling, tuple(g))
+        if key not in engines:
+            engines[key] = Engine(spelling, modules[spelling.split("@")[0]], model, g)
+        rows.append((label, engines[key], settings))
+    note(f"reading after every block: {audio:.0f} s x {len(rows)} rows x {READ_PASSES} passes")
+    best: dict[str, list[float]] = {}
+    for p in range(READ_PASSES):
+        k = p % len(rows)
+        for label, eng, settings in rows[k:] + rows[:k]:
+            per = timed_reads(eng.new(**settings), joined, block)
+            best[label] = [min(a, b) for a, b in zip(best[label], per, strict=True)] if label in best else per
+    blocks = len(best["utterpy"])
+    totals = {label: sum(v) for label, v in best.items()}
+    listed = " and ".join(f"{v:g}" for v in margins)
+    margin_rows = f", {STEADY_READINGS} readings under each merge margin, {listed} nats" if margins else ""
+    every_margin = f" and the merge margin at {max(margins):g}" if margins else ""
+    omitted = (
+        f" The binding has no {', '.join(sorted(lacking))}, so the rows that set it are omitted." if lacking else ""
+    )
+    lines.append("### What reading a result after every block costs")
+    lines.append("")
+    lines.append(
+        "The same audio, each block timed with the read a host makes after it: AcceptWaveform, then "
+        "PartialResult, or Result where the block closed an utterance; FinalResult at the end is one more "
+        f"block. Each block's time is its fastest of {READ_PASSES} passes, which take the rows in a rotated "
+        "order. Beside each engine plain, utterpy with one setting a host can turn on: partial words, "
+        f"{STEADY_READINGS} readings beside every partial, {READ_ALTERNATIVES} alternatives on every final, "
+        "the endpoint bound at 300 ms vetoed at 8 nats and then with an 8 dB floor margin too, the "
+        f"unknown-word symbol in the grammar as the twelve-class pass has it{margin_rows}; and every option "
+        f"on one recognizer, the bound with its floor margin{every_margin}. The last four columns are each "
+        "row's cost over plain utterpy: a block's time on the mean, the real-time factor, and the "
+        f"99th-percentile and the slowest block.{omitted}"
+    )
+    lines.append("")
+    lines.append(
+        "| engine | RTF | per-block ms p50 / p95 / p99 | slowest block ms | over plain: µs a block | RTF "
+        "| p99 block ms | slowest block ms |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
+    out: dict[str, Json] = {}
+    for label, _, _ in rows:
+        v = best[label]
+        r: Json = dict(
+            rtf=sum(v) / 1000.0 / audio,
+            ms_p50=quantile(v, 0.5),
+            ms_p95=quantile(v, 0.95),
+            ms_p99=quantile(v, 0.99),
+            ms_max=max(v),
+        )
+        if label in modules:
+            r.update(seconds=audio, passes=READ_PASSES)  # on the rows every binding has, as above
+        cells = ["", "", "", ""]
+        if label != "utterpy":
+            plain = out["utterpy"]
+            r["us_over_plain"], r["rtf_pct_over_plain"] = over(totals, blocks, label, "utterpy")
+            r["ms_p99_over_plain"] = r["ms_p99"] - plain["ms_p99"]
+            r["ms_max_over_plain"] = r["ms_max"] - plain["ms_max"]
+            cells = [
+                signed(r["us_over_plain"], 1),
+                signed(r["rtf_pct_over_plain"], 1) + "%",
+                signed(r["ms_p99_over_plain"], 2),
+                signed(r["ms_max_over_plain"], 2),
+            ]
+        out[label] = r
+        lines.append(
+            f"| {label} | {r['rtf']:.4f} | {r['ms_p50']:.3f} / {r['ms_p95']:.2f} / {r['ms_p99']:.2f} "
+            f"| {r['ms_max']:.2f} | " + " | ".join(cells) + " |"
+        )
+    lines.append("")
+    if said := setting_costs(totals, blocks, margins):
+        lines += ["What each setting costs on its own, on the mean:", "", *said, ""]
+    report["steady_state_read"] = out
 
 
 def preflight_worker(job_json: str) -> None:
@@ -2468,6 +2699,7 @@ def main() -> None:
             report,
             args.steady_state_clips,
             [float(v) for v in args.steady_state_margins.split(",") if v.strip()],
+            read=True,
         )
     levels = [int(v) for v in args.snr_db.split(",") if v.strip()]
     if "snr" in passes and levels:
