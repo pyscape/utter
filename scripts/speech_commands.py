@@ -66,6 +66,8 @@ from types import ModuleType
 from typing import Any, NotRequired, TypedDict, cast
 
 RATE = 16000
+# Readings carried in the compute pass's readings rows.
+STEADY_READINGS = 3
 START = time.monotonic()
 
 Json = dict[str, Any]
@@ -580,7 +582,7 @@ class Engine:
     def knows(self, word: str) -> bool:
         return self.find is None or all(self.find(t) >= 0 for t in word.split())
 
-    def new(self, alternatives: int = 0) -> Any:
+    def new(self, alternatives: int = 0, merge_margin: float | None = None) -> Any:
         if self.unknown_cost is not None:
             rec = self.mod.KaldiRecognizer(self.model, RATE, self.grammar, self.unknown_cost)
         else:
@@ -592,6 +594,8 @@ class Engine:
             rec.SetEndpointFloorMargin(self.floor_margin)
         if alternatives and hasattr(rec, "SetPartialAlternatives"):
             rec.SetPartialAlternatives(alternatives)
+        if merge_margin is not None:
+            rec.SetMergeMargin(merge_margin)
         return rec
 
 
@@ -1749,6 +1753,7 @@ def steady_state_pass(
     lines: list[str],
     report: Json,
     seconds: int,
+    margins: Sequence[float],
 ) -> None:
     """Compute on continuous audio: one recognizer over the clips joined end to end, which is
     how a host runs, rather than the fixed cost of a clip at a time."""
@@ -1758,18 +1763,35 @@ def steady_state_pass(
     joined = b"".join(read_pcm(p) for _, p in clips[::step][:seconds])
     audio = len(joined) / 2 / RATE
     block = RATE * block_ms // 1000 * 2
+    # Each engine plain, then utterpy carrying readings beside every partial, without and with a
+    # merge margin: a margin is read through the readings, so that is the row it is charged
+    # against. [[rr:TD-18#What it costs]]
+    rows: list[tuple[str, Engine, int, float | None]] = [
+        (name, Engine(name, mod, model, grammar), 0, None) for name, mod in modules.items()
+    ]
+    omitted = ""
+    if "utterpy" in modules and margins:
+        eng = next(e for n, e, _, _ in rows if n == "utterpy")
+        rows.append((f"utterpy, {STEADY_READINGS} readings", eng, STEADY_READINGS, None))
+        if hasattr(eng.new(), "SetMergeMargin"):
+            rows += [(f"utterpy, {STEADY_READINGS} readings, margin {m:g}", eng, STEADY_READINGS, m) for m in margins]
+        else:
+            omitted = " The binding has no merge margin, so its rows are omitted."
     out = {}
-    note(f"continuous audio: {audio:.0f} s x {len(modules)} engines")
+    note(f"continuous audio: {audio:.0f} s x {len(rows)} rows")
     lines.append("## Compute on continuous audio")
     lines.append("")
-    lines.append(f"One recognizer over {audio:.0f} s of the clips joined end to end.")
+    lines.append(
+        f"One recognizer over {audio:.0f} s of the clips joined end to end. A readings row carries "
+        f"{STEADY_READINGS} readings beside every partial; a margin row also keeps the readings a merge "
+        f"overwrites within that many nats.{omitted}"
+    )
     lines.append("")
     lines.append("| engine | RTF | per-block compute ms p50 / p95 / p99 |")
     lines.append("|---|---|---|")
-    for name, mod in modules.items():
-        eng = Engine(name, mod, model, grammar)
-        feed(eng.new(), joined[: block * 50], block_ms)  # warm the code paths
-        rec = eng.new()
+    for name, eng, readings, margin in rows:
+        feed(eng.new(readings, margin), joined[: block * 50], block_ms)  # warm the code paths
+        rec = eng.new(readings, margin)
         per = []
         for i in range(0, len(joined), block):
             t = time.perf_counter()
@@ -2286,6 +2308,9 @@ def main() -> None:
     ap.add_argument("--block-ms", type=int, default=40)
     ap.add_argument("--engines", default="utterpy,vosk")
     ap.add_argument("--steady-state-clips", type=int, default=300, help="clips joined for the compute pass")
+    ap.add_argument(
+        "--steady-state-margins", default="1,3", help="merge margins timed in the compute pass, empty to skip"
+    )
     ap.add_argument("--snr-db", default="20,10,5,0", help="signal-to-noise ratios to mix, empty to skip")
     ap.add_argument("--snr-clips", type=int, default=800, help="clips per noise level")
     ap.add_argument("--grammar-sizes", default="35,60,92,150,200,246", help="grammar sweep, empty to skip")
@@ -2434,7 +2459,15 @@ def main() -> None:
         block_size_pass(modules, args.model, clips, full_grammar, lines, report, block_sizes, args.block_clips)
     if "steady_state" in passes:
         steady_state_pass(
-            modules, args.model, clips, args.block_ms, full_grammar, lines, report, args.steady_state_clips
+            modules,
+            args.model,
+            clips,
+            args.block_ms,
+            full_grammar,
+            lines,
+            report,
+            args.steady_state_clips,
+            [float(v) for v in args.steady_state_margins.split(",") if v.strip()],
         )
     levels = [int(v) for v in args.snr_db.split(",") if v.strip()]
     if "snr" in passes and levels:
