@@ -464,6 +464,7 @@ impl<'g> Decoder<'g> {
     #[allow(clippy::cast_sign_loss)]
     fn process_emitting(&mut self, loglikes: &[f32]) -> f32 {
         let frame = frame_id(self.num_frames_decoded);
+        let keep = self.keep;
         let (cur_cutoff, adaptive_beam, best_state) = self.get_cutoff();
         let prev = std::mem::take(&mut self.cur);
         let mut next: StateMap<Token> =
@@ -500,7 +501,7 @@ impl<'g> Decoder<'g> {
                 if tot + adaptive_beam < next_cutoff {
                     next_cutoff = tot + adaptive_beam;
                 }
-                let (better, seq, kept) = match next.get(&a.nextstate) {
+                let (better, seq, held) = match next.get(&a.nextstate) {
                     Some(t) => {
                         if self.census && (t.cost - tot).abs() < self.census_nats {
                             let mut mine = Self::words_on(tok.link.as_deref());
@@ -517,12 +518,11 @@ impl<'g> Decoder<'g> {
                                 });
                             }
                         }
-                        let kept = self.keep.filter(|&m| (t.cost - tot).abs() <= m);
-                        (tot < t.cost, t.seq, kept)
+                        (tot < t.cost, t.seq, t.cost)
                     }
                     None => {
                         self.seq += 1;
-                        (true, self.seq, None)
+                        (true, self.seq, f32::INFINITY)
                     }
                 };
                 if better {
@@ -548,47 +548,18 @@ impl<'g> Decoder<'g> {
                             seq,
                         },
                     );
-                    if let (Some(margin), Some(lost)) = (kept, lost) {
-                        let won = next.get_mut(&a.nextstate).unwrap();
-                        if worth_keeping(
-                            won,
-                            lost.link.as_deref(),
-                            0,
-                            margin - (lost.cost - won.cost),
-                            &self.joins,
-                            &mut self.scratch,
-                        ) {
-                            let kept = Kept {
-                                link: lost.link,
-                                word: 0,
-                                starts: 0,
-                                cost: lost.cost - won.cost,
-                                graph: lost.graph - won.graph,
-                                phone: lost.phone,
-                            };
-                            self.joins.add(won, kept, frame);
+                    if let (Some(margin), Some(lost)) = (keep, lost) {
+                        if held - tot <= margin {
+                            let won = next.get_mut(&a.nextstate).expect("the winner was inserted");
+                            keep_lost(&mut self.joins, &mut self.scratch, margin, won, lost, frame);
                         }
                     }
-                } else if let Some(margin) = kept {
-                    let won = next.get_mut(&a.nextstate).unwrap();
-                    if worth_keeping(
-                        won,
-                        tok.link.as_deref(),
-                        a.olabel,
-                        margin - (tot - won.cost),
-                        &self.joins,
-                        &mut self.scratch,
-                    ) {
-                        let phone = self.tid2phone[a.ilabel as usize];
-                        let kept = Kept {
-                            link: tok.link.clone(),
-                            word: a.olabel,
-                            starts: if phone != tok.phone { phone } else { 0 },
-                            cost: tot - won.cost,
-                            graph: tok.graph + a.weight - won.graph,
-                            phone,
-                        };
-                        self.joins.add(won, kept, frame);
+                } else if let Some(margin) = keep {
+                    if tot - held <= margin {
+                        let won = next.get_mut(&a.nextstate).expect("the state holds a token");
+                        let arc = (a.olabel, self.tid2phone[a.ilabel as usize], a.weight);
+                        let joins = (&mut self.joins, &mut self.scratch);
+                        keep_arrival(joins, margin, won, tok, arc, tot, frame);
                     }
                 }
             }
@@ -600,6 +571,7 @@ impl<'g> Decoder<'g> {
     #[allow(clippy::cast_sign_loss)]
     fn process_nonemitting(&mut self, cutoff: f32) {
         let frame = frame_id(self.num_frames_decoded);
+        let keep = self.keep;
         self.queue.clear();
         self.requeued.clear();
         for &s in self.cur.keys() {
@@ -620,7 +592,7 @@ impl<'g> Decoder<'g> {
                 if tot >= cutoff {
                     continue;
                 }
-                let (better, seq, kept) = match self.cur.get(&a.nextstate) {
+                let (better, seq, held) = match self.cur.get(&a.nextstate) {
                     Some(t) => {
                         if self.census && (t.cost - tot).abs() < self.census_nats {
                             let mut mine = Self::words_on(tok.link.as_deref());
@@ -637,12 +609,11 @@ impl<'g> Decoder<'g> {
                                 });
                             }
                         }
-                        let kept = self.keep.filter(|&m| (t.cost - tot).abs() <= m);
-                        (tot < t.cost, t.seq, kept)
+                        (tot < t.cost, t.seq, t.cost)
                     }
                     None => {
                         self.seq += 1;
-                        (true, self.seq, None)
+                        (true, self.seq, f32::INFINITY)
                     }
                 };
                 if better {
@@ -667,50 +638,29 @@ impl<'g> Decoder<'g> {
                             seq,
                         },
                     );
-                    if let (Some(margin), Some(lost)) = (kept, lost) {
-                        let won = self.cur.get_mut(&a.nextstate).unwrap();
-                        if worth_keeping(
-                            won,
-                            lost.link.as_deref(),
-                            0,
-                            margin - (lost.cost - won.cost),
-                            &self.joins,
-                            &mut self.scratch,
-                        ) {
-                            let kept = Kept {
-                                link: lost.link,
-                                word: 0,
-                                starts: 0,
-                                cost: lost.cost - won.cost,
-                                graph: lost.graph - won.graph,
-                                phone: lost.phone,
-                            };
-                            self.joins.add(won, kept, frame);
+                    if let (Some(margin), Some(lost)) = (keep, lost) {
+                        if held - tot <= margin {
+                            let won = self
+                                .cur
+                                .get_mut(&a.nextstate)
+                                .expect("the winner was inserted");
+                            keep_lost(&mut self.joins, &mut self.scratch, margin, won, lost, frame);
                         }
                     }
                     self.queue.push(a.nextstate);
-                } else if let Some(margin) = kept {
-                    let won = self.cur.get_mut(&a.nextstate).unwrap();
-                    if worth_keeping(
-                        won,
-                        tok.link.as_deref(),
-                        a.olabel,
-                        margin - (tot - won.cost),
-                        &self.joins,
-                        &mut self.scratch,
-                    ) {
-                        let kept = Kept {
-                            link: tok.link.clone(),
-                            word: a.olabel,
-                            starts: 0,
-                            cost: tot - won.cost,
-                            graph: tok.graph + a.weight - won.graph,
-                            phone: tok.phone,
-                        };
-                        self.joins.add(won, kept, frame);
+                } else if let Some(margin) = keep {
+                    if tot - held <= margin {
+                        let won = self
+                            .cur
+                            .get_mut(&a.nextstate)
+                            .expect("the state holds a token");
+                        // An epsilon arc changes no phone.
+                        let arc = (a.olabel, tok.phone, a.weight);
+                        let joins = (&mut self.joins, &mut self.scratch);
                         // The winner may already have passed its path on; once more carries the
                         // join after it. Only once, or a cycle would pass joins round for ever.
-                        if self.has_eps[a.nextstate as usize]
+                        if keep_arrival(joins, margin, won, &tok, arc, tot, frame)
+                            && self.has_eps[a.nextstate as usize]
                             && !self.requeued.contains(&a.nextstate)
                         {
                             self.requeued.push(a.nextstate);
@@ -1299,6 +1249,67 @@ fn read_order(a: &Group<'_>, b: &Group<'_>) -> std::cmp::Ordering {
         .then(b.route.is_empty().cmp(&a.route.is_empty()))
         .then(b.token.seq.cmp(&a.token.seq))
         .then(a.words.cmp(&b.words))
+}
+
+/// Keep `lost`, the token `won` replaced at its state, if it is worth keeping.
+#[cold]
+#[inline(never)]
+fn keep_lost(
+    joins: &mut Joins,
+    scratch: &mut (Vec<Label>, Vec<Label>),
+    margin: f32,
+    won: &mut Token,
+    lost: Token,
+    frame: u32,
+) {
+    let cost = lost.cost - won.cost;
+    if worth_keeping(won, lost.link.as_deref(), 0, margin - cost, joins, scratch) {
+        let kept = Kept {
+            link: lost.link,
+            word: 0,
+            starts: 0,
+            cost,
+            graph: lost.graph - won.graph,
+            phone: lost.phone,
+        };
+        joins.add(won, kept, frame);
+    }
+}
+
+/// Keep the path that lost to `won` by taking `arc` (its word, the phone it is in, its weight)
+/// from `tok` at a cost of `tot`, if it is worth keeping; whether it was kept.
+#[cold]
+#[inline(never)]
+fn keep_arrival(
+    (joins, scratch): (&mut Joins, &mut (Vec<Label>, Vec<Label>)),
+    margin: f32,
+    won: &mut Token,
+    tok: &Token,
+    (word, phone, weight): (Label, i32, f32),
+    tot: f32,
+    frame: u32,
+) -> bool {
+    let cost = tot - won.cost;
+    if !worth_keeping(
+        won,
+        tok.link.as_deref(),
+        word,
+        margin - cost,
+        joins,
+        scratch,
+    ) {
+        return false;
+    }
+    let kept = Kept {
+        link: tok.link.clone(),
+        word,
+        starts: if phone != tok.phone { phone } else { 0 },
+        cost,
+        graph: tok.graph + weight - won.graph,
+        phone,
+    };
+    joins.add(won, kept, frame);
+    true
 }
 
 /// Whether `lost`, with `word` on top when that is not 0, reads a different word sequence from
