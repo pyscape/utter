@@ -459,9 +459,7 @@ impl<'g> Decoder<'g> {
         }
     }
 
-    /// Each pass is compiled with and without the margin: one branch on it at every merge cost
-    /// the search 2% of its time with no margin set.
-    /// `[[rr:TD-18#A merge keeps what it overwrites within the margin]]`
+    /// Each pass is compiled with and without the margin. `[[rr:TD-18#What it costs]]`
     fn process_emitting(&mut self, loglikes: &[f32]) -> f32 {
         if self.keep.is_some() {
             self.emitting::<true>(loglikes)

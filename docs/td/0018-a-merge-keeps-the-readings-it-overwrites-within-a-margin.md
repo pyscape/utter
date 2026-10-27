@@ -112,13 +112,34 @@ count the census takes.
 ### What it costs
 
 The cost falls on the merges inside the margin and on the readout; with
-no margin set there is none. Decoding alone, over 295 s of the testing
-split's clips joined into one utterance, one core, the median of five
-passes: 0.0258 ms a frame without a margin and 0.0305 ms with a margin
-of 3 nats. The readout, at the end of one utterance, against the
-survivors alone: 0.071 against 0.033 ms 5 s in, 0.209 against 0.064 ms
-20 s in, which is as long as the model's last endpoint rule lets an
-utterance run.
+no margin set there is none. Each pass of the search is compiled with
+and without the margin, because one branch on it at every merge cost
+the search 2% of its time with no margin set.
+
+On the compute gate's streams of `[[rr:TD-17#What it costs]]`, 400
+test clips in 40 streams, 571 s of audio in 40 ms blocks with words on
+partials, the fastest of five repetitions per block on one core, each
+cell 0.0.6 / no margin / margin 1 / margin 3:
+
+| Configuration | p99 block, ms | Slowest block, ms | Real-time factor |
+|---|---|---|---|
+| plain | 2.506 / 2.530 / 2.568 / 2.619 | 4.34 / 4.58 / 4.43 / 4.67 | 0.01041 / 0.01045 / 0.01060 / 0.01073 |
+| three readings | 2.606 / 2.623 / 2.685 / 2.723 | 4.55 / 4.66 / 4.72 / 4.85 | 0.01083 / 0.01089 / 0.01110 / 0.01117 |
+| three readings, ten alternatives | 2.589 / 2.610 / 2.654 / 2.696 | 4.56 / 4.57 / 4.69 / 5.06 | 0.01077 / 0.01084 / 0.01098 / 0.01109 |
+
+A margin of 1 costs 7.5 to 10.9 us a block and a margin of 3 about 13,
+against 0.0.6. Without a margin a block costs 1.5 to 2.6 us more than
+0.0.6's, inside the spread of the gate itself, whose 0.0.6 column moved
+by up to 8 us a block between two runs of one configuration; the search
+alone over 295 s of joined clips, the fastest of seven passes over five
+runs, takes 24.40 us a frame against 0.0.6's 24.57. With the margin
+off every result of the gate is byte for byte 0.0.6's, 14,334 in each
+configuration, and with it on rank 0 moved in none.
+
+The search alone with a margin of 3 takes about 4.7 us a frame more.
+The readout, at the end of one utterance, against the survivors alone:
+0.071 against 0.033 ms 5 s in, 0.209 against 0.064 ms 20 s in, which is
+as long as the model's last endpoint rule lets an utterance run.
 
 ## Consequences
 
@@ -128,6 +149,21 @@ utterance run.
   behind "go seven" at every advance from its first sighting, where
   without it the partials carry a copy 6.6 nats behind for six advances
   and then nothing.
+- Over the 11,005 clips of the Speech Commands testing split under the
+  92-entry grammar, ten readings and ten alternatives, a margin of 3
+  nats gave 509 of 281,912 results a reading within 3 nats of rank 0
+  that the survivors did not list, 171 of them finals. The census at
+  that margin counts 1,286 merges overwriting a reading near the
+  frame's best token, 934 distinct readings; 28 of those were offered
+  by no result of their utterance without the margin, and 20 of them
+  are with it. With the margin off every result is byte for byte
+  0.0.6's, and with it on rank 0 moved in none.
+- The margin offers what was close, not what was right. The clip's
+  word among a final's first n alternatives is as often found as
+  without it at n = 1 (10,109 clips), and a few clips less often at
+  n = 2, 5 and 10 (10,504 against 10,509, 10,741 against 10,747,
+  10,826 against 10,828), where a kept reading closer than the right
+  word takes its place in the list.
 - A surviving reading whose kept copy is cheaper is reported at the
   kept copy's cost; its place in the list moves with it.
 - A kept reading is as exact as the survivors are: its cost is the one
