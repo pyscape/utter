@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# A push to a pull request cancels the run it supersedes; every other run completes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # ripref is unreleased; the pin is a commit on https://github.com/pyscape/ripref
   RR_REV: 75de191ca06fd8e417da4c4a1257687a6404f475
@@ -19,151 +24,6 @@ env:
   UTTER_TEST_FULL: ${{ github.event_name != 'pull_request' && '1' || '' }}
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: The toolchain rust-toolchain.toml pins, with its components
-        run: rustup toolchain install
-      - name: The crate builds on the rust-version the manifest promises
-        run: |
-          msrv=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version')
-          rustup toolchain install "$msrv" --profile minimal
-          cargo "+$msrv" check --all-targets
-      - run: cargo fmt --check
-      - run: cargo clippy --release --all-targets -- -D warnings
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25  # v2.1.1
-      - name: A breaking change to the public API needs a version bump past the published crate
-        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239  # v2.9
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: "3.12"
-      - run: pip install --require-hashes -r .github/requirements/lint.txt
-      - run: ruff check scripts && ruff format --check scripts
-      - run: mypy
-      - name: drift.toml describes every figure on the benchmark pages
-        run: |
-          git fetch --quiet --tags origin
-          python3 scripts/bench_compare.py check
-      - name: The C header compiles as C and C++
-        run: |
-          gcc -x c -std=c99 -fsyntax-only -Wall -Wextra -Werror include/utter.h
-          g++ -x c++ -std=c++11 -fsyntax-only -Wall -Wextra -Werror include/utter.h
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
-        with:
-          tool: cbindgen@0.29.4
-      - name: The C header declares exactly the exported functions, with their signatures
-        run: python3 scripts/check_header.py
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        id: rr
-        with:
-          path: ~/.cargo/bin/rr
-          key: rr-${{ env.RR_REV }}-${{ hashFiles('rust-toolchain.toml') }}
-      - if: steps.rr.outputs.cache-hit != 'true'
-        run: cargo install --git https://github.com/pyscape/ripref --rev "$RR_REV" --locked
-      - name: Every rr marker resolves to one anchor
-        run: rr index && rr verify
-      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b  # v1.51.1
-      - run: yamllint --strict .
-      - run: npx --yes markdownlint-cli2@0.23.2
-      - run: |
-          npx --yes @taplo/cli@0.7.0 lint '**/*.toml' '.rr.toml'
-          npx --yes @taplo/cli@0.7.0 fmt --check '**/*.toml' '.rr.toml'
-      - name: Workflows lint, their shell through shellcheck
-        run: |
-          curl -sfL -o actionlint.tar.gz \
-            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
-          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" \
-            | sha256sum --check
-          tar -xzf actionlint.tar.gz actionlint
-          ./actionlint -color
-
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # The arm runner is where the portable kernels run under test; every x86 host takes
-        # the AVX2 path at run time.
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install
-      - name: The crate has no dependencies
-        shell: bash
-        run: |
-          test "$(grep -c '^name = ' Cargo.lock)" = "1"
-      - name: No build artefacts are tracked
-        shell: bash
-        run: |
-          ! git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|(^|/)target/'
-      - name: Debug tests, with the overflow checks release drops
-        run: cargo test
-      - run: cargo build --release --all-targets
-      - run: cargo test --release
-      - run: cargo build --release --lib
-      - name: Shared library and header exist
-        shell: bash
-        run: |
-          compgen -G "target/release/*utter*.so" \
-            || compgen -G "target/release/utter.dll" \
-            || compgen -G "target/release/*utter*.dylib"
-          test -f include/utter.h
-
-  targets:
-    # Platforms nothing ships for yet: the library keeps compiling for them, so a consumer
-    # that needs one starts from a build that passes rather than a port.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install
-      - run: |
-          for target in x86_64-unknown-linux-musl aarch64-linux-android aarch64-apple-ios \
-              wasm32-wasip1 x86_64-pc-windows-gnu x86_64-unknown-freebsd; do
-            rustup target add "$target"
-            cargo check --release --lib --target "$target"
-          done
-
-  miri:
-    # The unit tests under Miri: the raw-pointer code in the C API and the kernels, checked for
-    # aliasing and bounds. Feature detection reports no AVX2 under Miri, so the portable kernels
-    # run; the model tests skip without a model.
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # The groups named in the step take minutes under Miri and run safe code only. A pull
-        # request runs the rest; every other run gives each group a runner of its own.
-        group: >-
-          ${{ fromJSON(github.event_name == 'pull_request' && '["rest"]'
-          || '["rest", "frames", "silence", "quarter", "history", "malformed"]') }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install nightly --profile minimal --component miri
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
-        with:
-          tool: cargo-nextest
-      - name: The unit tests under Miri, each its own process
-        env:
-          GROUP: ${{ matrix.group }}
-        run: |
-          declare -A groups=(
-            [frames]="test(=titanet::tests::work_is_counted_in_frames_not_time)"
-            [silence]="test(=recognizer::tests::a_floor_of_digital_silence_is_no_floor)"
-            [quarter]="test(=recognizer::tests::a_quarter_second_of_digital_silence_does_not_take_the_floor)
-              | test(=titanet::tests::only_titanet_small_opens)"
-            [history]="test(=recognizer::tests::the_history_forgets_a_louder_room)
-              | test(=resample::tests::blocks_do_not_change_the_output)"
-            [malformed]="test(/^titanet::tests::malformed_weights_are_refused_/)"
-          )
-          if [ "$GROUP" = rest ]; then
-            all=$(printf ' | %s' "${groups[@]}")
-            cargo +nightly miri nextest run --lib -E "not (${all# | })"
-          else
-            # Miri processes side by side slow one another down.
-            cargo +nightly miri nextest run --lib --test-threads 1 -E "${groups[$GROUP]}"
-          fi
-
   model-tests:
     # Integration tests against the stock small English model, and line coverage over unit and
     # model tests together. The model zip is cached between runs.
@@ -242,3 +102,143 @@ jobs:
         with:
           file: lcov.info
           format: lcov
+
+  miri:
+    # The unit tests under Miri: the raw-pointer code in the C API and the kernels, checked for
+    # aliasing and bounds. Feature detection reports no AVX2 under Miri, so the portable kernels
+    # run; the model tests skip without a model.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        # The groups named in the step take minutes under Miri and run safe code only. A pull
+        # request runs the rest; every other run gives each group a runner of its own.
+        group: >-
+          ${{ fromJSON(github.event_name == 'pull_request' && '["rest"]'
+          || '["rest", "frames", "silence", "quarter", "history", "malformed"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: rustup toolchain install nightly --profile minimal --component miri
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
+        with:
+          tool: cargo-nextest
+      - name: The unit tests under Miri, each its own process
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          declare -A groups=(
+            [frames]="test(=titanet::tests::work_is_counted_in_frames_not_time)"
+            [silence]="test(=recognizer::tests::a_floor_of_digital_silence_is_no_floor)"
+            [quarter]="test(=recognizer::tests::a_quarter_second_of_digital_silence_does_not_take_the_floor)
+              | test(=titanet::tests::only_titanet_small_opens)"
+            [history]="test(=recognizer::tests::the_history_forgets_a_louder_room)
+              | test(=resample::tests::blocks_do_not_change_the_output)"
+            [malformed]="test(/^titanet::tests::malformed_weights_are_refused_/)"
+          )
+          if [ "$GROUP" = rest ]; then
+            all=$(printf ' | %s' "${groups[@]}")
+            cargo +nightly miri nextest run --lib -E "not (${all# | })"
+          else
+            # Miri processes side by side slow one another down.
+            cargo +nightly miri nextest run --lib --test-threads 1 -E "${groups[$GROUP]}"
+          fi
+
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The arm runner is where the portable kernels run under test; every x86 host takes
+        # the AVX2 path at run time.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: rustup toolchain install
+      - name: The crate has no dependencies
+        shell: bash
+        run: |
+          test "$(grep -c '^name = ' Cargo.lock)" = "1"
+      - name: No build artefacts are tracked
+        shell: bash
+        run: |
+          ! git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|(^|/)target/'
+      - name: Debug tests, with the overflow checks release drops
+        run: cargo test
+      - run: cargo build --release --all-targets
+      - run: cargo test --release
+      - run: cargo build --release --lib
+      - name: Shared library and header exist
+        shell: bash
+        run: |
+          compgen -G "target/release/*utter*.so" \
+            || compgen -G "target/release/utter.dll" \
+            || compgen -G "target/release/*utter*.dylib"
+          test -f include/utter.h
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: The toolchain rust-toolchain.toml pins, with its components
+        run: rustup toolchain install
+      - name: The crate builds on the rust-version the manifest promises
+        run: |
+          msrv=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version')
+          rustup toolchain install "$msrv" --profile minimal
+          cargo "+$msrv" check --all-targets
+      # So a consumer that needs one starts from a build that passes rather than a port.
+      - name: The library compiles for platforms nothing ships for yet
+        run: |
+          for target in x86_64-unknown-linux-musl aarch64-linux-android aarch64-apple-ios \
+              wasm32-wasip1 x86_64-pc-windows-gnu x86_64-unknown-freebsd; do
+            rustup target add "$target"
+            cargo check --release --lib --target "$target"
+          done
+      - run: cargo fmt --check
+      - run: cargo clippy --release --all-targets -- -D warnings
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25  # v2.1.1
+      - name: A breaking change to the public API needs a version bump past the published crate
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239  # v2.9
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install --require-hashes -r .github/requirements/lint.txt
+      - run: ruff check scripts && ruff format --check scripts
+      - run: mypy
+      - name: drift.toml describes every figure on the benchmark pages
+        run: |
+          git fetch --quiet --tags origin
+          python3 scripts/bench_compare.py check
+      - name: The C header compiles as C and C++
+        run: |
+          gcc -x c -std=c99 -fsyntax-only -Wall -Wextra -Werror include/utter.h
+          g++ -x c++ -std=c++11 -fsyntax-only -Wall -Wextra -Werror include/utter.h
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
+        with:
+          tool: cbindgen@0.29.4
+      - name: The C header declares exactly the exported functions, with their signatures
+        run: python3 scripts/check_header.py
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        id: rr
+        with:
+          path: ~/.cargo/bin/rr
+          key: rr-${{ env.RR_REV }}-${{ hashFiles('rust-toolchain.toml') }}
+      - if: steps.rr.outputs.cache-hit != 'true'
+        run: cargo install --git https://github.com/pyscape/ripref --rev "$RR_REV" --locked
+      - name: Every rr marker resolves to one anchor
+        run: rr index && rr verify
+      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b  # v1.51.1
+      - run: yamllint --strict .
+      - run: npx --yes markdownlint-cli2@0.23.2
+      - run: |
+          npx --yes @taplo/cli@0.7.0 lint '**/*.toml' '.rr.toml'
+          npx --yes @taplo/cli@0.7.0 fmt --check '**/*.toml' '.rr.toml'
+      - name: Workflows lint, their shell through shellcheck
+        run: |
+          curl -sfL -o actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" \
+            | sha256sum --check
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color
