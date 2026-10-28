@@ -1224,13 +1224,19 @@ mod tests {
     }
 
     #[test]
-    fn malformed_weights_are_refused() {
+    fn malformed_weights_are_refused_cut_short() {
         let good = write(&tiny());
         let c = conf(3);
         assert!(TitaNet::parse(&c, &good).is_ok());
         for cut in [0, 8, 15, 16, 40, good.len() / 2, good.len() - 1] {
             assert!(TitaNet::parse(&c, &good[..cut]).is_err(), "cut at {cut}");
         }
+    }
+
+    #[test]
+    fn malformed_weights_are_refused_by_header() {
+        let good = write(&tiny());
+        let c = conf(3);
         let mut bad = good.clone();
         bad[0] = b'X';
         assert!(TitaNet::parse(&c, &bad).is_err());
@@ -1241,6 +1247,12 @@ mod tests {
         let mut bad = good.clone();
         bad[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(TitaNet::parse(&c, &bad).is_err());
+    }
+
+    #[test]
+    fn malformed_weights_are_refused_by_offset() {
+        let good = write(&tiny());
+        let c = conf(3);
         // The first tensor's offset: misaligned, inside the table, past the end, overflowing.
         let first = &tiny()[0];
         let slot = 16 + 4 + first.0.len() + 4 + 4 * first.1.len();
@@ -1256,6 +1268,11 @@ mod tests {
         let mut bad = good.clone();
         bad.copy_within(slot..slot + 8, slot2);
         assert!(TitaNet::parse(&c, &bad).is_err());
+    }
+
+    #[test]
+    fn malformed_weights_are_refused_by_tensor() {
+        let c = conf(3);
         // A zero dimension, a wrong shape, a tensor missing, one too many, one twice.
         let mut z = tiny();
         z[0].1[0] = 0;

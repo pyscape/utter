@@ -222,19 +222,23 @@ mod tests {
         assert_eq!(r.resample(&signal(1000), true).len(), 500);
     }
 
+    /// The RMS of a tone at `f` Hz, amplitude 1000, past the first 100 samples out.
+    fn passes_the_low_band_and_stops_the_high(f: f32) -> f32 {
+        let tone: Vec<f32> = (0..4000)
+            .map(|i| 1000.0 * (std::f32::consts::TAU * f * i as f32 / 16000.0).sin())
+            .collect();
+        let mut r = LinearResample::new(16000, 8000, 4000.0, 6);
+        let out = r.resample(&tone, false);
+        (out[100..].iter().map(|x| x * x).sum::<f32>() / out[100..].len() as f32).sqrt()
+    }
+
     #[test]
-    fn passes_the_low_band_and_stops_the_high() {
-        let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32).sqrt();
-        let tone = |f: f32| -> Vec<f32> {
-            (0..4000)
-                .map(|i| 1000.0 * (std::f32::consts::TAU * f * i as f32 / 16000.0).sin())
-                .collect()
-        };
-        let mut r = LinearResample::new(16000, 8000, 4000.0, 6);
-        let low = r.resample(&tone(440.0), false);
-        let mut r = LinearResample::new(16000, 8000, 4000.0, 6);
-        let high = r.resample(&tone(6000.0), false);
-        assert!((rms(&low[100..]) - 707.0).abs() < 20.0);
-        assert!(rms(&high[100..]) < 20.0);
+    fn passes_the_low_band_and_stops_the_high_440_hz() {
+        assert!((passes_the_low_band_and_stops_the_high(440.0) - 707.0).abs() < 20.0);
+    }
+
+    #[test]
+    fn passes_the_low_band_and_stops_the_high_6000_hz() {
+        assert!(passes_the_low_band_and_stops_the_high(6000.0) < 20.0);
     }
 }

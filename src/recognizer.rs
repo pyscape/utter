@@ -3090,17 +3090,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_first_sample_refused_is_named_with_what_is_wrong_with_it() {
-        let above = f32::from_bits(1.0f32.to_bits() + 1);
-        for (bad, kind) in [
-            (f32::NAN, AudioInputErrorKind::NotANumber),
-            (f32::INFINITY, AudioInputErrorKind::Infinite),
-            (f32::NEG_INFINITY, AudioInputErrorKind::Infinite),
-            (above, AudioInputErrorKind::OutOfRange),
-            (-above, AudioInputErrorKind::OutOfRange),
-            (f32::MAX, AudioInputErrorKind::OutOfRange),
-        ] {
+    fn the_first_sample_refused_is_named_with_what_is_wrong_with_it(
+        bad: &[f32],
+        kind: AudioInputErrorKind,
+    ) {
+        for &bad in bad {
             let mut block = vec![0.25f32; 16000];
             block[15999] = bad;
             assert_eq!(
@@ -3110,6 +3104,31 @@ mod tests {
             block[3] = 2.0;
             assert_eq!(check_normalized(&block).unwrap_err().index, 3);
         }
+    }
+
+    #[test]
+    fn the_first_sample_refused_is_named_with_what_is_wrong_with_it_not_a_number() {
+        the_first_sample_refused_is_named_with_what_is_wrong_with_it(
+            &[f32::NAN],
+            AudioInputErrorKind::NotANumber,
+        );
+    }
+
+    #[test]
+    fn the_first_sample_refused_is_named_with_what_is_wrong_with_it_infinite() {
+        the_first_sample_refused_is_named_with_what_is_wrong_with_it(
+            &[f32::INFINITY, f32::NEG_INFINITY],
+            AudioInputErrorKind::Infinite,
+        );
+    }
+
+    #[test]
+    fn the_first_sample_refused_is_named_with_what_is_wrong_with_it_out_of_range() {
+        let above = f32::from_bits(1.0f32.to_bits() + 1);
+        the_first_sample_refused_is_named_with_what_is_wrong_with_it(
+            &[above, -above, f32::MAX],
+            AudioInputErrorKind::OutOfRange,
+        );
         let e = AudioInputError {
             index: 7,
             kind: AudioInputErrorKind::OutOfRange,
@@ -3274,63 +3293,115 @@ mod tests {
         &[480, 112, 1600, 640, 3200, 160, 2000],
     ];
 
-    /// The whole grid when `UTTER_TEST_FULL` is set, a slice of it otherwise.
+    /// Whether `UTTER_TEST_FULL` asks for every case of each grid rather than a slice of it.
+    fn full() -> bool {
+        std::env::var_os("UTTER_TEST_FULL").is_some_and(|v| !v.is_empty())
+    }
+
     fn grid<T: Copy>(whole: &[T], slice: &[T]) -> Vec<T> {
-        let full = std::env::var_os("UTTER_TEST_FULL").is_some_and(|v| !v.is_empty());
-        if full { whole } else { slice }.to_vec()
+        if full() { whole } else { slice }.to_vec()
     }
 
     /// `[[rr:TD-14#Mean normalisation looks back only]]`: rows computed for the speech a result
     /// pools give every result byte for byte as rows computed for every frame as it arrives.
-    #[test]
-    fn rows_on_demand_give_every_result_as_rows_computed_eagerly() {
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly(blocks: &[usize]) {
         let Some((m, spk)) = models() else { return };
         let audio = spk_audio();
         for (alternatives, margin) in [(0, None), (3, Some(6.0))] {
-            for blocks in grid(BLOCKS, &[BLOCKS[3], BLOCKS[6]]) {
-                for set_at in grid(&[0, 8000, 24000], &[0, 24000]) {
-                    let run = SpkRun {
-                        blocks,
-                        set_at,
-                        alternatives,
-                        margin,
-                        partials: true,
-                        finals: true,
-                        eager: true,
-                    };
-                    let got = same_as_eager(&m, &spk, &audio, run);
-                    assert!(got.iter().any(|r| r.contains("\"spk\": [")));
-                }
+            for set_at in grid(&[0, 8000, 24000], &[0, 24000]) {
+                let run = SpkRun {
+                    blocks,
+                    set_at,
+                    alternatives,
+                    margin,
+                    partials: true,
+                    finals: true,
+                    eager: true,
+                };
+                let got = same_as_eager(&m, &spk, &audio, run);
+                assert!(got.iter().any(|r| r.contains("\"spk\": [")));
             }
         }
     }
 
     #[test]
-    fn a_final_read_alone_pools_every_row() {
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly_10ms_blocks() {
+        if full() {
+            rows_on_demand_give_every_result_as_rows_computed_eagerly(BLOCKS[0]);
+        }
+    }
+
+    #[test]
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly_40ms_blocks() {
+        if full() {
+            rows_on_demand_give_every_result_as_rows_computed_eagerly(BLOCKS[1]);
+        }
+    }
+
+    #[test]
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly_200ms_blocks() {
+        if full() {
+            rows_on_demand_give_every_result_as_rows_computed_eagerly(BLOCKS[2]);
+        }
+    }
+
+    #[test]
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly_7ms_blocks() {
+        rows_on_demand_give_every_result_as_rows_computed_eagerly(BLOCKS[3]);
+    }
+
+    #[test]
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly_30ms_blocks() {
+        if full() {
+            rows_on_demand_give_every_result_as_rows_computed_eagerly(BLOCKS[4]);
+        }
+    }
+
+    #[test]
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly_100ms_blocks() {
+        if full() {
+            rows_on_demand_give_every_result_as_rows_computed_eagerly(BLOCKS[5]);
+        }
+    }
+
+    #[test]
+    fn rows_on_demand_give_every_result_as_rows_computed_eagerly_mixed_blocks() {
+        rows_on_demand_give_every_result_as_rows_computed_eagerly(BLOCKS[6]);
+    }
+
+    fn a_final_read_alone_pools_every_row(blocks: &[usize]) {
         let Some((m, spk)) = models() else { return };
         let audio = spk_audio();
         for (alternatives, margin) in [(0, None), (3, Some(6.0))] {
-            for blocks in [&BLOCKS[1], &BLOCKS[6]] {
-                for set_at in [0, 24000] {
-                    let run = SpkRun {
-                        blocks,
-                        set_at,
-                        alternatives,
-                        margin,
-                        partials: false,
-                        finals: true,
-                        eager: true,
-                    };
-                    let got = same_as_eager(&m, &spk, &audio, run);
-                    let words = got.iter().filter(|r| r.contains("\"word\": ")).count();
-                    assert!(words >= 1, "{got:?}");
-                    assert!(got
-                        .iter()
-                        .filter(|r| r.contains("\"word\": "))
-                        .all(|r| r.contains("\"spk_frames\"")));
-                }
+            for set_at in [0, 24000] {
+                let run = SpkRun {
+                    blocks,
+                    set_at,
+                    alternatives,
+                    margin,
+                    partials: false,
+                    finals: true,
+                    eager: true,
+                };
+                let got = same_as_eager(&m, &spk, &audio, run);
+                let words = got.iter().filter(|r| r.contains("\"word\": ")).count();
+                assert!(words >= 1, "{got:?}");
+                assert!(got
+                    .iter()
+                    .filter(|r| r.contains("\"word\": "))
+                    .all(|r| r.contains("\"spk_frames\"")));
             }
         }
+    }
+
+    #[test]
+    fn a_final_read_alone_pools_every_row_40ms_blocks() {
+        a_final_read_alone_pools_every_row(BLOCKS[1]);
+    }
+
+    #[test]
+    fn a_final_read_alone_pools_every_row_mixed_blocks() {
+        a_final_read_alone_pools_every_row(BLOCKS[6]);
     }
 
     /// Onsets the look-ahead sees coming and onsets it does not: loud words after digital
@@ -3588,74 +3659,114 @@ mod tests {
     const TN_BLOCKS: &[&[usize]] = &[&[160], &[320], &[640], &[3200], &[480, 112, 1600, 640]];
 
     /// `[[rr:TD-15#Embedding runs in slices between advances]]`
-    #[test]
-    // Miri perturbs float intrinsics by a few ULP, so the exact-bytes compare only holds natively.
-    #[cfg_attr(miri, ignore)]
-    fn titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices() {
+    fn titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices(blocks: &[usize]) {
         let Some((m, spk)) = titanet_models() else {
             return;
         };
         let audio = tn_audio();
         let mut carried = 0;
-        for blocks in grid(TN_BLOCKS, &[TN_BLOCKS[0], TN_BLOCKS[4]]) {
-            for (threads, budgets) in [
-                (true, None),
-                (false, None),
-                (false, Some(0x2545_f491)),
-                (false, Some(7)),
-            ] {
-                for readings in [0, 3] {
-                    let run = TnRun {
-                        readings,
-                        budgets,
-                        threads,
-                        ..TnRun::plain(blocks)
-                    };
-                    let got = tn_results(&m, &spk, &audio, &run);
-                    carried += check_evidence(&spk, &audio, &got).len();
-                    // No partial and no final carries evidence at its top level.
-                    for r in &got {
-                        let last = r.rfind('}').unwrap();
-                        let top = r[..last].rfind(']').map_or(r.as_str(), |i| &r[i..]);
-                        assert!(!top.contains("\"spk"), "{r}");
-                    }
+        for (threads, budgets) in [
+            (true, None),
+            (false, None),
+            (false, Some(0x2545_f491)),
+            (false, Some(7)),
+        ] {
+            for readings in [0, 3] {
+                let run = TnRun {
+                    readings,
+                    budgets,
+                    threads,
+                    ..TnRun::plain(blocks)
+                };
+                let got = tn_results(&m, &spk, &audio, &run);
+                carried += check_evidence(&spk, &audio, &got).len();
+                // No partial and no final carries evidence at its top level.
+                for r in &got {
+                    let last = r.rfind('}').unwrap();
+                    let top = r[..last].rfind(']').map_or(r.as_str(), |i| &r[i..]);
+                    assert!(!top.contains("\"spk"), "{r}");
                 }
             }
         }
         assert!(carried > 0);
     }
 
-    /// `[[rr:TD-15#What carries evidence]]`
+    #[test]
+    // Miri perturbs float intrinsics by a few ULP, so the exact-bytes compare only holds natively.
+    #[cfg_attr(miri, ignore)]
+    fn titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices_10ms_blocks() {
+        titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices(TN_BLOCKS[0]);
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn titanet_results_less_the_four_keys_are_the_results_without_a_model() {
+    fn titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices_20ms_blocks() {
+        if full() {
+            titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices(TN_BLOCKS[1]);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices_40ms_blocks() {
+        if full() {
+            titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices(TN_BLOCKS[2]);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices_200ms_blocks() {
+        if full() {
+            titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices(TN_BLOCKS[3]);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices_mixed_blocks() {
+        titanet_evidence_is_the_stateless_embedding_in_any_blocks_and_slices(TN_BLOCKS[4]);
+    }
+
+    /// `[[rr:TD-15#What carries evidence]]`
+    fn titanet_results_less_the_four_keys_are_the_results_without_a_model(blocks: &[usize]) {
         let Some((m, spk)) = titanet_models() else {
             return;
         };
         let audio = tn_audio();
-        for blocks in [TN_BLOCKS[2], TN_BLOCKS[4]] {
-            for (readings, margin) in [(0, None), (3, Some(8.0))] {
-                let run = TnRun {
-                    readings,
-                    margin,
-                    ..TnRun::plain(blocks)
-                };
-                let with = tn_results(&m, &spk, &audio, &run);
-                let without = tn_results(
-                    &m,
-                    &spk,
-                    &audio,
-                    &TnRun {
-                        set_at: None,
-                        ..run
-                    },
-                );
-                assert!(with.iter().any(|r| r.contains("\"spk\": [")));
-                let stripped: Vec<String> = with.iter().map(|r| without_spk(r)).collect();
-                assert_eq!(stripped, without);
-                check_evidence(&spk, &audio, &with);
-            }
+        for (readings, margin) in [(0, None), (3, Some(8.0))] {
+            let run = TnRun {
+                readings,
+                margin,
+                ..TnRun::plain(blocks)
+            };
+            let with = tn_results(&m, &spk, &audio, &run);
+            let without = tn_results(
+                &m,
+                &spk,
+                &audio,
+                &TnRun {
+                    set_at: None,
+                    ..run
+                },
+            );
+            assert!(with.iter().any(|r| r.contains("\"spk\": [")));
+            let stripped: Vec<String> = with.iter().map(|r| without_spk(r)).collect();
+            assert_eq!(stripped, without);
+            check_evidence(&spk, &audio, &with);
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_results_less_the_four_keys_are_the_results_without_a_model_40ms_blocks() {
+        titanet_results_less_the_four_keys_are_the_results_without_a_model(TN_BLOCKS[2]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_results_less_the_four_keys_are_the_results_without_a_model_mixed_blocks() {
+        titanet_results_less_the_four_keys_are_the_results_without_a_model(TN_BLOCKS[4]);
     }
 
     /// A model set mid-stream queues the words the partial has closed, so every span's evidence
@@ -3699,36 +3810,44 @@ mod tests {
 
     /// The thread lagging behind the deadlines or finishing ahead of them gives the same bytes.
     /// `[[rr:TD-16#Verification]]`
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn titanet_thread_lagging_or_leading_gives_the_same_results() {
+    fn titanet_thread_lagging_or_leading_gives_the_same_results(blocks: &[usize]) {
         let Some((m, spk)) = titanet_models() else {
             return;
         };
         let audio = tn_audio();
-        for blocks in grid(&[TN_BLOCKS[2], TN_BLOCKS[4]], &[TN_BLOCKS[4]]) {
-            for readings in [0, 3] {
-                let run = TnRun {
-                    readings,
-                    ..TnRun::plain(blocks)
-                };
-                let free = tn_results(&m, &spk, &audio, &run);
-                let lag = Some(std::time::Duration::from_millis(60));
-                let lagging = tn_results(&m, &spk, &audio, &TnRun { lag, ..run });
-                let leading = tn_results(&m, &spk, &audio, &TnRun { lead: true, ..run });
-                assert!(!check_evidence(&spk, &audio, &free).is_empty());
-                assert_eq!(lagging, free);
-                assert_eq!(leading, free);
-            }
+        for readings in [0, 3] {
+            let run = TnRun {
+                readings,
+                ..TnRun::plain(blocks)
+            };
+            let free = tn_results(&m, &spk, &audio, &run);
+            let lag = Some(std::time::Duration::from_millis(60));
+            let lagging = tn_results(&m, &spk, &audio, &TnRun { lag, ..run });
+            let leading = tn_results(&m, &spk, &audio, &TnRun { lead: true, ..run });
+            assert!(!check_evidence(&spk, &audio, &free).is_empty());
+            assert_eq!(lagging, free);
+            assert_eq!(leading, free);
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_thread_lagging_or_leading_gives_the_same_results_40ms_blocks() {
+        if full() {
+            titanet_thread_lagging_or_leading_gives_the_same_results(TN_BLOCKS[2]);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_thread_lagging_or_leading_gives_the_same_results_mixed_blocks() {
+        titanet_thread_lagging_or_leading_gives_the_same_results(TN_BLOCKS[4]);
     }
 
     /// Switching the thread on or off mid-stream carries the queued spans over, and every span's
     /// evidence is still the stateless call's.
     /// `[[rr:TD-16#Multi-threaded by default, single-threaded by configuration]]`
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn titanet_thread_switched_mid_stream_gives_the_same_evidence() {
+    fn titanet_thread_switched_mid_stream_gives_the_same_evidence(threads: bool) {
         let Some((m, spk)) = titanet_models() else {
             return;
         };
@@ -3742,18 +3861,28 @@ mod tests {
                 ..TnRun::plain(TN_BLOCKS[2])
             },
         );
-        for threads in [true, false] {
-            for switch_at in grid(&[0, 8000, 24000, 40000], &[8000, 24000]) {
-                let run = TnRun {
-                    threads,
-                    switch_at: Some(switch_at),
-                    ..TnRun::plain(TN_BLOCKS[2])
-                };
-                let got = tn_results(&m, &spk, &audio, &run);
-                assert!(!check_evidence(&spk, &audio, &got).is_empty());
-                let stripped: Vec<String> = got.iter().map(|r| without_spk(r)).collect();
-                assert_eq!(stripped, without);
-            }
+        for switch_at in grid(&[0, 8000, 24000, 40000], &[8000, 24000]) {
+            let run = TnRun {
+                threads,
+                switch_at: Some(switch_at),
+                ..TnRun::plain(TN_BLOCKS[2])
+            };
+            let got = tn_results(&m, &spk, &audio, &run);
+            assert!(!check_evidence(&spk, &audio, &got).is_empty());
+            let stripped: Vec<String> = got.iter().map(|r| without_spk(r)).collect();
+            assert_eq!(stripped, without);
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_thread_switched_mid_stream_gives_the_same_evidence_threads_on() {
+        titanet_thread_switched_mid_stream_gives_the_same_evidence(true);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn titanet_thread_switched_mid_stream_gives_the_same_evidence_threads_off() {
+        titanet_thread_switched_mid_stream_gives_the_same_evidence(false);
     }
 }
