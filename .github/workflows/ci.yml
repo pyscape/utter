@@ -14,8 +14,8 @@ permissions:
 env:
   # ripref is unreleased; the pin is a commit on https://github.com/pyscape/ripref
   RR_REV: 75de191ca06fd8e417da4c4a1257687a6404f475
-  # A pull request runs a slice of each exhaustive test grid, and Miri less its slowest tests;
-  # every other run, main's pushes and the nightly among them, runs them whole.
+  # A pull request runs a slice of each exhaustive test grid; every other run, main's pushes and
+  # the nightly among them, runs them whole.
   UTTER_TEST_FULL: ${{ github.event_name != 'pull_request' && '1' || '' }}
 
 jobs:
@@ -129,6 +129,14 @@ jobs:
     # aliasing and bounds. Feature detection reports no AVX2 under Miri, so the portable kernels
     # run; the model tests skip without a model.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The groups named in the step take minutes under Miri and run safe code only. A pull
+        # request runs the rest; every other run gives each group a runner of its own.
+        group: >-
+          ${{ fromJSON(github.event_name == 'pull_request' && '["rest"]'
+          || '["rest", "frames", "silence", "quarter", "history", "malformed"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install nightly --profile minimal --component miri
@@ -136,24 +144,24 @@ jobs:
         with:
           tool: cargo-nextest
       - name: The unit tests under Miri, each its own process
+        env:
+          GROUP: ${{ matrix.group }}
         run: |
-          # Minutes each under Miri, over safe code only.
-          slow=(
-            recognizer::tests::a_floor_of_digital_silence_is_no_floor
-            recognizer::tests::a_quarter_second_of_digital_silence_does_not_take_the_floor
-            recognizer::tests::the_history_forgets_a_louder_room
-            recognizer::tests::the_first_sample_refused_is_named_with_what_is_wrong_with_it
-            resample::tests::passes_the_low_band_and_stops_the_high
-            resample::tests::blocks_do_not_change_the_output
-            titanet::tests::work_is_counted_in_frames_not_time
-            titanet::tests::malformed_weights_are_refused
-            titanet::tests::only_titanet_small_opens
+          declare -A groups=(
+            [frames]="test(=titanet::tests::work_is_counted_in_frames_not_time)"
+            [silence]="test(=recognizer::tests::a_floor_of_digital_silence_is_no_floor)"
+            [quarter]="test(=recognizer::tests::a_quarter_second_of_digital_silence_does_not_take_the_floor)
+              | test(=titanet::tests::only_titanet_small_opens)"
+            [history]="test(=recognizer::tests::the_history_forgets_a_louder_room)
+              | test(=resample::tests::blocks_do_not_change_the_output)"
+            [malformed]="test(/^titanet::tests::malformed_weights_are_refused_/)"
           )
-          if [ -n "$UTTER_TEST_FULL" ]; then
-            cargo +nightly miri nextest run --lib
+          if [ "$GROUP" = rest ]; then
+            all=$(printf ' | %s' "${groups[@]}")
+            cargo +nightly miri nextest run --lib -E "not (${all# | })"
           else
-            skip=$(printf ' | test(=%s)' "${slow[@]}")
-            cargo +nightly miri nextest run --lib -E "not (${skip# | })"
+            # Miri processes side by side slow one another down.
+            cargo +nightly miri nextest run --lib --test-threads 1 -E "${groups[$GROUP]}"
           fi
 
   model-tests:
