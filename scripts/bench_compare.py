@@ -51,7 +51,7 @@ from speech_commands import PASSES as SPEECH_COMMANDS_PASSES
 REPO = Path(__file__).resolve().parent.parent
 BENCH = Path.home() / "Repos/utter-bench-data"
 UTTERPY = Path.home() / "Repos/utterpy"
-PYTHON = UTTERPY / ".venv/bin/python"
+PYTHON = BENCH / "venv/bin/python"  # .github/requirements/bench.txt
 DATA = BENCH / "speech_commands_v0.02"
 MODEL = BENCH / "models/vosk-model-small-en-us-0.15"
 KALDI = Path.home() / "Repos/kaldi/src"
