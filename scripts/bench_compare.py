@@ -92,7 +92,7 @@ class Page:
     name: str
     binding: str  # "wheel" or "lib"
     minutes: tuple[float, float]  # full, quick
-    steps: Callable[["Ctx"], list[Step]]
+    steps: Callable[[Ctx], list[Step]]
     json: Callable[[Path], Path] = lambda p: p.with_suffix(".json")
     clips: Callable[[Path], Path] = lambda p: p.with_suffix(".clips.jsonl")
     # The pass that writes each top-level JSON key, for pages whose script can skip passes; a key

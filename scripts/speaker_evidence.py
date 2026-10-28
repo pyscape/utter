@@ -140,7 +140,7 @@ class Wheel:
         out: Json = json.loads(rec.FinalResult())
         return out
 
-    def timed(self, pcm: bytes, block_ms: int, speaker: bool) -> "Timed":
+    def timed(self, pcm: bytes, block_ms: int, speaker: bool) -> Timed:
         """A stream through one recognizer, words on partials, each block timed as utter's is."""
         rec = self.vosk.KaldiRecognizer(self.model, float(RATE), self.grammar)
         rec.SetWords(True)
@@ -610,7 +610,7 @@ def without_evidence(x: Any) -> Any:
     return x
 
 
-def latency_pass(u: UtterLib, wheel: "Wheel", grammar: Sequence[str], streams: Sequence[bytes], block_ms: int) -> Json:
+def latency_pass(u: UtterLib, wheel: Wheel, grammar: Sequence[str], streams: Sequence[bytes], block_ms: int) -> Json:
     """The game streams again through each engine and setup, in rotating order from one stream to
     the next. Each utter setup with a speaker model is checked against the same setup without one,
     its speaker keys removed."""
