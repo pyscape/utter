@@ -20,7 +20,9 @@ opening the request:
 - `cargo fmt --check`
 - `cargo clippy --release --all-targets -- -D warnings`
 - `cargo test` and `cargo test --release`, and, against a stock model,
-  `UTTER_TEST_MODEL=<model dir> cargo test --release`
+  `UTTER_TEST_MODEL=<model dir> cargo test --release`; a pull request
+  runs a slice of each exhaustive grid, and `UTTER_TEST_FULL=1` runs
+  them whole, as main and the nightly do
 - `cargo doc --no-deps` with `RUSTDOCFLAGS=-D warnings`
 - `rr verify` for the decision-record markers (see the rr reference
   under `docs/`)

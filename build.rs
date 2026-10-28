@@ -22,7 +22,11 @@ fn main() {
         None => packaged_revision().unwrap_or_else(|| "unknown".to_string()),
     };
     println!("cargo:rustc-env=UTTER_REVISION={revision}");
-    println!("cargo:rerun-if-changed=.cargo_vcs_info.json");
+    // Cargo reruns the script on every build while a named file is missing, and a git
+    // checkout has no `.cargo_vcs_info.json`.
+    if std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/.cargo_vcs_info.json")).exists() {
+        println!("cargo:rerun-if-changed=.cargo_vcs_info.json");
+    }
     // A commit or a working-tree edit changes the constant, and nothing else does.
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");

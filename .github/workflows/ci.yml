@@ -4,16 +4,203 @@ on:
   push:
     branches: [main, pre-alpha]
   pull_request:
+  schedule:
+    - cron: "17 9 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A push to a pull request cancels the run it supersedes; every other run completes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # ripref is unreleased; the pin is a commit on https://github.com/pyscape/ripref
   RR_REV: 75de191ca06fd8e417da4c4a1257687a6404f475
+  # A pull request runs a slice of each exhaustive test grid; every other run, main's pushes and
+  # the nightly among them, runs them whole.
+  UTTER_TEST_FULL: ${{ github.event_name != 'pull_request' && '1' || '' }}
 
 jobs:
+  model-tests:
+    # Integration tests against the stock small English model, and line coverage over unit and
+    # model tests together. The model zip is cached between runs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: rustup toolchain install && rustup component add llvm-tools-preview
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        id: model
+        with:
+          path: models/vosk-model-small-en-us-0.15
+          key: vosk-model-small-en-us-0.15
+      - name: Download the stock model
+        if: steps.model.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          curl -sfL -o models/model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+          unzip -q models/model.zip -d models
+          rm models/model.zip
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        id: spk-model
+        with:
+          path: models/vosk-model-spk-0.4
+          key: vosk-model-spk-0.4
+      - name: Download the stock speaker model
+        if: steps.spk-model.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          curl -sfL -o models/spk.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip
+          unzip -q models/spk.zip -d models
+          rm models/spk.zip
+      # TitaNet-small as sherpa-onnx publishes it, pinned by its SHA-256, converted by the
+      # repository's script under pinned requirements; the conversion is cached with both.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        id: titanet
+        with:
+          path: models/titanet-small
+          key: titanet-small-ad4a1802-${{ hashFiles('scripts/titanet_convert.py', '.github/requirements/titanet.txt') }}
+      - if: steps.titanet.outputs.cache-hit != 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Download and convert TitaNet-small
+        if: steps.titanet.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          curl -sfL -o models/titanet-small.onnx \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx
+          echo "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e  models/titanet-small.onnx" \
+            | sha256sum --check
+          python -m venv models/convert
+          models/convert/bin/pip install --require-hashes -r .github/requirements/titanet.txt
+          models/convert/bin/python scripts/titanet_convert.py models/titanet-small.onnx models/titanet-small
+          rm -rf models/convert models/titanet-small.onnx
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+      - name: Tests with coverage
+        env:
+          UTTER_TEST_MODEL: ${{ github.workspace }}/models/vosk-model-small-en-us-0.15
+          UTTER_TEST_SPK_MODEL: ${{ github.workspace }}/models/vosk-model-spk-0.4
+          UTTER_TEST_TITANET_MODEL: ${{ github.workspace }}/models/titanet-small
+        run: |
+          # The six diagnostic tools need a corpus and a model directory each; stream, which
+          # the releases ship, is measured through its test. Each test runs in its own process:
+          # as threads of one process, the unit tests ran several times slower under coverage.
+          cargo llvm-cov nextest --release --lcov --output-path lcov.info --fail-under-lines 90 \
+            --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump|spk_dump|titanet_dump)\.rs'
+          cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: coverage-lcov
+          path: lcov.info
+      - name: Coveralls
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329  # v2.3.8
+        with:
+          file: lcov.info
+          format: lcov
+
+  miri-group:
+    # The unit tests under Miri: the raw-pointer code in the C API and the kernels, checked for
+    # aliasing and bounds. Feature detection reports no AVX2 under Miri, so the portable kernels
+    # run; the model tests skip without a model.
+    name: miri (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        # The groups named in the step take minutes under Miri and run safe code only. A pull
+        # request runs the rest; every other run gives each group a runner of its own.
+        group: >-
+          ${{ fromJSON(github.event_name == 'pull_request' && '["rest"]'
+          || '["rest", "frames", "silence", "quarter", "history", "malformed"]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: rustup toolchain install nightly --profile minimal --component miri
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
+        with:
+          tool: cargo-nextest
+      - name: The unit tests under Miri, each its own process
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          declare -A groups=(
+            [frames]="test(=titanet::tests::work_is_counted_in_frames_not_time)"
+            [silence]="test(=recognizer::tests::a_floor_of_digital_silence_is_no_floor)"
+            [quarter]="test(=recognizer::tests::a_quarter_second_of_digital_silence_does_not_take_the_floor)
+              | test(=titanet::tests::only_titanet_small_opens)"
+            [history]="test(=recognizer::tests::the_history_forgets_a_louder_room)
+              | test(=resample::tests::blocks_do_not_change_the_output)"
+            [malformed]="test(/^titanet::tests::malformed_weights_are_refused_/)"
+          )
+          if [ "$GROUP" = rest ]; then
+            all=$(printf ' | %s' "${groups[@]}")
+            cargo +nightly miri nextest run --lib -E "not (${all# | })"
+          else
+            # Miri processes side by side slow one another down.
+            cargo +nightly miri nextest run --lib --test-threads 1 -E "${groups[$GROUP]}"
+          fi
+
+  miri:
+    # The check the main ruleset requires by this name: every group passed.
+    needs: miri-group
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.miri-group.result }}
+        run: test "$RESULT" = success
+
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The arm runner is where the portable kernels run under test; every x86 host takes
+        # the AVX2 path at run time.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: rustup toolchain install
+      - name: The crate has no dependencies
+        shell: bash
+        run: |
+          test "$(grep -c '^name = ' Cargo.lock)" = "1"
+      - name: No build artefacts are tracked
+        shell: bash
+        run: |
+          ! git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|(^|/)target/'
+      - name: Debug tests, with the overflow checks release drops
+        run: cargo test
+      - run: cargo build --release --all-targets
+      - run: cargo test --release
+      - run: cargo build --release --lib
+      - name: Shared library and header exist
+        shell: bash
+        run: |
+          compgen -G "target/release/*utter*.so" \
+            || compgen -G "target/release/utter.dll" \
+            || compgen -G "target/release/*utter*.dylib"
+          test -f include/utter.h
+
+  targets:
+    # Platforms nothing ships for yet: the library keeps compiling for them, so a consumer
+    # that needs one starts from a build that passes rather than a port.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: rustup toolchain install
+      - run: |
+          for target in x86_64-unknown-linux-musl aarch64-linux-android aarch64-apple-ios \
+              wasm32-wasip1 x86_64-pc-windows-gnu x86_64-unknown-freebsd; do
+            rustup target add "$target"
+            cargo check --release --lib --target "$target"
+          done
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -72,137 +259,3 @@ jobs:
             | sha256sum --check
           tar -xzf actionlint.tar.gz actionlint
           ./actionlint -color
-
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # The arm runner is where the portable kernels run under test; every x86 host takes
-        # the AVX2 path at run time.
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install
-      - name: The crate has no dependencies
-        shell: bash
-        run: |
-          test "$(grep -c '^name = ' Cargo.lock)" = "1"
-      - name: No build artefacts are tracked
-        shell: bash
-        run: |
-          ! git ls-files | grep -E '(^|/)__pycache__/|\.pyc$|(^|/)target/'
-      - name: Debug tests, with the overflow checks release drops
-        run: cargo test
-      - run: cargo build --release --all-targets
-      - run: cargo test --release
-      - run: cargo build --release --lib
-      - name: Shared library and header exist
-        shell: bash
-        run: |
-          compgen -G "target/release/*utter*.so" \
-            || compgen -G "target/release/utter.dll" \
-            || compgen -G "target/release/*utter*.dylib"
-          test -f include/utter.h
-
-  targets:
-    # Platforms nothing ships for yet: the library keeps compiling for them, so a consumer
-    # that needs one starts from a build that passes rather than a port.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install
-      - run: |
-          for target in x86_64-unknown-linux-musl aarch64-linux-android aarch64-apple-ios \
-              wasm32-wasip1 x86_64-pc-windows-gnu x86_64-unknown-freebsd; do
-            rustup target add "$target"
-            cargo check --release --lib --target "$target"
-          done
-
-  miri:
-    # The unit tests under Miri: the raw-pointer code in the C API and the kernels, checked for
-    # aliasing and bounds. Feature detection reports no AVX2 under Miri, so the portable kernels
-    # run; the model tests skip without a model.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install nightly --profile minimal --component miri
-      - run: cargo +nightly miri test --lib
-
-  model-tests:
-    # Integration tests against the stock small English model, and line coverage over unit and
-    # model tests together. The model zip is cached between runs.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install && rustup component add llvm-tools-preview
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        id: model
-        with:
-          path: models/vosk-model-small-en-us-0.15
-          key: vosk-model-small-en-us-0.15
-      - name: Download the stock model
-        if: steps.model.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p models
-          curl -sfL -o models/model.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
-          unzip -q models/model.zip -d models
-          rm models/model.zip
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        id: spk-model
-        with:
-          path: models/vosk-model-spk-0.4
-          key: vosk-model-spk-0.4
-      - name: Download the stock speaker model
-        if: steps.spk-model.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p models
-          curl -sfL -o models/spk.zip https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip
-          unzip -q models/spk.zip -d models
-          rm models/spk.zip
-      # TitaNet-small as sherpa-onnx publishes it, pinned by its SHA-256, converted by the
-      # repository's script under pinned requirements; the conversion is cached with both.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        id: titanet
-        with:
-          path: models/titanet-small
-          key: titanet-small-ad4a1802-${{ hashFiles('scripts/titanet_convert.py', '.github/requirements/titanet.txt') }}
-      - if: steps.titanet.outputs.cache-hit != 'true'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: "3.12"
-      - name: Download and convert TitaNet-small
-        if: steps.titanet.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p models
-          curl -sfL -o models/titanet-small.onnx \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx
-          echo "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e  models/titanet-small.onnx" \
-            | sha256sum --check
-          python -m venv models/convert
-          models/convert/bin/pip install --require-hashes -r .github/requirements/titanet.txt
-          models/convert/bin/python scripts/titanet_convert.py models/titanet-small.onnx models/titanet-small
-          rm -rf models/convert models/titanet-small.onnx
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
-        with:
-          tool: cargo-llvm-cov
-      - name: Tests with coverage
-        env:
-          UTTER_TEST_MODEL: ${{ github.workspace }}/models/vosk-model-small-en-us-0.15
-          UTTER_TEST_SPK_MODEL: ${{ github.workspace }}/models/vosk-model-spk-0.4
-          UTTER_TEST_TITANET_MODEL: ${{ github.workspace }}/models/titanet-small
-        run: |
-          # The six diagnostic tools need a corpus and a model directory each; stream, which
-          # the releases ship, is measured through its test.
-          cargo llvm-cov --release --lcov --output-path lcov.info --fail-under-lines 90 \
-            --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump|spk_dump|titanet_dump)\.rs'
-          cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: coverage-lcov
-          path: lcov.info
-      - name: Coveralls
-        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329  # v2.3.8
-        with:
-          file: lcov.info
-          format: lcov
