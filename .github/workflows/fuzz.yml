@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# A push to a pull request cancels the run it supersedes; every other run completes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_FUZZ_VERSION: 0.13.2
 
@@ -21,10 +26,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [kaldi_reader, fst_reader, json_array, transition_model, ivector, audio, titanet]
+        # The targets of a job fuzz side by side, each on a core of its own. The audio target
+        # needs a model directory and returns without one, so it is here for the build alone.
+        targets:
+          - kaldi_reader fst_reader json_array audio
+          - transition_model ivector titanet
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install nightly --profile minimal
+      # libfuzzer-sys's C++ is most of the build; the crate itself has no dependencies to cache.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+        with:
+          workspaces: fuzz
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         id: cargo-fuzz
         with:
@@ -32,19 +45,38 @@ jobs:
           key: cargo-fuzz-${{ env.CARGO_FUZZ_VERSION }}
       - if: steps.cargo-fuzz.outputs.cache-hit != 'true'
         run: cargo install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
-      # The audio target needs a model directory and returns without one, so it is built and
-      # run here for the build alone.
-      - name: Fuzz ${{ matrix.target }}
+      - name: Fuzz ${{ matrix.targets }}
         working-directory: fuzz
+        env:
+          TARGETS: ${{ matrix.targets }}
         run: |
           seconds=60
           if [ "${{ github.event_name }}" = "schedule" ]; then
             seconds=1200
           fi
-          cargo +nightly fuzz run "${{ matrix.target }}" -- -max_total_time="$seconds"
+          # One build for every target; `cargo fuzz run` would build the crate again for each,
+          # since its build script reruns on every cargo command in a git checkout.
+          cargo +nightly fuzz build
+          read -ra targets <<< "$TARGETS"
+          for target in "${targets[@]}"; do
+            mkdir -p "artifacts/$target" "corpus/$target"
+            "target/x86_64-unknown-linux-gnu/release/$target" -artifact_prefix="artifacts/$target/" \
+              -max_total_time="$seconds" "corpus/$target" > "$target.log" 2>&1 &
+            pids+=("$!")
+          done
+          failed=0
+          for i in "${!targets[@]}"; do
+            if ! wait "${pids[$i]}"; then
+              failed=1
+            fi
+            echo "::group::${targets[$i]}"
+            cat "${targets[$i]}.log"
+            echo "::endgroup::"
+          done
+          exit "$failed"
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: fuzz-artifacts-${{ matrix.target }}
+          name: fuzz-artifacts-${{ strategy.job-index }}
           path: fuzz/artifacts
           if-no-files-found: ignore
