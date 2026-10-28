@@ -22,9 +22,6 @@ env:
   # A pull request runs a slice of each exhaustive test grid; every other run, main's pushes and
   # the nightly among them, runs them whole.
   UTTER_TEST_FULL: ${{ github.event_name != 'pull_request' && '1' || '' }}
-  # The build script's `git status` would otherwise rewrite .git/index, which the script
-  # watches, so every cargo command after the first would build the crate again.
-  GIT_OPTIONAL_LOCKS: "0"
 
 jobs:
   model-tests:
