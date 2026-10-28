@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, pre-alpha]
   pull_request:
+  schedule:
+    - cron: "17 9 * * *"
   workflow_dispatch:
 
 permissions:
@@ -12,6 +14,9 @@ permissions:
 env:
   # ripref is unreleased; the pin is a commit on https://github.com/pyscape/ripref
   RR_REV: 75de191ca06fd8e417da4c4a1257687a6404f475
+  # A pull request runs a slice of each exhaustive test grid, and Miri less its slowest tests;
+  # every other run, main's pushes and the nightly among them, runs them whole.
+  UTTER_TEST_FULL: ${{ github.event_name != 'pull_request' && '1' || '' }}
 
 jobs:
   lint:
@@ -127,7 +132,29 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install nightly --profile minimal --component miri
-      - run: cargo +nightly miri test --lib
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
+        with:
+          tool: cargo-nextest
+      - name: The unit tests under Miri, each its own process
+        run: |
+          # Minutes each under Miri, over safe code only.
+          slow=(
+            recognizer::tests::a_floor_of_digital_silence_is_no_floor
+            recognizer::tests::a_quarter_second_of_digital_silence_does_not_take_the_floor
+            recognizer::tests::the_history_forgets_a_louder_room
+            recognizer::tests::the_first_sample_refused_is_named_with_what_is_wrong_with_it
+            resample::tests::passes_the_low_band_and_stops_the_high
+            resample::tests::blocks_do_not_change_the_output
+            titanet::tests::work_is_counted_in_frames_not_time
+            titanet::tests::malformed_weights_are_refused
+            titanet::tests::only_titanet_small_opens
+          )
+          if [ -n "$UTTER_TEST_FULL" ]; then
+            cargo +nightly miri nextest run --lib
+          else
+            skip=$(printf ' | test(=%s)' "${slow[@]}")
+            cargo +nightly miri nextest run --lib -E "not (${skip# | })"
+          fi
 
   model-tests:
     # Integration tests against the stock small English model, and line coverage over unit and
@@ -185,7 +212,7 @@ jobs:
           rm -rf models/convert models/titanet-small.onnx
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov,cargo-nextest
       - name: Tests with coverage
         env:
           UTTER_TEST_MODEL: ${{ github.workspace }}/models/vosk-model-small-en-us-0.15
@@ -193,8 +220,9 @@ jobs:
           UTTER_TEST_TITANET_MODEL: ${{ github.workspace }}/models/titanet-small
         run: |
           # The six diagnostic tools need a corpus and a model directory each; stream, which
-          # the releases ship, is measured through its test.
-          cargo llvm-cov --release --lcov --output-path lcov.info --fail-under-lines 90 \
+          # the releases ship, is measured through its test. Each test runs in its own process:
+          # as threads of one process, the unit tests ran several times slower under coverage.
+          cargo llvm-cov nextest --release --lcov --output-path lcov.info --fail-under-lines 90 \
             --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump|spk_dump|titanet_dump)\.rs'
           cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2

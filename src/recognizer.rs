@@ -3274,6 +3274,12 @@ mod tests {
         &[480, 112, 1600, 640, 3200, 160, 2000],
     ];
 
+    /// The whole grid when `UTTER_TEST_FULL` is set, a slice of it otherwise.
+    fn grid<T: Copy>(whole: &[T], slice: &[T]) -> Vec<T> {
+        let full = std::env::var_os("UTTER_TEST_FULL").is_some_and(|v| !v.is_empty());
+        if full { whole } else { slice }.to_vec()
+    }
+
     /// `[[rr:TD-14#Mean normalisation looks back only]]`: rows computed for the speech a result
     /// pools give every result byte for byte as rows computed for every frame as it arrives.
     #[test]
@@ -3281,8 +3287,8 @@ mod tests {
         let Some((m, spk)) = models() else { return };
         let audio = spk_audio();
         for (alternatives, margin) in [(0, None), (3, Some(6.0))] {
-            for blocks in BLOCKS {
-                for set_at in [0, 8000, 24000] {
+            for blocks in grid(BLOCKS, &[BLOCKS[3], BLOCKS[6]]) {
+                for set_at in grid(&[0, 8000, 24000], &[0, 24000]) {
                     let run = SpkRun {
                         blocks,
                         set_at,
@@ -3349,7 +3355,7 @@ mod tests {
         .concat();
         let (mut ahead, mut needed) = (0, 0);
         for alternatives in [0, 3] {
-            for blocks in BLOCKS {
+            for blocks in grid(BLOCKS, &[BLOCKS[3], BLOCKS[6]]) {
                 ROWS.with(|r| r.set((0, 0)));
                 let run = SpkRun {
                     blocks,
@@ -3591,7 +3597,7 @@ mod tests {
         };
         let audio = tn_audio();
         let mut carried = 0;
-        for blocks in TN_BLOCKS {
+        for blocks in grid(TN_BLOCKS, &[TN_BLOCKS[0], TN_BLOCKS[4]]) {
             for (threads, budgets) in [
                 (true, None),
                 (false, None),
@@ -3700,7 +3706,7 @@ mod tests {
             return;
         };
         let audio = tn_audio();
-        for blocks in [TN_BLOCKS[2], TN_BLOCKS[4]] {
+        for blocks in grid(&[TN_BLOCKS[2], TN_BLOCKS[4]], &[TN_BLOCKS[4]]) {
             for readings in [0, 3] {
                 let run = TnRun {
                     readings,
@@ -3737,7 +3743,7 @@ mod tests {
             },
         );
         for threads in [true, false] {
-            for switch_at in [0, 8000, 24000, 40000] {
+            for switch_at in grid(&[0, 8000, 24000, 40000], &[8000, 24000]) {
                 let run = TnRun {
                     threads,
                     switch_at: Some(switch_at),
