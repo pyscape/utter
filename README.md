@@ -57,6 +57,18 @@ Commands measurements](docs/benchmarks/speech-commands.md#full-grammar-accuracy)
 show that latency; the [design measurements](docs/td/0002-the-streaming-runtime-for-vosk-models.md#context-and-problem-statement)
 put streaming ONNX models under the same grammar at about half a second.
 
+### Keep the reading a near tie would drop
+
+Where two readings with different words meet in the search, the
+cheaper one carries on and the other is gone, even when it was a
+fraction of a nat behind. With `SetMergeMargin(nats)` utter keeps such
+a reading when it was within that margin of the one that beat it, and
+lists it among the readings and the final's alternatives like any
+other, so a host that settles close calls with knowledge of its own
+still sees both sides. Off by default; the best path and every decision
+stay as they are. [TD-18](docs/td/0018-a-merge-keeps-the-readings-it-overwrites-within-a-margin.md)
+has the design and what it costs.
+
 ### Know when speech falls outside your phrase list
 
 Vosk phrase lists can include `[unk]`, giving speech outside the list a
@@ -292,7 +304,7 @@ each paired against the stock Vosk wheel on identical audio, live in
 
 | Page | What it measures |
 |---|---|
-| [speech-commands.md](docs/benchmarks/speech-commands.md) | Accuracy under a command grammar, agreement with Vosk, first-appearance and endpoint latency, block size, compute, noise, grammar size, and words appearing on audio where nothing was said |
+| [speech-commands.md](docs/benchmarks/speech-commands.md) | Accuracy under a command grammar, agreement with Vosk, first-appearance and endpoint latency, block size, compute and what each opt-in setting costs a block, noise, grammar size, and words appearing on audio where nothing was said |
 | [partial-trust.md](docs/benchmarks/partial-trust.md) | Whether a partial word will hold: the gap as a calibrated probability, against entropy, energy and the motion of each reading's lead, every rule fitted on the validation split and charged in milliseconds of delay |
 | [partial-states.md](docs/benchmarks/partial-states.md) | What the readings say about silence and the next word, on words spliced into streams: end of speech, the preview an extending reading gives, and what the endpoint bound does to real finals |
 | [quiet-onsets.md](docs/benchmarks/quiet-onsets.md) | What an endpoint bound does to a word whose first frames sit near the floor, and what the floor margin costs there |

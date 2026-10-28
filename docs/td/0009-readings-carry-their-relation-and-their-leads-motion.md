@@ -119,7 +119,8 @@ revised on 7.7% against 18.6%) observes the readings reported, not the
 histories a merge destroys or the alignment mass a best path drops,
 and its correlation with survival does not show those losses harmless.
 Retained histories or posterior mass are evaluated, if at all, by a
-measurement of their own.
+measurement of their own. Retained histories are
+`[[rr:TD-18#A merge keeps what it overwrites within the margin]]`.
 
 ### Readings are read once per decoding advance
 
@@ -316,7 +317,7 @@ figure is kept in machine form beside the page.
   the traced top n, one grouping per chunk decoded.
 - `[[rr:grouped]]`: the grouping the trace and the alternatives are both
   taken from.
-- `[[rr:census_counts]]` and `[[rr:process_emitting]]`: the merge and
+- `[[rr:src/recognizer.rs#census]]` and `[[rr:process_emitting]]`: the merge and
   reading-loss counters the deferred lattice question is measured with.
 - `[[rr:trace_groups]]`, read by `stream --trace-groups`: the diagnostic
   trace the runtime's fields are checked against.

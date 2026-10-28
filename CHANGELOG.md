@@ -4,6 +4,23 @@ Notable changes to the crate, newest first. The project follows semantic
 versioning; release dates are recorded by the git tags and the GitHub
 releases.
 
+## 0.0.7
+
+### Added
+
+- The merge margin, off by default. set_merge_margin,
+  utter_recognizer_set_merge_margin, keeps the readings a merge
+  overwrites within that many nats of the path that wins, and the
+  partial's readings and the final's alternatives list them; rank 0,
+  the endpoint rules, the bound and its veto read the survivors only.
+  Off, every result is 0.0.6's byte for byte. A margin of 3 costs about
+  13 µs a block on the compute gate, a margin of 1 7.5 to 10.9. TD-18.
+- stream --merge-margin, --max-alternatives and --census-nats; the
+  census counts a reading overwritten near the frame's best token at
+  the merge.
+- The Speech Commands page times the result read after every block
+  under each opt-in setting, with each setting's cost over plain.
+
 ## 0.0.6
 
 ### Added

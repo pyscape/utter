@@ -328,6 +328,19 @@ pub unsafe extern "C" fn utter_recognizer_set_endpoint_floor_margin(
     }
 }
 
+/// Keep the readings a merge overwrites within `nats` of the path that wins it and report them
+/// with the others; 0 or less removes the margin.
+#[no_mangle]
+pub unsafe extern "C" fn utter_recognizer_set_merge_margin(
+    rec: *mut UtterRecognizer,
+    nats: c_float,
+) {
+    // SAFETY: null or a live handle from `new_recognizer`, used from one thread at a time.
+    if let Some(r) = unsafe { rec.as_mut() } {
+        r.inner.set_merge_margin((nats > 0.0).then_some(nats));
+    }
+}
+
 /// Partial alternatives to report, 0 for none.
 #[no_mangle]
 pub unsafe extern "C" fn utter_recognizer_set_alternatives(rec: *mut UtterRecognizer, n: c_int) {

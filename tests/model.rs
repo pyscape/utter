@@ -81,7 +81,11 @@ fn without_floor(json: &str) -> String {
 }
 
 fn alternatives_of(json: &str) -> Vec<String> {
-    let key = "\"partial_alternatives\": [";
+    objects_of(json, "\"partial_alternatives\": [")
+}
+
+/// The objects of the array `key` opens, as written.
+fn objects_of(json: &str, key: &str) -> Vec<String> {
     let Some(i) = json.find(key) else {
         return Vec::new();
     };
@@ -682,6 +686,83 @@ fn readings_carry_their_relation_and_their_leads_motion() {
             .find("], \"partial_result\"")
             .expect("partial result");
         assert_eq!(format!("{}{}", &stripped[..i], &stripped[j + 1..]), *q);
+    }
+}
+
+/// `json` with the array `key` opens taken out.
+fn without_array(json: &str, key: &str) -> String {
+    let Some(i) = json.find(key) else {
+        return json.to_string();
+    };
+    let mut depth = 0usize;
+    for (k, c) in json[i + key.len()..].char_indices() {
+        match c {
+            '[' | '{' => depth += 1,
+            ']' if depth == 0 => {
+                return format!("{}{}", &json[..i], &json[i + key.len() + k + 1..])
+            }
+            ']' | '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    panic!("{key} closes in {json}")
+}
+
+#[test]
+fn a_merge_margin_adds_readings_and_moves_nothing_else() {
+    let Some(dir) = model_dir() else { return };
+    let m = Model::open(&dir).unwrap();
+    // Both entries end in the clip's word, so the two first words meet in its states and the
+    // cheaper overwrites the other there.
+    let grammar: Vec<String> = vec!["go seven".into(), "no seven".into()];
+    let samples = [clip("seven"), vec![0i16; 4000]].concat();
+    let run = |margin: Option<f32>| {
+        let mut rec = Recognizer::new(&m, 16000.0, &grammar).unwrap();
+        rec.set_words(true);
+        rec.set_partial_words(true);
+        rec.set_alternatives(10);
+        rec.set_max_alternatives(10);
+        rec.set_merge_margin(margin);
+        decode(&mut rec, &samples)
+    };
+    let (plain_partials, plain_finals) = run(None);
+    let (partials, finals) = run(Some(3.0));
+    let readings = "\"partial_alternatives\": [";
+    let mut kept = 0;
+    for (p, q) in plain_partials.iter().zip(&partials) {
+        assert_eq!(without_array(p, readings), without_array(q, readings));
+        let (before, after) = (alternatives_of(p), alternatives_of(q));
+        if let (Some(b), Some(a)) = (before.first(), after.first()) {
+            assert_eq!(without_series(b), without_series(a));
+        }
+        let text = |r: &String| text_of_key(r, "\"text\": ");
+        let confidence = |r: &String| num_of_key(r, "\"confidence\": ");
+        let no = after.iter().find(|r| text(r) == "no seven");
+        match (before.iter().find(|r| text(r) == "no seven"), no) {
+            // the reading at its cheapest copy, which may be the kept one
+            (Some(b), Some(a)) => assert!(confidence(a) >= confidence(b)),
+            (Some(_), None) => panic!("a surviving reading went missing"),
+            (None, Some(no)) => {
+                let go = after.iter().find(|r| text(r) == "go seven").unwrap();
+                assert!((0.0..=3.0).contains(&(confidence(go) - confidence(no))));
+                assert!(no.contains("\"word\": \"no\"") && no.contains("\"word\": \"seven\""));
+                kept += 1;
+            }
+            (None, None) => {}
+        }
+    }
+    assert!(kept > 0, "the overwritten reading was never offered");
+    assert_eq!(plain_finals.len(), finals.len());
+    let alternatives = "\"alternatives\": [";
+    for (p, q) in plain_finals.iter().zip(&finals) {
+        assert_eq!(
+            without_array(p, alternatives),
+            without_array(q, alternatives)
+        );
+        assert_eq!(
+            objects_of(p, alternatives).first(),
+            objects_of(q, alternatives).first()
+        );
     }
 }
 

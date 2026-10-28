@@ -932,6 +932,11 @@ def cmd_run(a: argparse.Namespace) -> None:
             candidate.lib = build_lib(candidate, work)
 
     git("fetch", "--quiet", "origin", cwd=UTTERPY)
+    if a.publish:
+        # Built before the first page is written into docs/benchmarks, which leaves the checkout
+        # dirty: a library built after that names its revision -dirty on every page it runs.
+        for binding in sorted({p.binding for p, _ in plan}):
+            ensure_candidate(binding)
     digest = scripts_digest()
     results: list[PageResult] = []
     mode = "quick" if a.quick else "full"
