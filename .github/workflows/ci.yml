@@ -120,7 +120,15 @@ jobs:
           || '["rest", "frames", "silence", "quarter", "history", "malformed"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - run: rustup toolchain install nightly --profile minimal --component miri
+      - id: nightly
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          echo "rustc=$(rustc +nightly -V | tr ' ()' '-')" >> "$GITHUB_OUTPUT"
+      # The standard library built for Miri, which each nightly needs once.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/miri
+          key: miri-sysroot-${{ steps.nightly.outputs.rustc }}
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177  # v2.87.30
         with:
           tool: cargo-nextest
