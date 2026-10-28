@@ -75,7 +75,7 @@ jobs:
       - if: steps.titanet.outputs.cache-hit != 'true'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.15"
       - name: Download and convert TitaNet-small
         if: steps.titanet.outputs.cache-hit != 'true'
         run: |
@@ -261,7 +261,7 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239  # v2.9
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.15"
       - run: pip install --require-hashes -r .github/requirements/lint.txt
       - run: ruff check scripts && ruff format --check scripts
       - run: mypy
