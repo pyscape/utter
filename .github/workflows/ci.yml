@@ -24,10 +24,15 @@ env:
   UTTER_TEST_FULL: ${{ github.event_name != 'pull_request' && '1' || '' }}
 
 jobs:
-  model-tests:
+  model-tests-part:
     # Integration tests against the stock small English model, and line coverage over unit and
     # model tests together. The model zip is cached between runs.
+    name: model-tests (${{ matrix.part }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [unit, integration]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install && rustup component add llvm-tools-preview
@@ -86,13 +91,37 @@ jobs:
           UTTER_TEST_MODEL: ${{ github.workspace }}/models/vosk-model-small-en-us-0.15
           UTTER_TEST_SPK_MODEL: ${{ github.workspace }}/models/vosk-model-spk-0.4
           UTTER_TEST_TITANET_MODEL: ${{ github.workspace }}/models/titanet-small
+          PART: ${{ matrix.part }}
         run: |
+          if [ "$PART" = unit ]; then filter='kind(lib)'; else filter='not kind(lib)'; fi
           # The six diagnostic tools need a corpus and a model directory each; stream, which
           # the releases ship, is measured through its test. Each test runs in its own process:
           # as threads of one process, the unit tests ran several times slower under coverage.
-          cargo llvm-cov nextest --release --lcov --output-path lcov.info --fail-under-lines 90 \
+          cargo llvm-cov nextest --release --lcov --output-path "lcov-$PART.info" -E "$filter" \
             --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump|spk_dump|titanet_dump)\.rs'
-          cargo llvm-cov report --release --summary-only >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: coverage-lcov-${{ matrix.part }}
+          path: lcov-${{ matrix.part }}.info
+
+  model-tests:
+    # The check the main ruleset requires by this name: both parts passed, and the coverage
+    # they measured together holds the floor.
+    needs: model-tests-part
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.model-tests-part.result }}
+        run: test "$RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: coverage-lcov-*
+          merge-multiple: true
+      - run: |
+          set -o pipefail
+          python3 scripts/merge_lcov.py lcov.info 90 lcov-*.info | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: coverage-lcov
