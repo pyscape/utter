@@ -2,7 +2,7 @@
 
 Grammar: the dataset's 35 words plus 26 letters, 26 NATO words and 5 colours, 92 entries.
 
-Run 2026-09-29 20:36:30Z, utter 6fa97d0, utterpy 0.0.5, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `6fa97d06ece9/utterpy/__init__.py` built from utter 6fa97d06ece9dfb61d5c642b02d97cd5d84c8d8a, the checkout's HEAD.
+Run 2026-10-28 05:15:42Z, utter cb8adaf, utterpy 0.0.6, vosk 0.3.45, model vosk-model-small-en-us-0.15, 12th Gen Intel(R) Core(TM) i7-12700F, Python 3.14.4. Decoded by the binding `cb8adafbc057/utterpy/__init__.py` built from utter cb8adafbc057bbbe09c86ea5cc0a78be7973bf45, the checkout's HEAD.
 
 ## Engines
 
@@ -10,7 +10,7 @@ Each engine opened the model and decoded a clip before the run began; a model an
 
 | engine | model load, s | first recognizer, ms |
 |---|---|---|
-| utterpy | 0.13 | 2.1 |
+| utterpy | 0.13 | 2.2 |
 | vosk | 0.18 | 0.4 |
 
 ## Full grammar: accuracy
@@ -31,8 +31,8 @@ Compute, one recognizer per clip:
 
 | engine | first construction, ms | every later one, ms | mean, ms | RTF, decode only | RTF with construction |
 |---|---|---|---|---|---|
-| utterpy | 2.14 | 0.024 | 0.024 | 0.0140 | 0.0140 |
-| vosk | 0.38 | 0.289 | 0.289 | 0.0168 | 0.0171 |
+| utterpy | 2.32 | 0.024 | 0.024 | 0.0144 | 0.0144 |
+| vosk | 0.39 | 0.288 | 0.288 | 0.0168 | 0.0171 |
 
 | word | utterpy | vosk |
 |---|---|---|
@@ -166,27 +166,65 @@ Nothing here separates one bound from another or from the stock rules, the bound
 
 | block ms | engine | accuracy | first appearance p50 / p90 | same instant as the finest block | RTF, decode only |
 |---|---|---|---|---|---|
-| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0142 |
-| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0179 |
-| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0141 |
-| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0172 |
-| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0140 |
-| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0171 |
-| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0138 |
+| 10 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0146 |
+| 10 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0173 |
+| 20 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0140 |
+| 20 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0169 |
+| 40 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0145 |
+| 40 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0169 |
+| 80 | utterpy | 369 / 400 (92.2%) | 30 / 240 ms | 319 / 319 | 0.0140 |
 | 80 | vosk | 368 / 400 (92.0%) | 30 / 240 ms | 317 / 317 | 0.0169 |
-| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0139 |
+| 100 | utterpy | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 319, up to 60 ms later | 0.0141 |
 | 100 | vosk | 368 / 400 (92.0%) | 80 / 280 ms | 26 / 317, up to 60 ms later | 0.0168 |
 
 The column that carries the result is the per-clip one, not the quantiles: two block sizes can produce the same p50 by luck, and only a clip-by-clip comparison against the finest block (10 ms) shows whether the word actually appeared at the same instant.
 
 ## Compute on continuous audio
 
-One recognizer over 295 s of the clips joined end to end.
+One recognizer over 295 s of the clips joined end to end, timed two ways. The first table times decoding alone: AcceptWaveform on each 40 ms block, nothing read. The second times what a host spends on every block: AcceptWaveform and then the result it reads. A row named by its engine alone is plain; every setting a row names beyond that is off by default and costs nothing unless a host turns it on.
+
+A readings row carries 3 readings beside every partial; a margin row also keeps the readings a merge overwrites within that many nats.
 
 | engine | RTF | per-block compute ms p50 / p95 / p99 |
 |---|---|---|
-| utterpy | 0.0111 | 0.043 / 2.52 / 2.84 |
-| vosk | 0.0122 | 0.049 / 2.80 / 3.25 |
+| utterpy | 0.0108 | 0.044 / 2.46 / 2.75 |
+| vosk | 0.0122 | 0.049 / 2.81 / 3.32 |
+| utterpy, 3 readings | 0.0145 | 0.044 / 3.59 / 4.56 |
+| utterpy, 3 readings, margin 1 | 0.0122 | 0.044 / 2.82 / 3.25 |
+| utterpy, 3 readings, margin 3 | 0.0131 | 0.044 / 3.07 / 3.65 |
+
+What each setting costs on its own, on the mean:
+
+- 3 readings: +146.7 µs a block, +34.0% on the real-time factor, `[[rr:TD-2#The decoder: partial alternatives]]`
+- a merge margin, over 3 readings alone: -88.7 µs a block (-15.3%) at 1 nat, -54.5 µs a block (-9.4%) at 3 nats, `[[rr:TD-18#What it costs]]`
+
+### What reading a result after every block costs
+
+The same audio, each block timed with the read a host makes after it: AcceptWaveform, then PartialResult, or Result where the block closed an utterance; FinalResult at the end is one more block. Each block's time is its fastest of 5 passes, which take the rows in a rotated order. Beside each engine plain, utterpy with one setting a host can turn on: partial words, 3 readings beside every partial, 10 alternatives on every final, the endpoint bound at 300 ms vetoed at 8 nats and then with an 8 dB floor margin too, the unknown-word symbol added to the grammar, 3 readings under each merge margin, 1 and 3 nats; and every option on one recognizer, the bound with its floor margin and the merge margin at 3. The last four columns are each setting row's cost over plain utterpy: a block's time on the mean, the real-time factor, and the 99th-percentile and the slowest block. Float input is in the Rust API alone and has no row here, `[[rr:TD-13#The connection carries normalized waveform samples]]`.
+
+| engine | RTF | per-block ms p50 / p95 / p99 | slowest block ms | over plain: µs a block | RTF | p99 block ms | slowest block ms |
+|---|---|---|---|---|---|---|---|
+| utterpy | 0.0103 | 0.048 / 2.31 / 2.47 | 4.29 |  |  |  |  |
+| vosk | 0.0119 | 0.054 / 2.71 / 3.01 | 10.67 |  |  |  |  |
+| utterpy, partial words | 0.0106 | 0.060 / 2.33 / 2.48 | 4.05 | +11.5 | +2.8% | +0.01 | -0.24 |
+| utterpy, 3 readings | 0.0106 | 0.049 / 2.37 / 2.54 | 4.12 | +10.4 | +2.5% | +0.07 | -0.17 |
+| utterpy, 10 alternatives | 0.0105 | 0.048 / 2.35 / 2.51 | 4.12 | +5.7 | +1.4% | +0.04 | -0.17 |
+| utterpy@300/8 | 0.0105 | 0.053 / 2.32 / 2.47 | 4.08 | +5.1 | +1.2% | +0.00 | -0.21 |
+| utterpy@300/8/8 | 0.0104 | 0.053 / 2.31 / 2.45 | 4.15 | +2.4 | +0.6% | -0.02 | -0.14 |
+| utterpy, [unk] | 0.0104 | 0.048 / 2.32 / 2.48 | 4.25 | +1.0 | +0.2% | +0.01 | -0.04 |
+| utterpy, 3 readings, margin 1 | 0.0109 | 0.049 / 2.44 / 2.61 | 4.34 | +21.4 | +5.2% | +0.14 | +0.05 |
+| utterpy, 3 readings, margin 3 | 0.0110 | 0.049 / 2.48 / 2.66 | 4.33 | +28.0 | +6.8% | +0.18 | +0.04 |
+| utterpy, every option | 0.0113 | 0.065 / 2.47 / 2.63 | 4.37 | +38.2 | +9.2% | +0.16 | +0.08 |
+
+What each setting costs on its own, on the mean:
+
+- partial words: +11.5 µs a block, +2.8% on the real-time factor, `[[rr:TD-2#Interface]]`
+- 3 readings: +10.4 µs a block, +2.5% on the real-time factor, `[[rr:TD-2#The decoder: partial alternatives]]`
+- 10 alternatives on every final: +5.7 µs a block, +1.4% on the real-time factor, `[[rr:TD-2#The decoder: finals]]`
+- the bound at 300 ms with its veto at 8 nats: +5.1 µs a block, +1.2% on the real-time factor, `[[rr:TD-8#A host may add one endpoint bound of its own, off by default]]`
+- an 8 dB floor margin, over the bound alone: -2.6 µs a block, -0.6% on the real-time factor, `[[rr:TD-12#Decision outcome]]`
+- the unknown-word symbol: +1.0 µs a block, +0.2% on the real-time factor, `[[rr:TD-2#Silence and unknown speech announce themselves]]`
+- a merge margin, over 3 readings alone: +10.9 µs a block (+2.6%) at 1 nat, +17.6 µs a block (+4.1%) at 3 nats, `[[rr:TD-18#What it costs]]`
 
 ## Accuracy against noise
 
@@ -195,7 +233,7 @@ One recognizer over 295 s of the clips joined end to end.
 | engine | 20 dB | 10 dB | 5 dB | 0 dB | clean |
 |---|---|---|---|---|---|
 | utterpy | 702 (87.8%) | 634 (79.2%) | 560 (70.0%) | 400 (50.0%) | 730 (91.2%) |
-| vosk | 699 (87.4%) | 634 (79.2%) | 558 (69.8%) | 399 (49.9%) | 729 (91.1%) |
+| vosk | 699 (87.4%) | 634 (79.2%) | 558 (69.8%) | 399 (49.9%) | 730 (91.2%) |
 
 Paired at each level, as above: `utterpy only`, `vosk only`, and the exact McNemar p.
 
@@ -205,7 +243,7 @@ Paired at each level, as above: `utterpy only`, `vosk only`, and the exact McNem
 | 10 dB | 6 | 6 | 1.000 |
 | 5 dB | 8 | 6 | 0.791 |
 | 0 dB | 8 | 7 | 1.000 |
-| clean | 2 | 1 | 1.000 |
+| clean | 2 | 2 | 1.000 |
 
 ## Grammar size
 
@@ -213,19 +251,19 @@ Paired at each level, as above: `utterpy only`, `vosk only`, and the exact McNem
 
 | entries | utterpy accuracy | utterpy first ms | utterpy later ms | utterpy RTF | vosk accuracy | vosk first ms | vosk later ms | vosk RTF |
 |---|---|---|---|---|---|---|---|---|
-| 35 | 94.5% | 0.85 | 0.017 | 0.0143 | 94.0% | 0.29 | 0.196 | 0.0154 |
-| 60 | 92.8% | 1.53 | 0.022 | 0.0138 | 92.5% | 0.34 | 0.232 | 0.0166 |
-| 92 | 92.2% | 2.38 | 0.030 | 0.0137 | 92.0% | 0.38 | 0.287 | 0.0168 |
-| 150 | 92.0% | 3.74 | 0.044 | 0.0137 | 91.0% | 0.55 | 0.387 | 0.0174 |
-| 200 | 91.5% | 5.17 | 0.052 | 0.0138 | 90.5% | 0.58 | 0.465 | 0.0179 |
-| 246 | 89.8% | 6.11 | 0.061 | 0.0140 | 88.8% | 0.67 | 0.577 | 0.0198 |
+| 35 | 94.5% | 0.87 | 0.017 | 0.0139 | 94.0% | 0.31 | 0.197 | 0.0155 |
+| 60 | 92.8% | 1.56 | 0.023 | 0.0138 | 92.5% | 0.33 | 0.229 | 0.0164 |
+| 92 | 92.2% | 2.34 | 0.031 | 0.0146 | 92.0% | 0.40 | 0.296 | 0.0169 |
+| 150 | 92.0% | 3.64 | 0.045 | 0.0139 | 91.0% | 0.52 | 0.396 | 0.0175 |
+| 200 | 91.5% | 5.23 | 0.053 | 0.0138 | 90.5% | 0.56 | 0.468 | 0.0180 |
+| 246 | 89.8% | 6.10 | 0.062 | 0.0139 | 89.0% | 0.74 | 0.531 | 0.0185 |
 
 ## Twelve-class: ten commands plus the unknown-word symbol
 
 | engine | commands correct | fillers and digits read as unknown | fillers and digits read as a command | noise minutes | silence finals per minute |
 |---|---|---|---|---|---|
 | utterpy | 3920 / 4074 (96.22%) | 5815 / 6931 (83.90%) | 633 (9.13%) | 6.7 | 0.0 |
-| vosk | 3915 / 4074 (96.10%) | 5769 / 6931 (83.23%) | 672 (9.70%) | 6.7 | 0.0 |
+| vosk | 3916 / 4074 (96.12%) | 5768 / 6931 (83.22%) | 678 (9.78%) | 6.7 | 0.0 |
 
 ## Background noise under the full grammar
 
@@ -233,7 +271,7 @@ Paired at each level, as above: `utterpy only`, `vosk only`, and the exact McNem
 |---|---|---|---|---|---|---|
 | utterpy | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 | utterpy | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
-| vosk | full | 6.7 | 9931 | 0 (0.00%) | 0.9 | no alternatives |
+| vosk | full | 6.7 | 9932 | 0 (0.00%) | 1.1 | no alternatives |
 | vosk | full + [unk] | 6.7 | 9931 | 0 (0.00%) | 0.9 | no alternatives |
 | utterpy@100 | full | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
 | utterpy@100 | full + [unk] | 6.7 | 9932 | 0 (0.00%) | 0.9 | 0 / 0 |
@@ -267,13 +305,13 @@ The recordings scaled so their floor sits at each level, and digital silence of 
 | -40 dBFS | cold | utterpy | 6.7 | 9950 | 0.90 | 0.9 | 1.95 | 6 |
 | -40 dBFS | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
 | digital silence | cold | vosk | 6.7 | 9911 | 0.00 | no alternatives | 0.00 | 0 |
-| digital silence | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
+| digital silence | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
 | -70 dBFS | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.40 | 0 |
 | -70 dBFS | after a word | vosk | 7.2 | 10786 | 0.56 | no alternatives | 0.00 | 4 |
 | -60 dBFS | cold | vosk | 6.7 | 9955 | 0.00 | no alternatives | 2.25 | 0 |
-| -60 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
+| -60 dBFS | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
 | -50 dBFS | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| -50 dBFS | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
+| -50 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
 | -40 dBFS | cold | vosk | 6.7 | 9950 | 0.00 | no alternatives | 1.95 | 0 |
 | -40 dBFS | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
 
@@ -297,7 +335,7 @@ At a -50 dBFS floor, the 35 dataset words plus filler up to each size.
 | 92 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 92 | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
 | 92 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| 92 | after a word | vosk | 7.2 | 10787 | 0.56 | no alternatives | 0.00 | 4 |
+| 92 | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
 | 150 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 150 | after a word | utterpy | 7.2 | 10788 | 3.06 | 3.1 | 0.14 | 22 |
 | 150 | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
@@ -320,7 +358,7 @@ At the same floor and the full grammar, `[unk]` admitted at each cost the privat
 | stock | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | stock | after a word | utterpy | 7.2 | 10789 | 0.00 | 0.0 | 0.00 | 0 |
 | stock | cold | vosk | 6.7 | 9954 | 0.00 | no alternatives | 2.25 | 0 |
-| stock | after a word | vosk | 7.2 | 10789 | 0.56 | no alternatives | 0.00 | 4 |
+| stock | after a word | vosk | 7.2 | 10788 | 0.56 | no alternatives | 0.00 | 4 |
 | 8 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |
 | 8 | after a word | utterpy | 7.2 | 10788 | 0.56 | 0.6 | 0.00 | 4 |
 | 4 | cold | utterpy | 6.7 | 9954 | 0.00 | 0.0 | 2.25 | 0 |

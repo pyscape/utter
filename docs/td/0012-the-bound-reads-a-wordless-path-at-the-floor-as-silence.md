@@ -123,6 +123,8 @@ without it.
   reported with its energy for the host's gate, and its stretch closes
   as before. Under a grammar of twenty words the hiss reads as such a
   word; under the ninety-two of the public pages it reads as `[speech]`.
+- What the margin costs a block is measured on the pages,
+  `[[rr:What reading a result after every block costs]]`.
 - The `endpoint` value set gains `floor`.
 
 ## Implemented by

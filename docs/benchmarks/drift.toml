@@ -60,6 +60,7 @@ speech-commands = [
   "endpoint",
   "block_size",
   "steady_state",
+  "steady_state_read",
   "snr",
   "twelve",
   "noise",
@@ -238,6 +239,16 @@ kind = "ignore"
 page = "speech-commands"
 path = ["steady_state", "vosk", "*"]
 kind = "ignore"
+
+[[rule]]
+page = "speech-commands"
+path = ["steady_state_read", "vosk", "*"]
+kind = "ignore"
+
+[[rule]]
+page = "speech-commands"
+path = ["steady_state_read", "utterpy", "passes"]
+kind = "input"
 
 [[rule]]
 page = "decoder-diagnostics"
@@ -498,6 +509,56 @@ kind = "timing"
 better = "down"
 rel = 0.02
 weight = 6
+
+[[rule]]
+page = "speech-commands"
+path = ["steady_state", "utterpy, *", "*"]
+kind = "timing"
+better = "down"
+rel = 0.02
+weight = 3
+note = "a setting's row, decoding alone"
+
+[[rule]]
+page = "speech-commands"
+path = ["steady_state_read", "*", "us_over_plain"]
+kind = "timing"
+better = "down"
+tol = 2
+weight = 6
+note = "what a setting costs a block over plain utterpy, in µs"
+
+[[rule]]
+page = "speech-commands"
+path = ["steady_state_read", "*", "rtf_pct_over_plain"]
+kind = "timing"
+better = "down"
+tol = 0.5
+weight = 3
+
+[[rule]]
+page = "speech-commands"
+path = ["steady_state_read", "*", "ms_*_over_plain"]
+kind = "timing"
+better = "down"
+tol = 0.05
+weight = 3
+
+[[rule]]
+page = "speech-commands"
+path = ["steady_state_read", "utterpy", "{rtf,ms_p99}"]
+kind = "timing"
+better = "down"
+rel = 0.01
+weight = 6
+
+[[rule]]
+page = "speech-commands"
+path = ["steady_state_read", "utterpy*", "*"]
+kind = "timing"
+better = "down"
+rel = 0.02
+weight = 3
 
 [[rule]]
 page = "speech-commands"

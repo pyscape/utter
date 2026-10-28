@@ -232,7 +232,7 @@ figure is kept in machine form beside the page.
   times are untouched, so byte identity over the gate corpus holds
   without alternatives, and holds with them once the two keys are
   removed. The grouping's cost is measured with alternatives on and
-  off.
+  off, `[[rr:What reading a result after every block costs]]`.
 - At a first sighting the leading reading is new on 59.3% of clips and
   its own motion null among the readings reported; the runtime's history
   over every surviving group carries a `lead_delta` for rank 0 on 91.4%
