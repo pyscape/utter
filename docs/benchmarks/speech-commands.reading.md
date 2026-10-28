@@ -16,11 +16,22 @@ Before TD-6 the runtime read 458 clips as silence against libvosk's
 survives correction for having tested all 35.
 
 Compute is no longer a gap. On continuous audio the runtime is at
-0.0111 against the wheel's 0.0122, and ahead where it counts, 2.52 ms
-against 2.80 at the 95th percentile, the blocks that run a network
-chunk, and on the blocks that do not, 0.043 ms against 0.049.
-Construction is cheaper too, 0.024 ms against 0.289, because a
+0.0108 against the wheel's 0.0122, and ahead where it counts, 2.46 ms
+against 2.81 at the 95th percentile, the blocks that run a network
+chunk, and on the blocks that do not, 0.044 ms against 0.049.
+Construction is cheaper too, 0.024 ms against 0.288, because a
 compiled grammar is kept (`[[rr:TD-4]]`); the first is dearer and grows with the grammar.
+
+Every setting a host can turn on is cheap when the host reads what it
+asked for. Read after every block, each costs 1 to 12 µs a block on
+its own, at most 2.8% on the real-time factor and 0.07 ms on the
+99th-percentile block; everything on at once costs 38 µs, 9%. The
+merge margin is the dearest of them over the readings it extends,
+11 µs a block at 1 nat and 18 at 3; its own gate is
+`[[rr:TD-18#What it costs]]`. Decoding alone tells another story:
+readings asked for and never read cost a third more, 0.0145 against
+0.0108, and a merge margin takes much of that back, because it bounds
+the readout to what the list could show. 0.0.6 pays the same.
 
 Endpointing agrees less closely than the words do: both engines close
 781 of 800, at the same block on 98.2%, against 99.2% agreement on
