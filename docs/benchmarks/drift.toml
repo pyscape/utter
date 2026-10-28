@@ -255,6 +255,13 @@ path = ["result", "cost", "seconds_per_speech_second", "[!u]*"]
 kind = "ignore"
 note = "the reference engines' cost"
 
+[[rule]]
+page = "speaker-[nv]*"
+path = ["result", "evidence_seconds"]
+rel = 0.001
+weight = 1
+note = "the summed spans of the decoded words with evidence"
+
 # ------------------------------------------------------------------ inputs
 
 [[rule]]
@@ -1392,11 +1399,7 @@ weight = 1
 
 [[rule]]
 page = "speaker-[nv]*"
-path = [
-  "result",
-  "{conditions,speakers,rooms,room_draws,evidence_seconds}",
-  "**",
-]
+path = ["result", "{conditions,speakers,rooms,room_draws}", "**"]
 kind = "input"
 
 [[rule]]
