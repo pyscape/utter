@@ -32,7 +32,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [unit, integration]
+        # Halves of about equal time that together run every test.
+        include:
+          - part: 1
+            filter: kind(lib) & not test(/^recognizer::tests::titanet_(evidence|thread)_/)
+          - part: 2
+            filter: not kind(lib) | test(/^recognizer::tests::titanet_(evidence|thread)_/)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - run: rustup toolchain install && rustup component add llvm-tools-preview
@@ -92,12 +97,12 @@ jobs:
           UTTER_TEST_SPK_MODEL: ${{ github.workspace }}/models/vosk-model-spk-0.4
           UTTER_TEST_TITANET_MODEL: ${{ github.workspace }}/models/titanet-small
           PART: ${{ matrix.part }}
+          FILTER: ${{ matrix.filter }}
         run: |
-          if [ "$PART" = unit ]; then filter='kind(lib)'; else filter='not kind(lib)'; fi
           # The six diagnostic tools need a corpus and a model directory each; stream, which
           # the releases ship, is measured through its test. Each test runs in its own process:
           # as threads of one process, the unit tests ran several times slower under coverage.
-          cargo llvm-cov nextest --release --lcov --output-path "lcov-$PART.info" -E "$filter" \
+          cargo llvm-cov nextest --release --lcov --output-path "lcov-$PART.info" -E "$FILTER" \
             --ignore-filename-regex 'src/bin/(g0|profile|mfcc_dump|ivector_dump|spk_dump|titanet_dump)\.rs'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
