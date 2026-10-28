@@ -391,8 +391,9 @@ class Vctk:
     def audio(self, utt: str) -> Samples:
         spk = utt.split("_")[0]
         flac = self.z.read(f"wav48_silence_trimmed/{spk}/{utt}_mic1.flac")
+        # -D: sox dithers by default when it narrows to 16 bits, with a fresh seed each call.
         done = subprocess.run(
-            ["sox", "-q", "-t", "flac", "-", "-t", "raw", "-r", str(RATE), "-b", "16", "-c", "1", "-e", "signed", "-"],
+            ["sox", "-q", "-D", "-t", "flac", "-", "-t", "raw", "-r", str(RATE), "-b", "16", "-c", "1", "-e", "signed", "-"],
             input=flac,
             capture_output=True,
             check=True,
