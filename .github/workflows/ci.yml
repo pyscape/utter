@@ -73,7 +73,7 @@ jobs:
           path: models/titanet-small
           key: titanet-small-ad4a1802-${{ hashFiles('scripts/titanet_convert.py', '.github/requirements/titanet.txt') }}
       - if: steps.titanet.outputs.cache-hit != 'true'
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.15"
       - name: Download and convert TitaNet-small
@@ -259,7 +259,7 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25  # v2.1.1
       - name: A breaking change to the public API needs a version bump past the published crate
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239  # v2.9
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.15"
       - run: pip install --require-hashes -r .github/requirements/lint.txt
