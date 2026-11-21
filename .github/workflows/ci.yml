@@ -256,7 +256,7 @@ jobs:
           cargo "+$msrv" check --all-targets
       - run: cargo fmt --check
       - run: cargo clippy --release --all-targets -- -D warnings
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25  # v2.1.1
+      - uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9  # v2.1.2
       - name: A breaking change to the public API needs a version bump past the published crate
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239  # v2.9
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
